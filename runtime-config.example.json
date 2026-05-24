@@ -1,0 +1,18 @@
+{
+  "upstreamMode": "live",
+  "baseUrl": "https://memefast.top/v1/images/generations",
+  "imageEditUrl": "https://memefast.top/v1/images/edits",
+  "model": "gpt-image-2",
+  "imageModel": "gpt-image-2-all",
+  "imageTransport": "url",
+  "keyMode": "single",
+  "apiKey": "",
+  "apiKeys": [],
+  "imageHostMode": "imgbb",
+  "imageHostUploadUrl": "https://api.imgbb.com/1/upload",
+  "imageHostApiKey": "",
+  "imageHostExpirationSeconds": 0,
+  "maxConcurrency": 1,
+  "requestTimeoutSeconds": 180,
+  "retryAttempts": 5
+}

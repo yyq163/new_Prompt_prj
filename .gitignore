@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+runtime-config.json
+.env
+.env.*
+!.env.example
+.code-index/
+.codex-agent-team/
+.playwright-cli/
+output/
+test-image/
+.server.pid
+.server.log
+.server-*.pid
+.server-*.log
+.visual-review*/

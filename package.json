@@ -1,0 +1,14 @@
+{
+  "name": "ai-tu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node gateway/server.js",
+    "check": "node --check gateway/server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+

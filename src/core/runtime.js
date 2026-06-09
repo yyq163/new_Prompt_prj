@@ -1,10 +1,19 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { clarification, fail } from "./errors.js";
-import { VALID_TASK_TYPES } from "./labels.js";
+import {
+  ENTITY_TYPE_ALIASES,
+  ROLE_ALIASES,
+  VALID_ASPECT_RATIOS,
+  VALID_ENTITY_TYPES,
+  VALID_OUTPUT_LANGUAGES,
+  VALID_OUTPUT_QUALITIES,
+  VALID_REFERENCE_ROLES,
+  VALID_TASK_TYPES
+} from "./labels.js";
 
 export const TYPE_SCHEMAS = Object.freeze({
   ImageGenerationRequest: {
-    fields: ["request_id", "task_type", "prompt", "references", "reference_policy", "output", "options"]
+    fields: ["request_id", "task_type", "prompt", "references", "reference_policy", "output", "options", "callback_url", "callback"]
   },
   ImageGenerationResponse: {
     fields: ["request_id", "generation_id", "status", "task_type", "task_type_label", "generation_mode", "input", "images", "normalized", "warnings", "trace_id"]
@@ -72,9 +81,6 @@ export function normalizeRequest(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     fail("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
   }
-  if ("callback_url" in body || "callback" in body) {
-    fail("CALLBACK_NOT_IMPLEMENTED", "当前版本不实现 callback。");
-  }
 
   const taskType = stringValue(body.task_type).trim();
   if (!taskType || !VALID_TASK_TYPES.includes(taskType)) {
@@ -94,6 +100,7 @@ export function normalizeRequest(body) {
   const referencePolicy = normalizeReferencePolicy(body.reference_policy);
   const output = normalizeOutput(body.output);
   const options = body.options && typeof body.options === "object" && !Array.isArray(body.options) ? { ...body.options } : {};
+  const callbackUrl = normalizeCallbackUrl(body);
   const requestId = stringValue(body.request_id).trim() || makeId("req");
 
   return {
@@ -104,6 +111,7 @@ export function normalizeRequest(body) {
     reference_policy: referencePolicy,
     output,
     options,
+    callback_url: callbackUrl,
     generation_mode: references.length ? "image_to_image" : "text_to_image"
   };
 }
@@ -115,8 +123,8 @@ function normalizeReference(item, index) {
   return {
     reference_id: stringValue(item.reference_id).trim(),
     entity_name: stringValue(item.entity_name).trim(),
-    entity_type: stringValue(item.entity_type).trim() || "other",
-    role: stringValue(item.role).trim(),
+    entity_type: normalizeEntityType(item.entity_type),
+    role: normalizeReferenceRole(item.role),
     usage: stringValue(item.usage).trim(),
     url: stringValue(item.url).trim(),
     mime_type: stringValue(item.mime_type).trim(),
@@ -138,15 +146,74 @@ function normalizeReferencePolicy(value) {
 
 function normalizeOutput(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const count = normalizeOutputCount(source.count);
+  const aspectRatio = stringValue(source.aspect_ratio).trim() || "1:1";
+  const quality = stringValue(source.quality).trim() || "high";
+  const language = stringValue(source.language).trim() || "zh-CN";
+  if (!VALID_ASPECT_RATIOS.includes(aspectRatio)) {
+    fail("INVALID_REQUEST_SCHEMA", "output.aspect_ratio 不合法。");
+  }
+  if (!VALID_OUTPUT_QUALITIES.includes(quality)) {
+    fail("INVALID_REQUEST_SCHEMA", "output.quality 不合法。");
+  }
+  if (!VALID_OUTPUT_LANGUAGES.includes(language)) {
+    fail("INVALID_REQUEST_SCHEMA", "output.language 不合法。");
+  }
   return {
-    count: intRange(source.count, 1, 16, 1),
-    aspect_ratio: stringValue(source.aspect_ratio).trim() || "1:1",
-    quality: stringValue(source.quality).trim() || "high",
+    count,
+    aspect_ratio: aspectRatio,
+    quality,
     return_format: "url",
-    language: stringValue(source.language).trim() || "zh-CN",
+    language,
     width: Number.isFinite(Number(source.width)) ? Number(source.width) : null,
     height: Number.isFinite(Number(source.height)) ? Number(source.height) : null
   };
+}
+
+function normalizeOutputCount(value) {
+  if (value == null || value === "") return 1;
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1 || count > 4) {
+    fail("INVALID_REQUEST_SCHEMA", "output.count 必须是 1 到 4 的整数。");
+  }
+  return count;
+}
+
+function normalizeReferenceRole(value) {
+  const role = stringValue(value).trim();
+  const normalized = ROLE_ALIASES[role] || role;
+  if (!VALID_REFERENCE_ROLES.includes(normalized)) {
+    fail("INVALID_REFERENCE_ROLE", "参考图 role 不合法。");
+  }
+  return normalized;
+}
+
+function normalizeEntityType(value) {
+  const entityType = stringValue(value).trim();
+  const normalized = ENTITY_TYPE_ALIASES[entityType] || entityType;
+  if (!normalized || !VALID_ENTITY_TYPES.includes(normalized)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference.entity_type 不合法。");
+  }
+  return normalized;
+}
+
+function normalizeCallbackUrl(body) {
+  const callbackObject = body.callback && typeof body.callback === "object" && !Array.isArray(body.callback) ? body.callback : null;
+  const raw = typeof body.callback === "string" && body.callback.trim()
+    ? body.callback
+    : callbackObject && typeof callbackObject.url === "string" && callbackObject.url.trim()
+      ? callbackObject.url
+      : callbackObject && typeof callbackObject.callback_url === "string" && callbackObject.callback_url.trim()
+        ? callbackObject.callback_url
+    : typeof body.callback_url === "string" && body.callback_url.trim()
+      ? body.callback_url
+      : "";
+  if (!raw) return "";
+  const value = raw.trim();
+  if (!/^https?:\/\//i.test(value)) {
+    fail("INVALID_REQUEST_SCHEMA", "callback_url 必须是 http 或 https URL。");
+  }
+  return value;
 }
 
 export function assertNoForbiddenPublicFields(payload) {

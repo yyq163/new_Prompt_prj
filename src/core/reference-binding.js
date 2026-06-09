@@ -3,9 +3,9 @@ import { roleLabel, VALID_REFERENCE_ROLES, VALID_USAGES } from "./labels.js";
 
 const REQUIRED_ROLE_BY_TASK = Object.freeze({
   image_reference: null,
-  character_multiview: "character_reference",
-  scene_multiview: "scene_reference",
-  prop_multiview: "prop_reference"
+  character_multiview: ["face_reference", "character_reference"],
+  scene_multiview: ["scene_reference", "lighting_reference", "composition_reference"],
+  prop_multiview: ["prop_reference", "material_reference", "ornament_reference"]
 });
 
 export function resolveReferences(request, entityMentions) {
@@ -62,13 +62,13 @@ function validateReferences(request) {
   }
 
   const requiredRole = REQUIRED_ROLE_BY_TASK[request.task_type];
-  if (request.task_type in REQUIRED_ROLE_BY_TASK && !references.length) {
+  if (request.task_type === "image_reference" && !references.length) {
     fail("REFERENCE_REQUIRED", "当前任务类型需要至少一张参考图。");
   }
 
   const seenIds = new Set();
   const groups = new Map();
-  const normalized = references.map((ref, index) => {
+  const items = references.map((ref, index) => {
     if (!ref.reference_id) fail("INVALID_REQUEST_SCHEMA", "reference_id 不能为空。");
     if (seenIds.has(ref.reference_id)) {
       fail("DUPLICATE_REFERENCE_ID", "参考图 ID 重复，请检查上传的参考图。");
@@ -84,10 +84,9 @@ function validateReferences(request) {
     if (!/^https?:\/\//i.test(ref.url)) {
       fail("INVALID_REQUEST_SCHEMA", "reference.url 必须是 http 或 https URL。");
     }
-    const usage = ref.usage || "";
     const item = {
       ...ref,
-      usage,
+      usage: ref.usage || "",
       order: Number.isFinite(Number(ref.order)) ? Number(ref.order) : index + 1,
       role_label: roleLabel(ref.role)
     };
@@ -99,8 +98,11 @@ function validateReferences(request) {
   });
 
   for (const group of groups.values()) {
-    if (group.length <= 1) continue;
-    if (group.some((item) => !item.usage)) {
+    if (group.length === 1 && !group[0].usage) {
+      group[0].usage = "primary";
+      continue;
+    }
+    if (group.length > 1 && group.some((item) => !item.usage)) {
       fail("DUPLICATE_ENTITY_ROLE_REFERENCE", `「${group[0].entity_name}」存在多张${roleLabel(group[0].role)}，请显式指定 primary/auxiliary。`);
     }
     if (group.filter((item) => item.usage === "primary").length > 1) {
@@ -108,8 +110,16 @@ function validateReferences(request) {
     }
   }
 
-  if (requiredRole && !normalized.some((item) => item.role === requiredRole)) {
-    fail("REFERENCE_REQUIRED", `当前任务类型需要${roleLabel(requiredRole)}。`);
+  const normalized = items.map((item) => ({
+    ...item,
+    role_label: roleLabel(item.role)
+  }));
+
+  if (requiredRole && normalized.length) {
+    const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+    if (!normalized.some((item) => item.usage === "primary" && allowedRoles.includes(item.role))) {
+      fail("REFERENCE_REQUIRED", `当前任务类型需要${allowedRoles.map(roleLabel).join("或")}作为 primary。`);
+    }
   }
 
   return normalized.sort((a, b) => a.order - b.order);

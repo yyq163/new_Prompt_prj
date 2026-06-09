@@ -1,11 +1,13 @@
 import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue, walk } from "../core/runtime.js";
+import { putGeneratedImage } from "../storage/generated-image-store.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
 const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
+const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 420;
 let upstreamKeyCursor = 0;
 
 export async function generateWithAiTuProvider({ request, compiledPrompt, fetchImpl = globalThis.fetch } = {}) {
@@ -25,7 +27,7 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
 
   const images = request.generation_mode === "image_to_image"
     ? await postLiveImageUrlJson(providerRequest, config, fetchImpl)
-    : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl);
+    : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
 
   if (!images.length) {
     throw new ImageApiError({
@@ -61,8 +63,9 @@ export function baseUpstreamPayload(request) {
   return payload;
 }
 
-export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch) {
+export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
   const body = JSON.stringify(payload);
+  const submitConfig = longRunningSubmitConfig(config);
   const json = await fetchUpstream(kind, (credential) => ({
     method: "POST",
     headers: {
@@ -70,8 +73,8 @@ export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch) 
       "Content-Type": "application/json"
     },
     body
-  }), fetchImpl);
-  return normalizeProviderResult(json, payload.format);
+  }), fetchImpl, submitConfig);
+  return normalizeProviderResult(json, payload.format, fetchImpl, config);
 }
 
 export async function postLiveImageUrlJson(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
@@ -104,6 +107,7 @@ export async function postSingleLiveImageUrlJson(request, referenceUrls, config,
     image: referenceUrls
   };
   const body = JSON.stringify(payload);
+  const submitConfig = longRunningSubmitConfig(config);
   const json = await fetchUpstream(config.baseUrl, (credential) => ({
     method: "POST",
     headers: {
@@ -111,8 +115,19 @@ export async function postSingleLiveImageUrlJson(request, referenceUrls, config,
       "Content-Type": "application/json"
     },
     body
-  }), fetchImpl, config);
-  return normalizeProviderResult(json, request.output_format);
+  }), fetchImpl, submitConfig);
+  return normalizeProviderResult(json, request.output_format, fetchImpl, config);
+}
+
+export function longRunningSubmitConfig(config = defaultProviderConfig()) {
+  return {
+    ...config,
+    requestTimeoutSeconds: Math.max(
+      Number(config.requestTimeoutSeconds) || 0,
+      LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS
+    ),
+    retryAttempts: 1
+  };
 }
 
 export async function fetchUpstream(kind, initFactory, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
@@ -196,24 +211,28 @@ export function resolveUpstreamUrl(kind, config = defaultProviderConfig()) {
 export function extractImageUrls(json, format = "png") {
   const found = [];
   const seen = new Set();
-  let unsupportedImagePayloadFound = false;
 
   if (Array.isArray(json && json.data)) {
     json.data.forEach((item) => pushImage(item));
   }
 
+  if (Array.isArray(json && json.output)) {
+    json.output.forEach((item) => {
+      if (item && item.type === "image_generation_call" && item.result) {
+        pushImage({ b64_json: item.result, format });
+      }
+      if (Array.isArray(item && item.content)) item.content.forEach(pushImage);
+    });
+  }
+
   walk(json, (node) => {
     if (!node || typeof node !== "object") return;
-    if (node.b64_json || node.base64 || node.image_base64 || node.binary || node.result) {
-      unsupportedImagePayloadFound = true;
-    }
-    if (node.url || node.image_url || node.output_url) {
+    if (node.b64_json || node.base64 || node.image_base64 || node.image || node.result || node.url || node.image_url || node.output_url) {
       pushImage(node);
     }
     if (Array.isArray(node.images)) node.images.forEach(pushImage);
   });
 
-  if (!found.length && unsupportedImagePayloadFound) providerUnsupported();
   if (!found.length) {
     throw new ImageApiError({
       statusCode: 502,
@@ -227,13 +246,32 @@ export function extractImageUrls(json, format = "png") {
   function pushImage(item) {
     if (!item || typeof item !== "object") return;
     const url = [item.url, item.image_url, item.output_url].find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
-    if (!url || seen.has(url)) return;
-    seen.add(url);
+    const base64 = cleanBase64(item.b64_json || item.base64 || item.image_base64 || item.result || imageStringValue(item.image));
+    const key = url || base64;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    if (url) {
+      found.push({
+        url,
+        width: finiteNumber(item.width),
+        height: finiteNumber(item.height),
+        format: stringValue(item.format).trim() || inferFormat(url) || format
+      });
+      return;
+    }
+    const bytes = Buffer.from(base64, "base64");
+    const inferredFormat = stringValue(item.format).trim() || format || "png";
+    const stored = putGeneratedImage({
+      bytes,
+      mime: imageMime(item, inferredFormat),
+      format: inferredFormat
+    });
+    if (!stored) return;
     found.push({
-      url,
+      url: stored.path,
       width: finiteNumber(item.width),
       height: finiteNumber(item.height),
-      format: stringValue(item.format).trim() || inferFormat(url) || format
+      format: inferredFormat
     });
   }
 }
@@ -318,7 +356,8 @@ export function defaultProviderConfig() {
 export function loadAiTuRuntimeConfig() {
   const candidates = [
     stringValue(process.env.AI_TU_RUNTIME_CONFIG_FILE).trim(),
-    resolve("ai-tu/runtime-config.json")
+    resolve("ai-tu/runtime-config.json"),
+    resolve("ai-tu/runtime-config.example.json")
   ].filter(Boolean);
   for (const filePath of candidates) {
     try {
@@ -431,6 +470,27 @@ function upstreamErrorDetail(json, text, statusText) {
     text && text.slice(0, 200)
   ].filter(Boolean);
   return stringValue(candidates[0] || "unknown upstream error").slice(0, 300);
+}
+
+function cleanBase64(value) {
+  const text = stringValue(value).trim();
+  if (!text) return "";
+  const commaIndex = text.indexOf(",");
+  return (commaIndex >= 0 ? text.slice(commaIndex + 1) : text).replace(/\s+/g, "");
+}
+
+function imageStringValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function imageMime(item, fallbackFormat = "png") {
+  const explicit = stringValue(item.mime || item.mimetype || item.mime_type || item.content_type || item.type).trim();
+  if (/^image\//i.test(explicit)) return explicit;
+  const format = stringValue(item.format || fallbackFormat || "png").trim().toLowerCase();
+  if (format === "jpg" || format === "jpeg") return "image/jpeg";
+  if (format === "webp") return "image/webp";
+  if (format === "gif") return "image/gif";
+  return "image/png";
 }
 
 async function mapWithConcurrency(items, limit, mapper) {

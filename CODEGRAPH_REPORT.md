@@ -11,10 +11,9 @@ CodeGraph was refreshed from the project root and used as the structural source 
 Commands run:
 
 ```bash
-codegraph sync .
-codegraph files --path . --format tree --max-depth 5 --no-metadata
-codegraph context "prompt optimizer task_type reference plan provider adapter route frontend tests" --path .
-python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --skip-sync --max-nodes 6000 --max-edges 20000
+python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard
+npm run check
+npm test
 ```
 
 CodeGraph status after refresh:
@@ -23,24 +22,30 @@ CodeGraph status after refresh:
 {
   "initialized": true,
   "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
-  "fileCount": 16,
-  "nodeCount": 391,
-  "edgeCount": 1049,
+  "fileCount": 17,
+  "nodeCount": 418,
+  "edgeCount": 1125,
   "backend": "native",
   "languages": ["javascript"],
   "nodesByKind": {
     "class": 1,
-    "constant": 50,
-    "file": 16,
-    "function": 257,
-    "import": 62,
+    "constant": 60,
+    "file": 17,
+    "function": 270,
+    "import": 65,
     "method": 1,
     "variable": 4
   }
 }
 ```
 
-Understand-Anything compatible artifacts were generated locally from CodeGraph facts under `.understand-anything/`, but those local visualization artifacts are intentionally not part of the repository commit.
+Generated code-map artifacts:
+
+- `.understand-anything/knowledge-graph.json`
+- `.understand-anything/code-map-report.md`
+- `.understand-anything/code-map-report.html`
+- `.understand-anything/code-map-summary.json`
+- Dashboard URL: `http://127.0.0.1:5175/?token=f70c3623a734606b4ee294e83c11f0ed`
 
 ## Indexed Source Tree
 
@@ -59,13 +64,14 @@ src/core/runtime.js
 src/providers/ai-tu-provider-adapter.js
 src/routes/image-generations.js
 src/routes/prompt-optimizations.js
+src/storage/generated-image-store.js
 src/storage/trace-store.js
 tests/integration/provider-config.test.js
 tests/unit/ai-tu-prompt-optimizer.test.js
 tests/unit/image-api.test.js
 ```
 
-The repository also contains PRD/spec/design documents, evidence screenshots, and the ai-tu HTML frontend. Those files are included in the human handoff below even when they are not JavaScript symbols in CodeGraph.
+The repository also contains PRD/spec/design documents, visual evidence, and the ai-tu HTML frontend. Those files are covered in this handoff even when they are not JavaScript symbols in CodeGraph.
 
 ## Runtime Entry Points
 
@@ -76,9 +82,10 @@ HTTP routes:
 - `GET /health`: health check.
 - `GET /` and `GET /ai-image-generator.html`: serve the existing ai-tu frontend at `ai-tu/ai-image-generator.html`.
 - `POST /api/prompt-optimizer`: ai-tu prompt optimization entry.
-- `POST /api/v1/prompt-optimizations`: alias for the prompt optimization API.
+- `POST /api/v1/prompt-optimizations`: alias for prompt optimization.
 - `POST /api/v1/image-generations`: final image generation API.
-- `POST /api/image-jobs` and `GET /api/image-jobs/:id`: legacy ai-tu-compatible image job route using URL references only.
+- `GET /api/v1/generated-images/:id`: short-lived in-memory image URL for real upstream image bytes returned as base64.
+- `POST /api/image-jobs` and `GET /api/image-jobs/:id`: legacy ai-tu-compatible route.
 
 The root route deliberately serves the ai-tu original page rather than the discarded standalone console.
 
@@ -91,32 +98,32 @@ The root route deliberately serves the ai-tu original page rather than the disca
 Current responsibilities:
 
 - Preserve the original ai-tu page and generation workflow.
-- Add a prompt optimization entry.
+- Add prompt optimization controls.
 - Let the user select all 6 PRD `task_type` values.
 - Collect structured `references[]` fields.
-- Call `POST /api/prompt-optimizer`.
-- On `status=succeeded`, overwrite the original ai-tu prompt textarea with `optimized_prompt`.
-- On failed or clarification responses, keep the original prompt unchanged.
-- Avoid rendering internal fields such as compiled prompt, enhancement, fallback state, provider payload, or secrets.
+- Call `POST /api/prompt-optimizer` for prompt optimization.
+- On prompt optimization success, overwrite the original ai-tu prompt textarea with `optimized_prompt`.
+- Call `POST /api/v1/image-generations` from the visible `开始生成` button.
+- Render returned image URLs and previews.
+- Avoid rendering internal fields such as compiled prompt, enhancement, fallback state, provider payload, callback status, or secrets.
 
 ### Prompt Optimization Route
 
-`src/routes/prompt-optimizations.js` implements the deterministic prompt optimizer and compiler.
+`src/routes/prompt-optimizations.js` implements the deterministic prompt optimizer / compiler.
 
 Primary flow:
 
-1. `handlePromptOptimization(body, options)`.
-2. `normalizePromptOptimizationRequest`.
-3. `extractEntityMentions` from `@实体名` and `[实体名]`.
-4. `validateReferences`.
-5. `resolvePromptOptimizationReferences`.
-6. `buildReferencePlan`.
-7. `callRagflowEnhancementIfAvailable`.
-8. `compileOptimizedPrompt`.
-9. `validateOptimizedPrompt`.
-10. `buildPromptOptimizationResponse`.
+1. `handlePromptOptimization`.
+2. Normalize request and output schema.
+3. Extract entity mentions from `@实体名` and `[实体名]`.
+4. Validate and resolve `references[]`.
+5. Build a dynamic reference plan.
+6. Optionally call RAGFlow for structured enhancement.
+7. Validate enhancement.
+8. Compile backend-owned `optimized_prompt` for 6 task types.
+9. Validate public prompt quality and return a public response.
 
-Important architectural decision: RAGFlow is an optional enhancement provider, not the final prompt author. The final `optimized_prompt` is compiled by the backend Prompt Compiler from `task_type`, raw prompt, references, entity mentions, resolved references, optional validated enhancement, and deterministic quality rules.
+RAGFlow is an optional enhancement layer, not the final prompt author. The backend Prompt Compiler owns the final `optimized_prompt`.
 
 ### Final Image Generation Route
 
@@ -124,245 +131,145 @@ Important architectural decision: RAGFlow is an optional enhancement provider, n
 
 Primary flow:
 
-1. Normalize and validate API request.
-2. Extract entity mentions.
-3. Resolve reference binding.
-4. Optionally retrieve RAGFlow enhancement through the core enhancement layer.
-5. Compile the internal provider prompt.
-6. Call the provider adapter.
-7. Return public images, normalized mentions/references, warnings, and trace id.
+1. `normalizeRequest` validates schema and callback fields.
+2. `extractEntityMentions` reads prompt mentions.
+3. `resolveReferences` deterministically binds references.
+4. `getRagflowEnhancement` optionally adds safe structured enhancement.
+5. `compilePrompt` builds the internal provider prompt.
+6. `generateWithAiTuProvider` calls the real upstream provider.
+7. The route returns public images, normalized mentions/references, warnings, and trace id.
 
-The public response does not expose final prompt, compiled prompt, raw enhancement, fallback state, provider payload, provider key, or other internal data.
-
-### Core Modules
-
-`src/core/entity-mentions.js`
-
-- Extracts entity mentions from `@实体名` and `[实体名]`.
-- Produces stable mention ids for binding and warnings.
-
-`src/core/reference-binding.js`
-
-- Validates deterministic binding from request `references[]`.
-- Enforces duplicate `reference_id` checks.
-- Enforces primary/auxiliary clarity when the same entity and role has multiple images.
-- Supports warn/block handling for unbound entity mentions.
-
-`src/core/prompt-compiler.js`
-
-- Compiles internal provider prompts for the final image generation API.
-- Keeps internal prompt output out of public responses.
-
-`src/core/ragflow-enhancement.js`
-
-- Treats RAGFlow output as optional structured enhancement.
-- Discards invalid, unauthorized, oversized, or internally unsafe content.
-
-`src/core/runtime.js`, `src/core/errors.js`, and `src/core/labels.js`
-
-- Provide schema normalization, public error mapping, forbidden-field checks, id helpers, labels, and shared constants.
-
-`src/storage/trace-store.js`
-
-- Stores sanitized trace metadata without provider payloads or secrets.
+The public response does not expose final prompt, compiled prompt, raw enhancement, fallback state, provider payload, provider key, callback status, or internal debug data.
 
 ### Provider Adapter
 
 `src/providers/ai-tu-provider-adapter.js` contains the migrated real-provider capability from ai-tu gateway logic.
 
-Implemented capabilities:
+Implemented provider capabilities:
 
-- Environment/runtime-config provider configuration.
+- Runtime configuration from environment variables or ai-tu runtime config.
 - Endpoint validation.
 - API key selection without public exposure.
 - Authorization bearer request construction.
 - JSON text-to-image payload.
 - JSON image-to-image URL payload.
-- Timeout.
-- Retry and retry-after handling.
-- Retryable upstream error classification.
-- Provider response URL extraction.
-- Async job submit and poll support when upstream returns an async handle.
-- Public error mapping including missing config, timeout, unsupported response, and empty image result.
+- Long-running submit timeout for real image generation.
+- No automatic retry for non-idempotent image-generation submission.
+- Retry/retry-after logic for appropriate follow-up requests.
+- Provider URL response mapping.
+- Provider base64 image response mapping via real upstream bytes.
+- Async submit + poll support when upstream returns a task handle.
+- Public error mapping.
 
-Explicitly excluded:
+Important real-provider fix:
 
-- Multipart upload.
-- imgbb upload.
-- File upload.
-- Base64-to-image storage.
-- Local image storage.
-- Serving temporary reference images.
-- Any public exposure of provider payloads or keys.
+- The upstream relay returned successful images as `data[0].b64_json`, not an external URL.
+- The adapter now accepts real upstream base64 image bytes, stores them in memory through `src/storage/generated-image-store.js`, and returns a short-lived URL under `/api/v1/generated-images/<id>`.
+- This is not mock data and not fake success; the bytes are from the real upstream provider response.
+- No imgbb upload, multipart upload, or local file conversion is used.
 
-## Prompt Optimizer: 6 Task Types
+### Storage
 
-The optimizer supports all PRD task types and keeps `task_type` separate from `generation_mode`.
+`src/storage/generated-image-store.js`
 
-`generation_mode` rule:
+- Holds real upstream image bytes in memory for short-lived browser preview.
+- Returns `/api/v1/generated-images/<id>` paths.
+- Enforces TTL and a small maximum image count.
 
-- `references[]` empty: `text_to_image`.
-- `references[]` non-empty: `image_to_image`.
+`src/storage/trace-store.js`
 
-### `text_image`
+- Writes sanitized trace metadata only.
+- Stores endpoint, method, ids, task type, generation mode, prompt hash, reference count, image count, status, and error code.
+- Does not store prompt text, provider payload, provider key, Authorization header, Cookie, or upstream raw output.
 
-Ordinary text-to-image prompt. It improves the raw prompt into a complete image prompt with subject, composition, lighting, style, clarity, and negative constraints. It does not force professional multiview or storyboard structures.
+## PRD Task Coverage
 
-### `image_reference`
+Supported `task_type` values:
 
-Ordinary reference-image generation. It requires at least one reference and compiles a prompt that preserves reference visual traits while allowing a new image to be generated. Missing references returns a clarification response.
+- `text_image`
+- `image_reference`
+- `character_multiview`
+- `scene_multiview`
+- `prop_multiview`
+- `storyboard`
 
-### `character_multiview`
+`generation_mode` is separate from `task_type`:
 
-Character four-view / character sheet compiler. It requires character multiview semantics and includes:
+- `references[]` empty -> `text_to_image`.
+- `references[]` non-empty -> `image_to_image`.
 
-- 4 horizontal panels.
-- Front full-body standing pose.
-- Front head close-up.
-- Side full-body standing pose.
-- Back full-body standing pose.
-- Full head-to-toe visibility.
-- Visible shoes.
-- A-pose stance.
-- Natural hands with no held props.
-- Plain background and even lighting.
+TASK-1 callback:
 
-### `scene_multiview`
+- Accepts `callback_url` and `callback`.
+- Does not execute callback.
+- Does not block the main generation chain.
+- Does not return `callback_status`.
+- `CALLBACK_NOT_IMPLEMENTED` no longer affects normal requests.
 
-Scene multiview / multi-camera / live-lighting compiler. It dynamically reads primary and auxiliary references from `references[]`; it does not hardcode fixture names.
+TASK-2 schema:
 
-It compiles:
+- Role enum aligned to PRD, including `face_reference`, `material_reference`, `ornament_reference`, `lighting_reference`, and `composition_reference`.
+- `pattern_reference` aliases to `ornament_reference`.
+- `entity_type` uses a strict enum.
+- `output.count` is restricted to `1-4`.
+- `aspect_ratio`, `quality`, and `language` use strict enums.
 
-- Main scene reference handling.
-- Auxiliary reference handling by role/entity type.
-- Scene as the final deliverable.
-- Category-level space/layout/material/light expansion.
-- Multiview board structure including panorama, medium shot, close-ups, top view, floor plan, storyboard diagram, materials, and lighting.
-- Negative constraints against reference confusion and auxiliary references taking over the main scene deliverable.
+TASK-3 primary reference rules:
 
-### `prop_multiview`
+- `character_multiview` allows primary `face_reference` or `character_reference`.
+- `scene_multiview` allows primary `scene_reference`, `lighting_reference`, or `composition_reference`.
+- `prop_multiview` allows primary `prop_reference`, `material_reference`, or `ornament_reference`.
+- `image_reference` requires at least one reference.
+- `storyboard` can be pure text.
+- `text_image` forbids references.
 
-Prop asset multiview compiler. It focuses on object structure, material, pattern, and multi-angle asset delivery:
+TASK-4 single reference default primary:
 
-- Overall view.
-- Front, side, back views.
-- Top and bottom views.
-- Structural breakdown.
-- Material and pattern close-ups.
-- Scale reference.
-- Usage-context reference.
+- One reference for the same `entity_name + role` with empty `usage` is normalized to `primary`.
+- Multiple references for the same `entity_name + role` with empty `usage` still block.
+- Multiple primary references still block.
 
-### `storyboard`
+TASK-5 final visual E2E evidence:
 
-Film storyboard compiler. It does not produce a fixed 3x3 or fixed nine-grid board. It compiles:
+- Page triggered `POST /api/v1/image-generations`.
+- Page filled `references[].url`, `entity_name`, `role`, and `usage`.
+- Real provider was called.
+- Provider returned one real image through upstream bytes.
+- Page displayed a real image preview.
+- `evidence/network-summary.json` proves endpoint, HTTP 200, trace id, image count, and image preview visibility.
 
-- Left planning area.
-- Right story grid area.
-- Scene blocking.
-- Mood concept.
-- Lighting change.
-- Spatial relationship.
-- Character movement.
-- Camera scheduling.
-- Adaptive panel count based on story stages or existing shot list.
+## Current Verification Results
 
-Existing shot lists keep shot count, order, and core action while only supplementing shot size, camera movement, lighting, layout, and negative constraints.
+Automation:
 
-## Reference Plan
-
-`buildReferencePlan` returns:
-
-- `allRefs`
-- `primaryRefs`
-- `auxiliaryRefs`
-- `characterRefs`
-- `sceneRefs`
-- `propRefs`
-- `styleRefs`
-- `lightingRefs`
-- `compositionRefs`
-- `characterPrimaryRefs`
-- `characterAuxiliaryRefs`
-- `scenePrimaryRefs`
-- `sceneAuxiliaryRefs`
-- `propPrimaryRefs`
-- `propAuxiliaryRefs`
-- `styleAuxiliaryRefs`
-- `primaryEntityNames`
-- `auxiliaryEntityNames`
-- `allEntityNames`
-- `entityMentions`
-- `resolvedReferences`
-- `unboundMentions`
-- `generationMode`
-
-This is the central structure preventing hardcoded entity leakage and cross-fixture entity bleed.
-
-## RAGFlow Enhancement Boundary
-
-RAGFlow configuration is read from environment variables or local ai-tu runtime config files. Values are not logged in this report.
-
-RAGFlow request behavior:
-
-- Uses OpenAI-compatible chat completions endpoint.
-- Requests JSON-like enhancement guidance, not final prompt text.
-- Does not let RAGFlow decide reference binding.
-- Does not let RAGFlow add reference ids or image URLs.
-- Discards invalid, unsafe, unauthorized, field-summary, oversized, or internally revealing enhancement.
-
-If RAGFlow is unavailable or returns invalid content, the backend compiler still produces the prompt from deterministic local inputs. The frontend only sees business status, warnings, trace id, and the optimized prompt when successful.
-
-## Public API Privacy Boundary
-
-Public responses must not include:
-
-- `final_prompt`
-- `final_prompt_preview`
-- `compiled_prompt`
-- `enhancement`
-- RAGFlow raw output or status
-- fallback state
-- storyboard internal path decisions
-- provider payload
-- provider key
-- request authentication headers
-- browser session headers
-- runtime config values
-
-The test suite checks for these forbidden public fields.
-
-## Tests and Evidence
-
-Configured package scripts:
-
-```bash
-npm run check
-npm test
+```text
+npm run check: pass
+npm test: pass, 54 tests
 ```
 
-Current visual evidence:
+Browser evidence:
 
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/visual-e2e-report.md`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-text_image.png`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-image_reference.png`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-character_multiview.png`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-scene_multiview.png`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-prop_multiview.png`
-- `/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/ai-tu-prompt-optimizer-six-type-storyboard.png`
+- Screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
+- Network summary: `evidence/network-summary.json`
+- Visual report: `evidence/visual-e2e-report.md`
+- Latest successful trace: `trace_f8cfe50955db4268ac`
+- Latest final API result: `status=succeeded`, `image_count=1`, `http_status=200`
 
-The visual report records that the browser opened the ai-tu original page, used `POST /api/prompt-optimizer`, and verified prompt overwrite behavior for all six task types without exposing internal prompt/compiler/provider fields.
+Privacy checks:
 
-## Newcomer Runbook
+- No key/token stored in evidence.
+- No Authorization header stored in evidence.
+- No Cookie stored in evidence.
+- No provider raw payload stored in evidence.
+- No final prompt / compiled prompt / enhancement / fallback / callback status shown publicly.
 
-Install dependencies if needed:
+## Newcomer Handoff
+
+Start locally:
 
 ```bash
+cd /Volumes/App_Dev/new_Prompt_prj
 npm install
-```
-
-Start service:
-
-```bash
 npm start
 ```
 
@@ -372,56 +279,27 @@ Open:
 http://127.0.0.1:8787/
 ```
 
-Check syntax:
+Main manual test:
+
+1. Open the ai-tu original page.
+2. Choose `scene_multiview`.
+3. Fill prompt: `生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图`.
+4. Fill two references:
+   - `ref_char`, `萧昭宁`, `character_reference`, `auxiliary`, URL present.
+   - `ref_scene`, `营帐`, `scene_reference`, `primary`, URL present.
+5. Click `开始生成`.
+6. Confirm `POST /api/v1/image-generations` returns 200.
+7. Confirm image preview is visible.
+8. Confirm public page does not show internal prompt/enhancement/provider payload/key/token.
+
+Refresh the code map:
 
 ```bash
-npm run check
+python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard
 ```
 
-Run unit tests:
+## Git / Report Notes
 
-```bash
-npm test
-```
-
-Run provider config integration probe:
-
-```bash
-node tests/integration/provider-config.test.js
-```
-
-Expected provider behavior:
-
-- Missing provider config returns `PROVIDER_CONFIG_MISSING`; it must not fake success.
-- Provider responses with accessible `url`, `image_url`, or `output_url` are mapped to public image URLs.
-- Provider responses containing only base64/binary data return `PROVIDER_RESPONSE_UNSUPPORTED`.
-
-## Commit Safety Notes
-
-The following local paths are intentionally ignored or excluded from commit:
-
-- `.env`
-- `.env.*`
-- `.codegraph/`
-- `.understand-anything/`
-- `runtime-config.json`
-- `ai-tu/runtime-config.json`
-- `ai-tu/runtime-config.example.json`
-
-Reason: they can contain local runtime state, generated indexes, browser/dashboard artifacts, or secret-like configuration values.
-
-## High-Risk Change Areas
-
-When changing this project, review these paths first:
-
-- `src/routes/prompt-optimizations.js`: task type behavior, prompt compiler, quality gates, RAGFlow enhancement boundary.
-- `src/core/reference-binding.js`: reference uniqueness, primary/auxiliary rules, unbound mention policy.
-- `src/providers/ai-tu-provider-adapter.js`: real provider call, retry, timeout, URL response mapping, unsupported payload mapping.
-- `server.js`: route exposure and ai-tu frontend serving.
-- `ai-tu/ai-image-generator.html`: prompt overwrite and structured references UI.
-- `tests/unit/ai-tu-prompt-optimizer.test.js`: six task type and privacy regression coverage.
-- `tests/unit/image-api.test.js`: final image API schema, binding, provider response mapping, and privacy coverage.
-
-## Summary
-
-The repository is now structured as a root-level final image generation API service that serves the existing ai-tu frontend, adds a six-task prompt optimizer, keeps RAGFlow as optional enhancement, compiles final optimized prompts deterministically on the backend, and migrates real provider URL-based JSON generation through a scoped adapter. The committed code should preserve the privacy boundary by excluding runtime config files, local indexes, and any secret-bearing artifacts.
+- `.understand-anything/` contains generated local dashboard artifacts and may be ignored by git.
+- `CODEGRAPH_REPORT.md` is the root-level durable handoff report.
+- The ai-tu source file `ai-tu/gateway/server.js` remains a migration reference and was not modified for the final API service path.

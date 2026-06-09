@@ -7,6 +7,8 @@ const TRACE_FILE = resolve(".codex-agent-team/state/trace-store.jsonl");
 export async function appendTrace(record) {
   const safeRecord = {
     ts: new Date().toISOString(),
+    endpoint: record.endpoint || "",
+    method: record.method || "",
     trace_id: record.trace_id,
     request_id: record.request_id,
     generation_id: record.generation_id || "",

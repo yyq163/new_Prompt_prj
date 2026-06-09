@@ -33,6 +33,10 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       compiledPrompt: compiled.compiled_prompt,
       fetchImpl
     });
+    const publicImages = providerResult.images.map((image) => ({
+      ...image,
+      url: publicImageUrl(image.url)
+    }));
 
     const payload = {
       request_id: request.request_id,
@@ -46,7 +50,7 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
         task_type: request.task_type,
         task_type_label: taskTypeLabel(request.task_type)
       },
-      images: providerResult.images,
+      images: publicImages,
       normalized: {
         entity_mentions: binding.entity_mentions,
         references_used: binding.references_used
@@ -56,6 +60,8 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
     };
     assertNoForbiddenPublicFields(payload);
     await appendTrace({
+      endpoint: "/api/v1/image-generations",
+      method: "POST",
       trace_id: traceId,
       request_id: request.request_id,
       generation_id: generationId,
@@ -63,7 +69,7 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       generation_mode: request.generation_mode,
       prompt: request.prompt,
       reference_count: request.references.length,
-      image_count: providerResult.images.length,
+      image_count: publicImages.length,
       warning_count: binding.warnings.length,
       status: "succeeded"
     });
@@ -72,6 +78,8 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
     const mapped = error instanceof ImageApiError ? error : error;
     const { statusCode, payload } = publicErrorPayload(mapped, requestId);
     await appendTrace({
+      endpoint: "/api/v1/image-generations",
+      method: "POST",
       trace_id: traceId,
       request_id: requestId,
       task_type: taskType,
@@ -87,4 +95,10 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
     assertNoForbiddenPublicFields(payload);
     return { statusCode, payload };
   }
+}
+
+function publicImageUrl(url) {
+  if (!url || /^https?:\/\//i.test(url)) return url;
+  const base = `http://${process.env.HOST || "127.0.0.1"}:${process.env.PORT || 8787}`;
+  return `${base}${url.startsWith("/") ? url : `/${url}`}`;
 }

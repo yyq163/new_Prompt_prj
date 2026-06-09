@@ -47,6 +47,9 @@ test("frontend image job request includes structured references", () => {
   assert.match(html, /collectOptimizerReferences\(\{ requireUrl: true \}\)/);
   assert.match(html, /reference_policy:/);
   assert.match(html, /reference URL/);
+  assert.match(html, /finalApiEndpoint = "\/api\/v1\/image-generations"/);
+  assert.match(html, /fetch\(finalApiEndpoint/);
+  assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
 });
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {

@@ -164,8 +164,11 @@ export function validateReferences(references = []) {
   });
 
   for (const group of groups.values()) {
-    if (group.length <= 1) continue;
-    if (group.some((item) => !item.usage)) {
+    if (group.length === 1 && !group[0].usage) {
+      group[0].usage = "primary";
+      continue;
+    }
+    if (group.length > 1 && group.some((item) => !item.usage)) {
       fail("DUPLICATE_ENTITY_ROLE_REFERENCE", `「${group[0].entity_name}」存在多张${roleLabel(group[0].role)}，请显式指定 primary/auxiliary。`);
     }
     if (group.filter((item) => item.usage === "primary").length > 1) {
@@ -715,7 +718,7 @@ function isSceneReference(ref) {
 }
 
 function isCharacterReference(ref) {
-  return ref && (ref.entity_type === "character" || ref.role === "character_reference");
+  return ref && (ref.entity_type === "character" || ref.entity_type === "face" || ref.entity_type === "outfit" || ref.entity_type === "hair" || ["character_reference", "face_reference", "outfit_reference", "hair_reference"].includes(ref.role));
 }
 
 function isPropReference(ref) {
@@ -727,7 +730,7 @@ function isMaterialReference(ref) {
 }
 
 function isPatternReference(ref) {
-  return ref && (ref.entity_type === "pattern" || ref.role === "pattern_reference");
+  return ref && (ref.entity_type === "ornament" || ref.role === "ornament_reference");
 }
 
 function isStyleReference(ref) {
@@ -761,13 +764,17 @@ function roleUsageText(ref) {
   if (!ref) return "视觉参考";
   if (ref.role === "scene_reference" && ref.usage === "primary") return "场景主参考";
   if (ref.role === "scene_reference") return "场景参考";
+  if (ref.role === "face_reference" && ref.usage === "primary") return "脸部主参考";
+  if (ref.role === "face_reference") return "脸部参考";
   if (ref.role === "character_reference" && ref.usage === "primary") return "角色主参考";
   if (ref.role === "character_reference" && ref.usage === "auxiliary") return "辅助角色参考、空间尺度和调度参照";
   if (ref.role === "character_reference") return "角色参考";
+  if (ref.role === "outfit_reference") return "服装 / 造型参考";
+  if (ref.role === "hair_reference") return "发型参考";
   if (ref.role === "prop_reference" && ref.usage === "primary") return "道具主参考";
   if (ref.role === "prop_reference") return "道具参考";
   if (ref.role === "material_reference") return "材质参考";
-  if (ref.role === "pattern_reference") return "纹样参考";
+  if (ref.role === "ornament_reference") return "纹样 / 装饰参考";
   if (ref.role === "style_reference") return "风格参考";
   if (ref.role === "lighting_reference") return "光影参考";
   if (ref.role === "composition_reference") return "构图参考";

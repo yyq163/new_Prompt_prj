@@ -9,7 +9,15 @@ import { resolveReferences } from "../../src/core/reference-binding.js";
 import { normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
 import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
 import { inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
-import { defaultProviderConfig, extractImageUrls, hasRequiredProviderConfig, normalizeProviderResult, sanitizeProviderConfig } from "../../src/providers/ai-tu-provider-adapter.js";
+import {
+  defaultProviderConfig,
+  extractImageUrls,
+  hasRequiredProviderConfig,
+  longRunningSubmitConfig,
+  normalizeProviderResult,
+  postLiveImageUrlJson,
+  sanitizeProviderConfig
+} from "../../src/providers/ai-tu-provider-adapter.js";
 
 const imageUrl = "https://provider.example.com/generated.png";
 
@@ -49,6 +57,26 @@ test("schema errors still include trace_id and no internal fields", async () => 
   assertNoForbidden(result.payload);
 });
 
+test("callback_url and callback are accepted but not executed or exposed", async () => {
+  const withCallbackUrl = await call({
+    task_type: "text_image",
+    prompt: "生成一张山间晨雾图。",
+    references: [],
+    callback_url: "https://client.example.com/callback"
+  });
+  assert.equal(withCallbackUrl.statusCode, 200);
+  assert.equal(withCallbackUrl.payload.status, "succeeded");
+  assert.equal("callback_status" in withCallbackUrl.payload, false);
+  assert.equal(JSON.stringify(withCallbackUrl.payload).includes("CALLBACK_NOT_IMPLEMENTED"), false);
+
+  const withCallbackObject = normalizeRequest({
+    task_type: "storyboard",
+    prompt: "少女推开门。",
+    callback: { url: "https://client.example.com/cb" }
+  });
+  assert.equal(withCallbackObject.callback_url, "https://client.example.com/cb");
+});
+
 test("image_reference with references succeeds", async () => {
   const result = await call({
     task_type: "image_reference",
@@ -67,6 +95,16 @@ test("character_multiview character primary succeeds", async () => {
   });
   assert.equal(result.payload.status, "succeeded");
   assert.equal(result.payload.normalized.references_used[0].role, "character_reference");
+});
+
+test("character_multiview accepts primary face_reference", async () => {
+  const result = await call({
+    task_type: "character_multiview",
+    prompt: "生成 @萧昭宁 的四视图。",
+    references: [characterRef({ role: "face_reference", entity_type: "face", usage: "primary" })]
+  });
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(result.payload.normalized.references_used[0].role, "face_reference");
 });
 
 test("character_multiview character primary plus scene auxiliary succeeds", async () => {
@@ -90,6 +128,24 @@ test("scene_multiview scene primary plus character auxiliary succeeds", async ()
   assert.equal(result.payload.normalized.entity_mentions.length, 2);
 });
 
+test("scene_multiview accepts primary lighting and composition references", async () => {
+  const lighting = await call({
+    task_type: "scene_multiview",
+    prompt: "生成 @冷色光影 的现场光影多视角参考图",
+    references: [sceneRef({ reference_id: "ref_light", entity_name: "冷色光影", entity_type: "lighting", role: "lighting_reference", usage: "primary" })]
+  });
+  assert.equal(lighting.payload.status, "succeeded");
+  assert.equal(lighting.payload.normalized.references_used[0].role, "lighting_reference");
+
+  const composition = await call({
+    task_type: "scene_multiview",
+    prompt: "生成 @对称构图 的现场光影多视角参考图",
+    references: [sceneRef({ reference_id: "ref_comp", entity_name: "对称构图", entity_type: "composition", role: "composition_reference", usage: "primary" })]
+  });
+  assert.equal(composition.payload.status, "succeeded");
+  assert.equal(composition.payload.normalized.references_used[0].role, "composition_reference");
+});
+
 test("prop_multiview prop primary succeeds", async () => {
   const result = await call({
     task_type: "prop_multiview",
@@ -97,6 +153,34 @@ test("prop_multiview prop primary succeeds", async () => {
     references: [propRef({ usage: "primary" })]
   });
   assert.equal(result.payload.status, "succeeded");
+});
+
+test("prop_multiview accepts primary material and ornament references", async () => {
+  const material = await call({
+    task_type: "prop_multiview",
+    prompt: "生成 @青铜材质 的道具材质多视图。",
+    references: [propRef({ reference_id: "ref_material", entity_name: "青铜材质", entity_type: "material", role: "material_reference", usage: "primary" })]
+  });
+  assert.equal(material.payload.status, "succeeded");
+  assert.equal(material.payload.normalized.references_used[0].role, "material_reference");
+
+  const ornament = await call({
+    task_type: "prop_multiview",
+    prompt: "生成 @云纹装饰 的道具纹样多视图。",
+    references: [propRef({ reference_id: "ref_ornament", entity_name: "云纹装饰", entity_type: "ornament", role: "ornament_reference", usage: "primary" })]
+  });
+  assert.equal(ornament.payload.status, "succeeded");
+  assert.equal(ornament.payload.normalized.references_used[0].role, "ornament_reference");
+});
+
+test("pattern_reference is aliased to ornament_reference", () => {
+  const request = normalizeRequest({
+    task_type: "prop_multiview",
+    prompt: "生成 @云纹 的道具纹样多视图。",
+    references: [propRef({ entity_name: "云纹", entity_type: "pattern", role: "pattern_reference", usage: "primary" })]
+  });
+  assert.equal(request.references[0].role, "ornament_reference");
+  assert.equal(request.references[0].entity_type, "ornament");
 });
 
 test("storyboard script enhancement uses script-to-storyboard path internally", () => {
@@ -133,6 +217,17 @@ test("storyboard complete prompt preserve path", () => {
     missing_constraints: ["补充左侧光影变化示意"]
   });
   assert.equal(path, "preserve_full_prompt");
+});
+
+test("single reference without usage defaults to primary", () => {
+  const request = normalizeRequest({
+    task_type: "image_reference",
+    prompt: "参考 @萧昭宁 生成新图。",
+    references: [characterRef({ usage: "" })]
+  });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  assert.equal(binding.resolved_references[0].usage, "primary");
+  assert.equal(binding.references_used[0].usage, "primary");
 });
 
 test("RAGFlow missing/failing enhancement still succeeds with local compiler and provider", async () => {
@@ -198,6 +293,23 @@ test("multiple primary references fails", async () => {
   assert.equal(result.payload.error_code, "MULTIPLE_PRIMARY_REFERENCES");
 });
 
+test("strict role entity and output schema reject invalid values", () => {
+  assert.throws(() => normalizeRequest({
+    task_type: "image_reference",
+    prompt: "参考 @对象",
+    references: [characterRef({ role: "pattern_reference_old_bad", usage: "primary" })]
+  }), /参考图 role 不合法/);
+  assert.throws(() => normalizeRequest({
+    task_type: "image_reference",
+    prompt: "参考 @对象",
+    references: [characterRef({ entity_type: "unknown_entity", usage: "primary" })]
+  }), /reference\.entity_type 不合法/);
+  assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { count: 5 } }), /output\.count/);
+  assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { aspect_ratio: "2:3" } }), /output\.aspect_ratio/);
+  assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { quality: "ultra" } }), /output\.quality/);
+  assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { language: "fr-FR" } }), /output\.language/);
+});
+
 test("unbound_entity warn succeeds with warning", async () => {
   const result = await call({
     task_type: "image_reference",
@@ -220,8 +332,10 @@ test("unbound_entity block returns needs_clarification", async () => {
   assert.equal(result.payload.error_code, "ENTITY_REFERENCE_NOT_FOUND");
 });
 
-test("provider base64-only response is unsupported", () => {
-  assert.throws(() => extractImageUrls({ data: [{ b64_json: "abc" }] }), /上游返回的图片格式当前不支持/);
+test("provider base64-only response is exposed through generated image URL", () => {
+  const images = extractImageUrls({ data: [{ b64_json: Buffer.from("image-bytes").toString("base64") }] });
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
 });
 
 test("provider URL response mapper accepts url, image_url, and output_url", () => {
@@ -237,6 +351,43 @@ test("provider URL response mapper accepts url, image_url, and output_url", () =
     "https://provider.example.com/b.webp",
     "https://provider.example.com/c.jpeg"
   ]);
+});
+
+test("long-running image submit waits beyond relay completion time and does not retry non-idempotent generation", async () => {
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    model: "gpt-image-2",
+    imageModel: "gpt-image-2-all",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 180,
+    retryAttempts: 5
+  }));
+  assert.equal(config.requestTimeoutSeconds >= 420, true);
+  assert.equal(config.retryAttempts, 1);
+
+  let calls = 0;
+  await assert.rejects(() => postLiveImageUrlJson({
+    model: "gpt-image-2-all",
+    prompt: "生成参考图",
+    n: 1,
+    size: "1024x1024",
+    quality: "high",
+    output_format: "png",
+    images: [{ image_url: "https://example.com/ref.png" }]
+  }, {
+    ...config,
+    requestTimeoutSeconds: 10
+  }, async () => {
+    calls += 1;
+    return {
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      text: async () => JSON.stringify({ message: "upstream busy" }),
+      headers: { get: () => null }
+    };
+  }), /图片生成 provider 调用失败|请求失败/);
+  assert.equal(calls, 1);
 });
 
 test("provider async response polls internally and returns URL without exposing running state", async () => {
@@ -267,21 +418,34 @@ test("provider async response polls internally and returns URL without exposing 
 });
 
 test("missing provider config returns PROVIDER_CONFIG_MISSING through real adapter", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "provider-empty-"));
+  const configFile = join(dir, "runtime-config.json");
+  writeFileSync(configFile, JSON.stringify({}), "utf8");
   const oldKey = process.env.IMAGE_API_KEY;
   const oldKeys = process.env.IMAGE_API_KEYS;
   const oldBase = process.env.IMAGE_API_BASE;
+  const oldModel = process.env.IMAGE_MODEL;
+  const oldConfigFile = process.env.AI_TU_RUNTIME_CONFIG_FILE;
   delete process.env.IMAGE_API_KEY;
   delete process.env.IMAGE_API_KEYS;
-  process.env.IMAGE_API_BASE = "https://provider.example.com/v1/images/generations";
-  const result = await handleImageGeneration({
-    task_type: "text_image",
-    prompt: "生成山水。",
-    references: []
-  });
-  restoreEnv("IMAGE_API_KEY", oldKey);
-  restoreEnv("IMAGE_API_KEYS", oldKeys);
-  restoreEnv("IMAGE_API_BASE", oldBase);
-  assert.equal(result.payload.error_code, "PROVIDER_CONFIG_MISSING");
+  delete process.env.IMAGE_API_BASE;
+  delete process.env.IMAGE_MODEL;
+  process.env.AI_TU_RUNTIME_CONFIG_FILE = configFile;
+  try {
+    const result = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成山水。",
+      references: []
+    });
+    assert.equal(result.payload.error_code, "PROVIDER_CONFIG_MISSING");
+  } finally {
+    restoreEnv("IMAGE_API_KEY", oldKey);
+    restoreEnv("IMAGE_API_KEYS", oldKeys);
+    restoreEnv("IMAGE_API_BASE", oldBase);
+    restoreEnv("IMAGE_MODEL", oldModel);
+    restoreEnv("AI_TU_RUNTIME_CONFIG_FILE", oldConfigFile);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("provider config requires base URL, model, and at least one key", () => {

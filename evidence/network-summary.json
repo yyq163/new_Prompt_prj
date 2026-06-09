@@ -1,47 +1,46 @@
 {
-  "config_source": "ai-tu/runtime-config.example.json",
-  "ragflow_config_present": true,
-  "ragflow_base_is_18080": true,
-  "ragflow_chat_endpoint_reachable": true,
-  "ragflow_returned_choices": true,
-  "post_api_prompt_optimizer_triggered": true,
-  "optimized_prompt_written_to_prompt_box": true,
-  "task_type_cases": {
-    "text_image": {
-      "passed": true,
-      "generation_mode": "text_to_image",
-      "field_summary": false,
-      "internal_visible": false
-    },
-    "image_reference": {
-      "passed": true,
-      "generation_mode": "image_to_image",
-      "field_summary": false,
-      "internal_visible": false
-    },
-    "character_multiview": {
-      "passed": true,
-      "field_summary": false,
-      "internal_visible": false
-    },
-    "scene_multiview": {
-      "passed": true,
-      "field_summary": false,
-      "internal_visible": false,
-      "fixture_entity_bleed": false
-    },
-    "prop_multiview": {
-      "passed": true,
-      "field_summary": false,
-      "internal_visible": false,
-      "fixture_entity_bleed": false
-    },
-    "storyboard": {
-      "passed": true,
-      "field_summary": false,
-      "internal_visible": false,
-      "fixed_nine_grid": false
-    }
+  "page_url": "http://127.0.0.1:8787/",
+  "source_page": "ai-tu/ai-image-generator.html",
+  "post_api_v1_image_generations_triggered": true,
+  "network_event": {
+    "method": "POST",
+    "endpoint": "/api/v1/image-generations",
+    "status": 200,
+    "ok": true
   },
+  "trace": {
+    "trace_id": "trace_f8cfe50955db4268ac",
+    "request_id_present": true,
+    "generation_id_present": true,
+    "task_type": "scene_multiview",
+    "generation_mode": "image_to_image",
+    "reference_count": 2,
+    "image_count": 1,
+    "status": "succeeded",
+    "error_code": ""
+  },
+  "references_fields_filled": true,
+  "reference_rows": [
+    {
+      "reference_id": "ref_char",
+      "entity_name": "萧昭宁",
+      "role": "character_reference",
+      "usage": "auxiliary",
+      "url_present": true
+    },
+    {
+      "reference_id": "ref_scene",
+      "entity_name": "营帐",
+      "role": "scene_reference",
+      "usage": "primary",
+      "url_present": true
+    }
+  ],
+  "provider_config_ready": true,
+  "real_provider_attempted": true,
+  "image_url_returned": true,
+  "image_preview_visible": true,
+  "image_url_kind": "local_generated_image_url_from_real_upstream_bytes",
+  "forbidden_fields_visible": false,
   "blocked": false
 }

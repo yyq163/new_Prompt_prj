@@ -6,6 +6,7 @@ import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
 import { ImageApiError } from "./src/core/errors.js";
 import { makeId, stringValue } from "./src/core/runtime.js";
 import { generateWithAiTuProvider } from "./src/providers/ai-tu-provider-adapter.js";
+import { getGeneratedImage } from "./src/storage/generated-image-store.js";
 
 const ROOT = resolve(import.meta.dirname);
 const AI_TU_HTML_FILE = resolve(ROOT, "ai-tu/ai-image-generator.html");
@@ -56,6 +57,17 @@ async function route(request, response) {
     const job = legacyJobs.get(legacyJobMatch[1]);
     if (!job) return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" });
     return sendJson(response, 200, publicLegacyJob(job));
+  }
+  const generatedImageMatch = url.pathname.match(/^\/api\/v1\/generated-images\/([^/]+)$/);
+  if (request.method === "GET" && generatedImageMatch) {
+    const image = getGeneratedImage(decodeURIComponent(generatedImageMatch[1]));
+    if (!image) return sendJson(response, 404, { status: "failed", error_code: "IMAGE_NOT_FOUND", message: "图片不存在或已过期。" });
+    response.writeHead(200, {
+      "Content-Type": image.mime || "image/png",
+      "Content-Length": image.bytes.length,
+      "Cache-Control": "no-store"
+    });
+    return response.end(image.bytes);
   }
   if (request.method === "GET") {
     return serveStatic(url.pathname, response);

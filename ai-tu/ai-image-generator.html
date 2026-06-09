@@ -1757,27 +1757,16 @@
             <button class="primary generate-action" id="generateBtn" type="button" onclick="window.generateImageToolNow && window.generateImageToolNow()">开始生成</button>
             <label class="select-chip control-count">
               <span>数量</span>
-              <input class="compact-input" id="n" type="number" min="1" max="10" value="1">
+              <input class="compact-input" id="n" type="number" min="1" max="4" value="1">
             </label>
             <label class="select-chip control-aspect">
               <span>比例</span>
               <select id="aspectRatio" onchange="window.syncImageToolSize && window.syncImageToolSize()">
-                <option value="auto">Auto</option>
                 <option value="1:1">1 : 1</option>
-                <option value="3:2">3 : 2</option>
-                <option value="2:3">2 : 3</option>
                 <option value="4:3">4 : 3</option>
                 <option value="3:4">3 : 4</option>
-                <option value="5:4">5 : 4</option>
-                <option value="4:5">4 : 5</option>
                 <option value="16:9" selected>16 : 9</option>
                 <option value="9:16">9 : 16</option>
-                <option value="2:1">2 : 1</option>
-                <option value="1:2">1 : 2</option>
-                <option value="21:9">21 : 9</option>
-                <option value="9:21">9 : 21</option>
-                <option value="3:1">3 : 1</option>
-                <option value="1:3">1 : 3</option>
               </select>
             </label>
             <div class="resolution-block">
@@ -1796,10 +1785,8 @@
             <label class="select-chip control-quality">
               <span>质量</span>
               <select id="quality">
-                <option value="auto">auto</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
                 <option value="high">high</option>
+                <option value="standard">standard</option>
               </select>
             </label>
             <label class="select-chip control-output">
@@ -2213,9 +2200,9 @@
         row.innerHTML = `
           ${optimizerInput("reference_id", "reference_id", reference.reference_id)}
           ${optimizerInput("entity_name", "entity_name", reference.entity_name)}
-          ${optimizerSelect("entity_type", "entity_type", ["character", "scene", "prop", "style", "lighting", "composition"], reference.entity_type)}
+          ${optimizerSelect("entity_type", "entity_type", ["character", "scene", "prop", "outfit", "hair", "face", "material", "ornament", "style", "lighting", "composition", "storyboard"], reference.entity_type)}
           ${optimizerSelect("usage", "usage", ["primary", "auxiliary"], reference.usage)}
-          ${optimizerSelect("role", "role", ["character_reference", "scene_reference", "prop_reference", "style_reference", "lighting_reference", "composition_reference"], reference.role)}
+          ${optimizerSelect("role", "role", ["face_reference", "character_reference", "outfit_reference", "hair_reference", "prop_reference", "scene_reference", "style_reference", "composition_reference", "lighting_reference", "material_reference", "ornament_reference", "storyboard_reference"], reference.role)}
           ${optimizerInput("url", "url", reference.url, "wide")}
           ${optimizerInput("mime_type", "mime_type", reference.mime_type)}
           ${optimizerInput("display_name", "display_name", reference.display_name)}
@@ -2691,20 +2678,31 @@
         const request = buildJobRequest();
         validateJobRequest(request);
         setBusy(true);
-        setStatus("正在创建异步任务。", "busy");
-        const response = await fetch("/api/image-jobs", {
+        setStatus("正在调用最终生图 API。", "busy");
+        const finalApiEndpoint = "/api/v1/image-generations";
+        const response = await fetch(finalApiEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(request)
         });
+        const networkEvent = {
+          method: "POST",
+          endpoint: finalApiEndpoint,
+          status: response.status,
+          ok: response.ok
+        };
+        window.__finalImageApiNetworkEvents = [
+          ...(Array.isArray(window.__finalImageApiNetworkEvents) ? window.__finalImageApiNetworkEvents : []),
+          networkEvent
+        ].slice(-20);
+        document.documentElement.dataset.finalImageApiNetwork = JSON.stringify(networkEvent);
+        console.info("[final-image-api-network]", JSON.stringify(networkEvent));
         const payload = await parseJsonResponse(response);
         const job = normalizeJob(payload, request);
         upsertJob(job);
-        persistPendingJobs();
         renderJobs();
         previewJob(job.jobId);
-        setStatus("任务已创建，正在后台生成。", "busy");
-        pollJob(job.jobId, { immediate: true });
+        setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${job.error || "未知错误"}`, job.status === "succeeded" ? "good" : "bad");
       } catch (error) {
         setStatus(`生成失败：${errorToMessage(error)}`, "bad");
       } finally {
@@ -2733,11 +2731,18 @@
         task_type: controls.optimizerTaskType.value || "image_reference",
         mode: preferredMode === "image" || refList.length || hasReferenceUrls ? "image" : "text",
         size: computeSize(),
-        quality: controls.quality.value || "auto",
+        quality: controls.quality.value || "high",
         output_format: controls.outputFormat.value || "png",
-        n: clampNumber(Number(controls.n.value || 1), 1, 10),
+        n: clampNumber(Number(controls.n.value || 1), 1, 4),
         reference_policy: {
           unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
+        },
+        output: {
+          count: clampNumber(Number(controls.n.value || 1), 1, 4),
+          aspect_ratio: controls.aspectRatio.value || "16:9",
+          quality: controls.quality.value || "high",
+          return_format: "url",
+          language: "zh-CN"
         },
         references: structuredReferences,
         images: refList.map((ref) => ({
@@ -2784,7 +2789,10 @@
     function validateJobRequest(request) {
       if (!request.prompt) throw new Error("请填写提示词。");
       const hasUrlReferences = Array.isArray(request.references) && request.references.some((reference) => /^https?:\/\//i.test(reference.url || ""));
-      if (request.mode === "image" && request.images.length === 0 && !hasUrlReferences) {
+      if (request.task_type === "text_image" && hasUrlReferences) {
+        throw new Error("text_image 不允许填写 references。");
+      }
+      if (request.task_type === "image_reference" && !hasUrlReferences && request.images.length === 0) {
         throw new Error("图生图模式请先上传参考图或填写 reference URL。");
       }
       if (request.mode === "image" && request.images.some((image) => !image.image_url)) {
@@ -2869,13 +2877,15 @@
 
     function normalizeJob(payload, request = {}) {
       const fill = payload.fill || payload.request || (request.prompt ? buildJobFillSnapshot(request) : null);
+      const jobId = payload.jobId || payload.generation_id || payload.request_id || `job_${Date.now()}`;
+      const errorMessage = payload.error || payload.message || payload.error_code || null;
       return {
-        jobId: payload.jobId,
-        prompt: payload.prompt || request.prompt || "",
+        jobId,
+        prompt: payload.prompt || payload.input?.prompt || request.prompt || "",
         fill,
-        status: payload.status || "queued",
+        status: payload.status || (payload.images && payload.images.length ? "succeeded" : "failed"),
         images: Array.isArray(payload.images) ? payload.images : [],
-        error: payload.error || null,
+        error: errorMessage,
         createdAt: payload.createdAt || Date.now(),
         updatedAt: payload.updatedAt || Date.now()
       };
@@ -2983,7 +2993,7 @@
       controls.size.value = optionValueOrCurrent(controls.size, fill.sizeControl || sizeControlFromComputed(fill.size));
       controls.quality.value = optionValueOrCurrent(controls.quality, fill.quality);
       controls.outputFormat.value = optionValueOrCurrent(controls.outputFormat, fill.output_format);
-      controls.n.value = String(clampNumber(Number(fill.n || 1), 1, 10));
+      controls.n.value = String(clampNumber(Number(fill.n || 1), 1, 4));
 
       refs.fill(null);
       const images = Array.isArray(fill.images) ? fill.images.slice(0, MAX_REFS) : [];
@@ -3540,7 +3550,6 @@
     function computeSize() {
       const resolution = controls.size.value.trim();
       if (!resolution || resolution === "auto") return "auto";
-      if (controls.aspectRatio.value === "auto") return "auto";
       const longEdge = Number(resolution);
       if (!Number.isFinite(longEdge)) return resolution;
       const ratio = controls.aspectRatio.value;

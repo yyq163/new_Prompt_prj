@@ -33,9 +33,12 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       compiledPrompt: compiled.compiled_prompt,
       fetchImpl
     });
-    const publicImages = providerResult.images.map((image) => ({
-      ...image,
-      url: publicImageUrl(image.url)
+    const publicImages = providerResult.images.map((image, index) => ({
+      image_id: image.image_id || `img_${String(index + 1).padStart(3, "0")}`,
+      url: publicImageUrl(image.url),
+      width: Number.isFinite(Number(image.width)) ? Number(image.width) : null,
+      height: Number.isFinite(Number(image.height)) ? Number(image.height) : null,
+      format: typeof image.format === "string" && image.format.trim() ? image.format.trim() : "png"
     }));
 
     const payload = {
@@ -69,6 +72,7 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       generation_mode: request.generation_mode,
       prompt: request.prompt,
       reference_count: request.references.length,
+      callback_present: Boolean(request.callback_url),
       image_count: publicImages.length,
       warning_count: binding.warnings.length,
       status: "succeeded"
@@ -88,6 +92,7 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       status: payload.status,
       error_code: payload.error_code,
       reference_count: referenceCount,
+      callback_present: Boolean(body && (body.callback_url || body.callback)),
       image_count: 0,
       warning_count: 0
     });

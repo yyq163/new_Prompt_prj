@@ -28,19 +28,18 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   prop: "道具",
   outfit: "服装 / 造型",
   hair: "发型",
-  face: "脸部",
   material: "材质",
   ornament: "纹样 / 装饰",
   style: "风格",
   lighting: "光影",
   composition: "构图",
-  storyboard: "故事板"
+  storyboard: "故事板",
+  other: "其他"
 });
 
 export const VALID_TASK_TYPES = Object.freeze(Object.keys(TASK_TYPE_LABELS));
 export const VALID_REFERENCE_ROLES = Object.freeze(Object.keys(ROLE_LABELS));
 export const VALID_ENTITY_TYPES = Object.freeze(Object.keys(ENTITY_TYPE_LABELS));
-export const VALID_USAGES = Object.freeze(["primary", "auxiliary"]);
 export const ROLE_ALIASES = Object.freeze({
   pattern_reference: "ornament_reference"
 });
@@ -49,7 +48,7 @@ export const ENTITY_TYPE_ALIASES = Object.freeze({
 });
 export const VALID_ASPECT_RATIOS = Object.freeze(["1:1", "16:9", "9:16", "4:3", "3:4"]);
 export const VALID_OUTPUT_QUALITIES = Object.freeze(["standard", "high"]);
-export const VALID_OUTPUT_LANGUAGES = Object.freeze(["zh-CN", "en-US"]);
+export const VALID_OUTPUT_LANGUAGES = Object.freeze(["zh-CN"]);
 
 export function taskTypeLabel(taskType) {
   return TASK_TYPE_LABELS[taskType] || taskType;

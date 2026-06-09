@@ -1,6 +1,7 @@
 import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
-import { intRange, parseAspectSize, stringValue, walk } from "../core/runtime.js";
-import { putGeneratedImage } from "../storage/generated-image-store.js";
+import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
+import { normalizeProviderImages } from "./provider-result-normalizer.js";
+export { normalizeProviderImageObject } from "./provider-result-normalizer.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -155,6 +156,19 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
       ...init,
       signal: controller.signal
     });
+    const contentType = stringValue(response.headers?.get?.("content-type")).trim().toLowerCase();
+    if (/^image\/(png|jpeg|jpg|webp)(?:;|$)/i.test(contentType)) {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!response.ok) {
+        throw upstreamHttpError(response, {}, "", kind);
+      }
+      return {
+        data: [{
+          binary: bytes,
+          mime_type: contentType.split(";")[0].replace("image/jpg", "image/jpeg")
+        }]
+      };
+    }
     const text = await response.text();
     let json = {};
     try {
@@ -209,71 +223,7 @@ export function resolveUpstreamUrl(kind, config = defaultProviderConfig()) {
 }
 
 export function extractImageUrls(json, format = "png") {
-  const found = [];
-  const seen = new Set();
-
-  if (Array.isArray(json && json.data)) {
-    json.data.forEach((item) => pushImage(item));
-  }
-
-  if (Array.isArray(json && json.output)) {
-    json.output.forEach((item) => {
-      if (item && item.type === "image_generation_call" && item.result) {
-        pushImage({ b64_json: item.result, format });
-      }
-      if (Array.isArray(item && item.content)) item.content.forEach(pushImage);
-    });
-  }
-
-  walk(json, (node) => {
-    if (!node || typeof node !== "object") return;
-    if (node.b64_json || node.base64 || node.image_base64 || node.image || node.result || node.url || node.image_url || node.output_url) {
-      pushImage(node);
-    }
-    if (Array.isArray(node.images)) node.images.forEach(pushImage);
-  });
-
-  if (!found.length) {
-    throw new ImageApiError({
-      statusCode: 502,
-      status: "failed",
-      errorCode: "IMAGE_RESULT_EMPTY",
-      message: "接口返回里没有找到可访问的图片 URL。"
-    });
-  }
-  return found;
-
-  function pushImage(item) {
-    if (!item || typeof item !== "object") return;
-    const url = [item.url, item.image_url, item.output_url].find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
-    const base64 = cleanBase64(item.b64_json || item.base64 || item.image_base64 || item.result || imageStringValue(item.image));
-    const key = url || base64;
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    if (url) {
-      found.push({
-        url,
-        width: finiteNumber(item.width),
-        height: finiteNumber(item.height),
-        format: stringValue(item.format).trim() || inferFormat(url) || format
-      });
-      return;
-    }
-    const bytes = Buffer.from(base64, "base64");
-    const inferredFormat = stringValue(item.format).trim() || format || "png";
-    const stored = putGeneratedImage({
-      bytes,
-      mime: imageMime(item, inferredFormat),
-      format: inferredFormat
-    });
-    if (!stored) return;
-    found.push({
-      url: stored.path,
-      width: finiteNumber(item.width),
-      height: finiteNumber(item.height),
-      format: inferredFormat
-    });
-  }
+  return normalizeProviderImages(json, format);
 }
 
 export async function normalizeProviderResult(json, format = "png", fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
@@ -472,27 +422,6 @@ function upstreamErrorDetail(json, text, statusText) {
   return stringValue(candidates[0] || "unknown upstream error").slice(0, 300);
 }
 
-function cleanBase64(value) {
-  const text = stringValue(value).trim();
-  if (!text) return "";
-  const commaIndex = text.indexOf(",");
-  return (commaIndex >= 0 ? text.slice(commaIndex + 1) : text).replace(/\s+/g, "");
-}
-
-function imageStringValue(value) {
-  return typeof value === "string" ? value : "";
-}
-
-function imageMime(item, fallbackFormat = "png") {
-  const explicit = stringValue(item.mime || item.mimetype || item.mime_type || item.content_type || item.type).trim();
-  if (/^image\//i.test(explicit)) return explicit;
-  const format = stringValue(item.format || fallbackFormat || "png").trim().toLowerCase();
-  if (format === "jpg" || format === "jpeg") return "image/jpeg";
-  if (format === "webp") return "image/webp";
-  if (format === "gif") return "image/gif";
-  return "image/png";
-}
-
 async function mapWithConcurrency(items, limit, mapper) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -510,17 +439,4 @@ async function mapWithConcurrency(items, limit, mapper) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function finiteNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function inferFormat(url) {
-  const clean = String(url || "").split("?")[0].toLowerCase();
-  const match = clean.match(/\.([a-z0-9]+)$/);
-  if (!match) return "";
-  if (["png", "jpg", "jpeg", "webp", "gif"].includes(match[1])) return match[1] === "jpg" ? "jpeg" : match[1];
-  return "";
 }

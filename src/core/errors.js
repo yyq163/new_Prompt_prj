@@ -31,7 +31,7 @@ export function providerUnsupported() {
     statusCode: 502,
     status: "failed",
     errorCode: "PROVIDER_RESPONSE_UNSUPPORTED",
-    message: "上游返回的图片格式当前不支持，请更换支持图片 URL 返回的 provider。"
+    message: "上游返回的图片格式当前不支持。"
   });
 }
 

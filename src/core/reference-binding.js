@@ -1,16 +1,9 @@
 import { fail, clarification } from "./errors.js";
-import { roleLabel, VALID_REFERENCE_ROLES, VALID_USAGES } from "./labels.js";
-
-const REQUIRED_ROLE_BY_TASK = Object.freeze({
-  image_reference: null,
-  character_multiview: ["face_reference", "character_reference"],
-  scene_multiview: ["scene_reference", "lighting_reference", "composition_reference"],
-  prop_multiview: ["prop_reference", "material_reference", "ornament_reference"]
-});
+import { roleLabel, VALID_REFERENCE_ROLES } from "./labels.js";
 
 export function resolveReferences(request, entityMentions) {
   const references = validateReferences(request);
-  const warnings = [];
+  const warnings = taskReferenceWarnings(request, references);
   const refsByEntity = new Map();
   for (const ref of references) {
     const list = refsByEntity.get(ref.entity_name) || [];
@@ -60,14 +53,11 @@ function validateReferences(request) {
   if (request.task_type === "text_image" && references.length) {
     fail("REFERENCES_NOT_ALLOWED", "text_image 不允许传 references。");
   }
-
-  const requiredRole = REQUIRED_ROLE_BY_TASK[request.task_type];
   if (request.task_type === "image_reference" && !references.length) {
     fail("REFERENCE_REQUIRED", "当前任务类型需要至少一张参考图。");
   }
 
   const seenIds = new Set();
-  const groups = new Map();
   const items = references.map((ref, index) => {
     if (!ref.reference_id) fail("INVALID_REQUEST_SCHEMA", "reference_id 不能为空。");
     if (seenIds.has(ref.reference_id)) {
@@ -78,51 +68,60 @@ function validateReferences(request) {
     if (!VALID_REFERENCE_ROLES.includes(ref.role)) {
       fail("INVALID_REFERENCE_ROLE", "参考图 role 不合法。");
     }
-    if (ref.usage && !VALID_USAGES.includes(ref.usage)) {
-      fail("INVALID_REQUEST_SCHEMA", "reference.usage 必须是 primary 或 auxiliary。");
-    }
     if (!/^https?:\/\//i.test(ref.url)) {
       fail("INVALID_REQUEST_SCHEMA", "reference.url 必须是 http 或 https URL。");
     }
-    const item = {
+    return {
       ...ref,
-      usage: ref.usage || "",
       order: Number.isFinite(Number(ref.order)) ? Number(ref.order) : index + 1,
       role_label: roleLabel(ref.role)
     };
-    const groupKey = `${item.entity_name}\u0000${item.role}`;
-    const list = groups.get(groupKey) || [];
-    list.push(item);
-    groups.set(groupKey, list);
-    return item;
   });
 
-  for (const group of groups.values()) {
-    if (group.length === 1 && !group[0].usage) {
-      group[0].usage = "primary";
-      continue;
+  return items.sort((a, b) => a.order - b.order);
+}
+
+function taskReferenceWarnings(request, references) {
+  if (!references.length) {
+    if (request.task_type === "character_multiview") {
+      return [{
+        code: "CHARACTER_REFERENCE_MISSING",
+        message: "人物多视角图未提供人物脸部或角色参考图，人物一致性将主要依赖文本描述。"
+      }];
     }
-    if (group.length > 1 && group.some((item) => !item.usage)) {
-      fail("DUPLICATE_ENTITY_ROLE_REFERENCE", `「${group[0].entity_name}」存在多张${roleLabel(group[0].role)}，请显式指定 primary/auxiliary。`);
+    if (request.task_type === "scene_multiview") {
+      return [{
+        code: "SCENE_REFERENCE_MISSING",
+        message: "场景多视图图未提供场景参考图，空间一致性将主要依赖文本描述。"
+      }];
     }
-    if (group.filter((item) => item.usage === "primary").length > 1) {
-      fail("MULTIPLE_PRIMARY_REFERENCES", `「${group[0].entity_name}」存在多张主参考图，请只保留一张 primary。`);
+    if (request.task_type === "prop_multiview") {
+      return [{
+        code: "PROP_REFERENCE_MISSING",
+        message: "道具多视图图未提供道具参考图，道具一致性将主要依赖文本描述。"
+      }];
     }
   }
 
-  const normalized = items.map((item) => ({
-    ...item,
-    role_label: roleLabel(item.role)
-  }));
-
-  if (requiredRole && normalized.length) {
-    const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
-    if (!normalized.some((item) => item.usage === "primary" && allowedRoles.includes(item.role))) {
-      fail("REFERENCE_REQUIRED", `当前任务类型需要${allowedRoles.map(roleLabel).join("或")}作为 primary。`);
-    }
+  if (request.task_type === "character_multiview" && !references.some(isCharacterOrFaceReference)) {
+    return [{
+      code: "CHARACTER_REFERENCE_MISSING",
+      message: "人物多视角图未提供人物脸部或角色参考图，人物一致性将主要依赖文本描述。"
+    }];
   }
-
-  return normalized.sort((a, b) => a.order - b.order);
+  if (request.task_type === "scene_multiview" && !references.some(isSceneReference)) {
+    return [{
+      code: "SCENE_REFERENCE_MISSING",
+      message: "场景多视图图未提供场景参考图，空间一致性将主要依赖文本描述。"
+    }];
+  }
+  if (request.task_type === "prop_multiview" && !references.some(isPropReference)) {
+    return [{
+      code: "PROP_REFERENCE_MISSING",
+      message: "道具多视图图未提供道具参考图，道具一致性将主要依赖文本描述。"
+    }];
+  }
+  return [];
 }
 
 export function publicReference(ref) {
@@ -132,7 +131,28 @@ export function publicReference(ref) {
     entity_type: ref.entity_type,
     role: ref.role,
     role_label: roleLabel(ref.role),
-    usage: ref.usage || "",
+    display_name: ref.display_name || "",
     order: ref.order
   };
+}
+
+function isCharacterOrFaceReference(ref) {
+  return ref && (
+    ref.entity_type === "character" ||
+    ref.role === "character_reference" ||
+    ref.role === "face_reference"
+  );
+}
+
+function isSceneReference(ref) {
+  return ref && (ref.entity_type === "scene" || ref.role === "scene_reference");
+}
+
+function isPropReference(ref) {
+  return ref && (
+    ref.entity_type === "prop" ||
+    ref.role === "prop_reference" ||
+    ref.role === "material_reference" ||
+    ref.role === "ornament_reference"
+  );
 }

@@ -34,7 +34,8 @@ npm start
 
 - 不运行时 import/require `ai-tu/gateway/server.js`。
 - 不接收图片文件上传。
-- 不做 multipart、图床上传、base64 转 URL、二进制图片处理或临时文件转存。
+- 不做 multipart、图床上传、参考图上传或本地文件转存。
+- Provider 返回的 URL、base64、data URL 或 binary 生成图会统一标准化为 `images[].url`；其中真实上游 bytes 会通过短期内存 Generated Image Store 暴露为 `/api/v1/generated-images/:image_id`。
 - API 响应不返回 final prompt、compiled prompt、enhancement、RAGFlow 状态、fallback 状态、storyboard 路径或 provider payload。
 
 ## 测试

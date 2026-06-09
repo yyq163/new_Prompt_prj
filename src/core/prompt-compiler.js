@@ -55,9 +55,8 @@ export function compilePrompt({ request, binding, enhancement = null }) {
 function describeReferences(references) {
   if (!references || !references.length) return "";
   return references.map((ref) => {
-    const usage = ref.usage ? `，${ref.usage}` : "";
     const description = ref.description ? `，说明：${ref.description}` : "";
-    return `${ref.entity_name}=${roleLabel(ref.role)}${usage}，reference_id=${ref.reference_id}${description}`;
+    return `${ref.entity_name}=${roleLabel(ref.role)}，reference_id=${ref.reference_id}${description}`;
   }).join("；");
 }
 
@@ -105,15 +104,15 @@ function characterMultiviewTemplate(enhancement) {
 
 function sceneMultiviewTemplate(enhancement) {
   return [
-    "模板：生成场景空间、现场光影、调度和多机位参考板。人物只作为现场比例、动作、调度和光影锚点，不改变场景多视图交付物属性。",
-    "输出应呈现场景主参考的空间结构、入口/纵深/遮挡关系、主要光源和可拍摄机位。",
+    "模板：生成场景空间、现场光影、调度和多机位参考板。所有已绑定参考图等权使用，按 role 表达角色、场景、道具、风格、光影和构图用途，避免参考图串用。",
+    "输出应呈现场景空间结构、入口/纵深/遮挡关系、主要光源和可拍摄机位。",
     enhancementLine(enhancement, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "negative_notes"])
   ].filter(Boolean).join("\n");
 }
 
 function propMultiviewTemplate(enhancement) {
   return [
-    "模板：生成道具资产多视图、结构、材质和纹样参考板。角色或场景只作为比例和使用语境，不改变道具主交付物属性。",
+    "模板：生成道具资产多视图、结构、材质和纹样参考板。所有已绑定参考图等权使用，按 role 表达比例、使用语境、材质、纹样和场景关系。",
     "输出应包含正面、侧面、背面、细节材质和使用状态。",
     enhancementLine(enhancement, ["visual_focus", "lighting_notes", "composition_notes", "negative_notes"])
   ].filter(Boolean).join("\n");

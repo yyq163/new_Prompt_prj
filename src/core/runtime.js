@@ -19,16 +19,16 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["request_id", "generation_id", "status", "task_type", "task_type_label", "generation_mode", "input", "images", "normalized", "warnings", "trace_id"]
   },
   ReferenceInput: {
-    fields: ["reference_id", "entity_name", "entity_type", "role", "usage", "url", "mime_type", "display_name", "description", "order"]
+    fields: ["reference_id", "entity_name", "entity_type", "role", "url", "mime_type", "display_name", "description", "order"]
   },
   EntityMention: {
     fields: ["mention_id", "marker", "entity_name", "reference_status", "matched_reference_ids"]
   },
   ResolvedReference: {
-    fields: ["reference_id", "entity_name", "entity_type", "role", "role_label", "usage", "url", "order"]
+    fields: ["reference_id", "entity_name", "entity_type", "role", "role_label", "url", "order"]
   },
   ReferencePolicy: {
-    fields: ["unbound_entity", "duplicate_entity_role"]
+    fields: ["unbound_entity"]
   },
   GenerationImage: {
     fields: ["image_id", "url", "width", "height", "format"]
@@ -116,6 +116,23 @@ export function normalizeRequest(body) {
   };
 }
 
+export function assertReferenceUrlAllowed(value, field = "reference.url") {
+  const url = stringValue(value).trim();
+  if (!/^https?:\/\//i.test(url)) {
+    fail("INVALID_REQUEST_SCHEMA", `${field} 必须是 http 或 https URL。`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    fail("INVALID_REQUEST_SCHEMA", `${field} 必须是合法 URL。`);
+  }
+  if (isLocalReferenceHost(parsed.hostname) && process.env.ALLOW_LOCAL_REFERENCE_URLS !== "true") {
+    fail("INVALID_REQUEST_SCHEMA", `${field} 默认不允许 localhost 或内网地址。`);
+  }
+  return url;
+}
+
 function normalizeReference(item, index) {
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference 必须是对象。`);
@@ -125,8 +142,7 @@ function normalizeReference(item, index) {
     entity_name: stringValue(item.entity_name).trim(),
     entity_type: normalizeEntityType(item.entity_type),
     role: normalizeReferenceRole(item.role),
-    usage: stringValue(item.usage).trim(),
-    url: stringValue(item.url).trim(),
+    url: assertReferenceUrlAllowed(item.url, "reference.url"),
     mime_type: stringValue(item.mime_type).trim(),
     display_name: stringValue(item.display_name).trim(),
     description: stringValue(item.description).trim(),
@@ -134,13 +150,22 @@ function normalizeReference(item, index) {
   };
 }
 
+function isLocalReferenceHost(hostname) {
+  const host = stringValue(hostname).trim().toLowerCase();
+  if (!host) return false;
+  if (host === "localhost" || host === "::1" || host === "0.0.0.0") return true;
+  if (/^127\./.test(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  const private172 = host.match(/^172\.(\d+)\./);
+  return Boolean(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
+}
+
 function normalizeReferencePolicy(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const unbound = source.unbound_entity === "block" ? "block" : "warn";
-  const duplicate = source.duplicate_entity_role === "warn" ? "warn" : "block";
   return {
-    unbound_entity: unbound,
-    duplicate_entity_role: duplicate
+    unbound_entity: unbound
   };
 }
 
@@ -150,6 +175,7 @@ function normalizeOutput(value) {
   const aspectRatio = stringValue(source.aspect_ratio).trim() || "1:1";
   const quality = stringValue(source.quality).trim() || "high";
   const language = stringValue(source.language).trim() || "zh-CN";
+  const returnFormat = stringValue(source.return_format).trim() || "url";
   if (!VALID_ASPECT_RATIOS.includes(aspectRatio)) {
     fail("INVALID_REQUEST_SCHEMA", "output.aspect_ratio 不合法。");
   }
@@ -158,6 +184,9 @@ function normalizeOutput(value) {
   }
   if (!VALID_OUTPUT_LANGUAGES.includes(language)) {
     fail("INVALID_REQUEST_SCHEMA", "output.language 不合法。");
+  }
+  if (returnFormat !== "url") {
+    fail("INVALID_REQUEST_SCHEMA", "output.return_format 只支持 url。");
   }
   return {
     count,

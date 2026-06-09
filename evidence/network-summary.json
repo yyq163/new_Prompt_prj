@@ -1,46 +1,54 @@
 {
-  "page_url": "http://127.0.0.1:8787/",
+  "endpoint": "/api/v1/image-generations",
+  "method": "POST",
+  "http_status": 200,
+  "api_status": "succeeded",
+  "image_count": 1,
+  "image_url_kind": "service_generated_image_url_from_real_provider_bytes",
+  "forbidden_fields_present": false,
+  "real_provider_attempted": true,
+  "image_preview_visible": true,
+  "primary_auxiliary_ui_present": false,
   "source_page": "ai-tu/ai-image-generator.html",
-  "post_api_v1_image_generations_triggered": true,
-  "network_event": {
-    "method": "POST",
-    "endpoint": "/api/v1/image-generations",
-    "status": 200,
-    "ok": true
+  "page_url": "http://127.0.0.1:8787/",
+  "visual_click_used": true,
+  "trace_id": "trace_b969c3374ff4465590",
+  "generation_id_present": true,
+  "request_id_present": true,
+  "task_type": "scene_multiview",
+  "generation_mode": "image_to_image",
+  "reference_count": 3,
+  "references_fields_filled": {
+    "reference_id": true,
+    "entity_name": true,
+    "entity_type": true,
+    "role": true,
+    "url": true
   },
-  "trace": {
-    "trace_id": "trace_f8cfe50955db4268ac",
-    "request_id_present": true,
-    "generation_id_present": true,
-    "task_type": "scene_multiview",
-    "generation_mode": "image_to_image",
-    "reference_count": 2,
-    "image_count": 1,
-    "status": "succeeded",
-    "error_code": ""
-  },
-  "references_fields_filled": true,
   "reference_rows": [
     {
-      "reference_id": "ref_char",
+      "reference_id": "ref_char_1",
       "entity_name": "萧昭宁",
+      "entity_type": "character",
       "role": "character_reference",
-      "usage": "auxiliary",
       "url_present": true
     },
     {
-      "reference_id": "ref_scene",
+      "reference_id": "ref_scene_1",
       "entity_name": "营帐",
+      "entity_type": "scene",
       "role": "scene_reference",
-      "usage": "primary",
+      "url_present": true
+    },
+    {
+      "reference_id": "ref_char_2",
+      "entity_name": "萧昭宁",
+      "entity_type": "character",
+      "role": "face_reference",
       "url_present": true
     }
   ],
-  "provider_config_ready": true,
-  "real_provider_attempted": true,
-  "image_url_returned": true,
-  "image_preview_visible": true,
-  "image_url_kind": "local_generated_image_url_from_real_upstream_bytes",
-  "forbidden_fields_visible": false,
+  "generated_image_route_used": true,
+  "generated_image_route_preview_visible": true,
   "blocked": false
 }

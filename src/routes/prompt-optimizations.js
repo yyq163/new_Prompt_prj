@@ -1,7 +1,7 @@
 import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/errors.js";
 import { extractEntityMentions } from "../core/entity-mentions.js";
-import { assertNoForbiddenPublicFields, makeId, normalizeRequest, stringValue } from "../core/runtime.js";
-import { roleLabel, taskTypeLabel, VALID_REFERENCE_ROLES, VALID_USAGES } from "../core/labels.js";
+import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, normalizeRequest, stringValue } from "../core/runtime.js";
+import { roleLabel, taskTypeLabel, VALID_REFERENCE_ROLES } from "../core/labels.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -85,7 +85,7 @@ async function buildPromptOptimizationContext(request, options = {}) {
 
 function resolvePromptOptimizationReferences(request, entityMentions) {
   const references = validateReferences(request.references || []);
-  const warnings = [];
+  const warnings = taskReferenceWarnings(request, references);
   const refsByEntity = new Map();
   for (const ref of references) {
     const list = refsByEntity.get(ref.entity_name) || [];
@@ -134,10 +134,31 @@ function resolvePromptOptimizationReferences(request, entityMentions) {
   };
 }
 
+function taskReferenceWarnings(request, references) {
+  if (request.task_type === "character_multiview" && !references.some(isCharacterReference)) {
+    return [{
+      code: "CHARACTER_REFERENCE_MISSING",
+      message: "人物多视角图未提供人物脸部或角色参考图，人物一致性将主要依赖文本描述。"
+    }];
+  }
+  if (request.task_type === "scene_multiview" && !references.some(isSceneReference)) {
+    return [{
+      code: "SCENE_REFERENCE_MISSING",
+      message: "场景多视图图未提供场景参考图，空间一致性将主要依赖文本描述。"
+    }];
+  }
+  if (request.task_type === "prop_multiview" && !references.some(isPropReference)) {
+    return [{
+      code: "PROP_REFERENCE_MISSING",
+      message: "道具多视图图未提供道具参考图，道具一致性将主要依赖文本描述。"
+    }];
+  }
+  return [];
+}
+
 export function validateReferences(references = []) {
   if (!Array.isArray(references)) fail("INVALID_REQUEST_SCHEMA", "references 必须是数组。");
   const seenIds = new Set();
-  const groups = new Map();
   const normalized = references.map((ref, index) => {
     if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
       fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference 必须是对象。`);
@@ -147,34 +168,16 @@ export function validateReferences(references = []) {
     seenIds.add(ref.reference_id);
     if (!ref.entity_name) fail("INVALID_REQUEST_SCHEMA", "reference.entity_name 不能为空。");
     if (!VALID_REFERENCE_ROLES.includes(ref.role)) fail("INVALID_REFERENCE_ROLE", "参考图 role 不合法。");
-    if (ref.usage && !VALID_USAGES.includes(ref.usage)) fail("INVALID_REQUEST_SCHEMA", "reference.usage 必须是 primary 或 auxiliary。");
-    if (!/^https?:\/\//i.test(ref.url)) fail("INVALID_REQUEST_SCHEMA", "reference.url 必须是 http 或 https URL。");
+    const url = assertReferenceUrlAllowed(ref.url, "reference.url");
 
     const item = {
       ...ref,
-      usage: ref.usage || "",
+      url,
       order: Number.isFinite(Number(ref.order)) ? Number(ref.order) : index + 1,
       role_label: roleLabel(ref.role)
     };
-    const groupKey = `${item.entity_name}\u0000${item.role}`;
-    const list = groups.get(groupKey) || [];
-    list.push(item);
-    groups.set(groupKey, list);
     return item;
   });
-
-  for (const group of groups.values()) {
-    if (group.length === 1 && !group[0].usage) {
-      group[0].usage = "primary";
-      continue;
-    }
-    if (group.length > 1 && group.some((item) => !item.usage)) {
-      fail("DUPLICATE_ENTITY_ROLE_REFERENCE", `「${group[0].entity_name}」存在多张${roleLabel(group[0].role)}，请显式指定 primary/auxiliary。`);
-    }
-    if (group.filter((item) => item.usage === "primary").length > 1) {
-      fail("MULTIPLE_PRIMARY_REFERENCES", `「${group[0].entity_name}」存在多张主参考图，请只保留一张 primary。`);
-    }
-  }
   return normalized.sort((a, b) => a.order - b.order);
 }
 
@@ -185,7 +188,7 @@ function publicPromptReference(ref) {
     entity_type: ref.entity_type,
     role: ref.role,
     role_label: roleLabel(ref.role),
-    usage: ref.usage || "",
+    display_name: ref.display_name || "",
     order: ref.order
   };
 }
@@ -308,14 +311,14 @@ function ragflowSystemPrompt() {
     "不要输出最终 prompt，不要输出 final_prompt，不要输出 compiled_prompt。",
     "输出 JSON 对象，字段只能来自 scene_summary、visual_focus、story_function、action_stages、shot_plan、normalized_shot_plan、lighting_notes、composition_notes、negative_notes、template_guidance。",
     "必须根据 task_type、raw_prompt、references[] 动态提供补充建议。",
-    "不得新增 reference_id，不得新增图片 URL，不得改变主参考和辅助参考关系，不得把任何样例实体写死为规则。"
+    "不得新增 reference_id，不得新增图片 URL，不得改变后端确定的参考图绑定关系，不得把任何样例实体写死为规则。"
   ].join("");
 }
 
 function ragflowUserPrompt(request, binding, referencePlan) {
   const refs = binding.resolved_references || [];
   const referenceLines = refs.map((ref) => (
-    `- ${mention(ref, ref.entity_type || "对象")}: entity_type=${ref.entity_type}, role=${ref.role}, usage=${ref.usage || "reference"}, description=${ref.description || ref.display_name || ""}`
+    `- ${mention(ref, ref.entity_type || "对象")}: entity_type=${ref.entity_type}, role=${ref.role}, description=${ref.description || ref.display_name || ""}`
   ));
   return [
     `task_type=${request.task_type}`,
@@ -432,19 +435,19 @@ function imageReferencePrompt(context) {
   return [
     `基于参考图生成一张新的完整图像，围绕“${theme}”组织主体、环境、构图、光影和材质。${referenceText}。`,
     `${guidance}参考图用于稳定主体特征、风格气质、构图关系、光影方向或材质细节；新画面可以根据提示词重新组织场景和镜头，但必须保持参考对象的关键视觉特征和绑定关系。`,
-    "画面应是普通参考图生图结果，不要强行变成人物四视图、场景多视图、道具多视图或故事板。构图完整，主体边界清晰，材质细节可辨，光源统一。不要机械复制参考图，不要改变参考对象身份，不要混淆多个参考对象，不要新增未提供的主参考对象，不要出现文字、水印、标签、畸形结构、低清晰度或风格断裂。"
+    "画面应是普通参考图生图结果，不要强行变成人物四视图、场景多视图、道具多视图或故事板。构图完整，主体边界清晰，材质细节可辨，光源统一。不要机械复制参考图，不要改变参考对象身份，不要混淆多个参考对象，不要新增未提供的参考对象，不要出现文字、水印、标签、畸形结构、低清晰度或风格断裂。"
   ].filter(Boolean).join("\n\n");
 }
 
 function characterMultiviewPrompt(context) {
   const plan = context.referencePlan;
-  const character = characterMainRefs(plan);
+  const character = characterTaskRefs(plan);
   const name = namesText(character, mentionFromRaw(context.request.prompt, "角色"));
-  const auxiliaryText = auxiliaryRefsText({ ...plan, auxiliaryRefs: plan.auxiliaryRefs.filter((ref) => !isSameRefList(ref, character)) });
+  const referenceText = roleRefsText(plan, character);
   const guidance = enhancementText(context, ["visual_focus", "composition_notes", "template_guidance"]);
   return [
     `生成一张人物多视角图，也就是角色四视图 / 角色设定图 / 人物一致性参考图，以 ${name} 作为角色主交付物。${name} 必须保持身份、五官特征、发型、服饰结构、身体比例、色彩搭配和整体气质稳定一致。`,
-    `${auxiliaryText ? `辅助参考包括 ${auxiliaryText}，只能用于服装、发型、头饰、配饰、风格、光影或少量环境气氛辅助，不得改变角色主交付物。` : ""}${guidance}`,
+    `${referenceText ? `参考图等权使用：${referenceText}。按 role 将参考图用于脸部、角色、服装、发型、道具、场景、风格、构图或光影约束，不要改变用户指定的参考绑定。` : ""}${guidance}`,
     "画面必须采用 4 格横向布局：第一格为正面全身站姿，第二格为正面头部特写，第三格为侧面全身站姿，第四格为背面全身站姿。所有全身视图都必须头到脚完整，鞋子完整可见，A 字站姿，双手自然下垂或微微张开，手上无道具，比例统一，服装轮廓和细节在不同视角中保持一致。",
     "背景使用纯色背景或极简浅色背景，光线均匀，人物轮廓清晰，适合角色建模、角色一致性训练、后续 AIGC 角色复用和美术设定交付。",
     "不要生成普通人物写真、单张立绘、单一视角或剧情图；不要只有正面、缺侧面、缺背面、多个头部特写、手持武器或道具、复杂剧情背景抢主体；不要出现文字、水印、标签、UI 标识、畸形肢体、错乱五官、重复脸、低清晰度或服装前后不一致。"
@@ -453,47 +456,47 @@ function characterMultiviewPrompt(context) {
 
 function sceneMultiviewPrompt(context) {
   const plan = context.referencePlan;
-  const mainRefs = sceneMainRefs(plan);
-  const sceneName = namesText(mainRefs, mentionFromRaw(context.request.prompt, "主场景"));
-  const auxiliaryText = auxiliaryRefsText(plan);
-  const characterText = namesText(plan.characterAuxiliaryRefs, "");
-  const nonCharacterAuxiliaryText = auxiliaryRefsText({
+  const sceneRefs = sceneTaskRefs(plan);
+  const sceneName = namesText(sceneRefs, mentionFromRaw(context.request.prompt, "场景"));
+  const referenceText = roleRefsText(plan);
+  const characterText = namesText(plan.characterRefs, "");
+  const nonCharacterText = roleRefsText({
     ...plan,
-    auxiliaryRefs: plan.auxiliaryRefs.filter((ref) => !isCharacterReference(ref))
+    allRefs: plan.allRefs.filter((ref) => !isCharacterReference(ref))
   });
   const theme = stripCommandPrefix(context.request.prompt);
   const guidance = enhancementText(context, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "template_guidance"]);
   const characterSentence = characterText
-    ? `${characterText} 仅作为辅助角色参考，用于空间尺度锚点、站位锚点、行动调度锚点和互动关系参照，不作为人物主图，不喧宾夺主。`
+    ? `${characterText} 作为角色参考进入场景，用于空间尺度锚点、站位锚点、行动调度锚点和互动关系参照，不作为人物主图，不喧宾夺主。`
     : "";
-  const nonCharacterSentence = nonCharacterAuxiliaryText
-    ? `其他辅助参考按其类型表达为局部物件、风格、光影或构图约束：${nonCharacterAuxiliaryText}，不得强行改写为角色尺度。`
+  const nonCharacterSentence = nonCharacterText
+    ? `其他参考按其 role 表达为场景、局部物件、风格、光影或构图约束：${nonCharacterText}，不得强行改写为角色尺度。`
     : "";
-  const characterNegative = plan.characterAuxiliaryRefs.length
+  const characterNegative = plan.characterRefs.length
     ? "不要让辅助角色喧宾夺主，不要生成角色立绘式主图，"
     : "";
   return [
-    `生成一套以 ${sceneName} 为主参考的影视级 / AIGC 场景多视图参考板。最终交付物围绕“${theme}”展开，必须是场景多机位、空间关系、现场光影和氛围参考板，不是单张场景美图，也不是人物主图。${sceneName} 是场景主参考，必须保持空间结构、区域布局、材质层次、结构细节、光影方向和空间纵深稳定一致。`,
-    `${auxiliaryText ? `辅助参考包括 ${auxiliaryText}，所有辅助参考只能服务场景主交付物。` : ""}${characterSentence}${nonCharacterSentence}${guidance}`,
+    `生成一套围绕 ${sceneName} 的影视级 / AIGC 场景多视图参考板。最终交付物围绕“${theme}”展开，必须是场景多机位、空间关系、现场光影和氛围参考板，不是单张场景美图，也不是人物主图。所有 references[] 等权使用，必须按各自 role 保持空间结构、区域布局、材质层次、结构细节、光影方向、角色关系和构图逻辑稳定一致。`,
+    `${referenceText ? `参考图集合包括 ${referenceText}。` : ""}${characterSentence}${nonCharacterSentence}${guidance}`,
     "场景元素只做类别级补全：空间结构、区域布局、主要陈设、可见材质、关键区域、结构细节、光影方向、空间纵深、局部物件和环境元素。不要主动脑补具体物件，除非它来自原始提示词、reference 名称、reference 描述或合格增强信息。",
-    `采用 3×3 或等价多视图 / 多机位 / 场景设定参考板结构：全景镜头展示 ${sceneName} 的整体空间关系；中景镜头展示关键区域和辅助参考的尺度关系；陈设特写展示主要陈设与局部物件；装饰 / 结构特写展示可见结构细节；材质特写展示表面质感和材质层次；关键区域 / 局部特写展示空间功能和行动锚点；俯视全景展示区域分布；平面布局图展示入口、动线、尺度和空间关系；分镜示意图展示现场调度、光线方向和镜头衔接。`,
-    "整体风格为写实影视概念设计，画面清晰，空间信息稳定，主体关系明确，光影层次丰富，材质细节可辨。以场景为主，辅助参考为辅，重点服务场景资产设计、现场光影设计、多机位分镜参考和后续 AIGC 场景复用。",
-    `严格遵守参考绑定，${sceneName} 是主参考，${auxiliaryText || "辅助参考"} 不得改变主交付物。不要混淆实体身份，不要改变参考绑定关系，不要新增未提供的参考对象，${characterNegative}不要出现文字、水印、标签、重复主体、畸形肢体、低清晰度、过度虚化、空间错乱或互相矛盾的场景结构。`
+    `采用 3×3 或等价多视图 / 多机位 / 场景设定参考板结构：全景镜头展示 ${sceneName} 的整体空间关系；中景镜头展示关键区域和参考对象的尺度关系；陈设特写展示主要陈设与局部物件；装饰 / 结构特写展示可见结构细节；材质特写展示表面质感和材质层次；关键区域 / 局部特写展示空间功能和行动锚点；俯视全景展示区域分布；平面布局图展示入口、动线、尺度和空间关系；分镜示意图展示现场调度、光线方向和镜头衔接。`,
+    "整体风格为写实影视概念设计，画面清晰，空间信息稳定，主体关系明确，光影层次丰富，材质细节可辨。重点服务场景资产设计、现场光影设计、多机位分镜参考和后续 AIGC 场景复用。",
+    `严格遵守参考绑定，不要混淆实体身份，不要改变 reference_id 与实体的绑定关系，不要新增未提供的参考对象，${characterNegative}不要出现文字、水印、标签、重复主体、畸形肢体、低清晰度、过度虚化、空间错乱或互相矛盾的场景结构。`
   ].filter(Boolean).join("\n\n");
 }
 
 function propMultiviewPrompt(context) {
   const plan = context.referencePlan;
-  const prop = propMainRefs(plan);
+  const prop = propTaskRefs(plan);
   const name = namesText(prop, mentionFromRaw(context.request.prompt, "主道具"));
-  const auxiliaryText = auxiliaryRefsText({ ...plan, auxiliaryRefs: plan.auxiliaryRefs.filter((ref) => !isSameRefList(ref, prop)) });
+  const referenceText = roleRefsText(plan);
   const guidance = enhancementText(context, ["visual_focus", "composition_notes", "template_guidance"]);
   return [
     `生成一张道具多视图资产参考板，也是一套道具资产 / 多角度资产图，以 ${name} 作为道具主交付物，最终呈现道具结构、材质、纹样和多角度资产图，不是普通产品图，也不是单张道具美图。${name} 必须保持轮廓、体块、比例、连接结构、开合结构、边缘结构、可活动部件、装饰位置、局部细节和材质层次稳定一致。`,
-    `${auxiliaryText ? `辅助参考包括 ${auxiliaryText}，角色或场景只能作为比例参照、使用语境、摆放关系或动作语境，不能改变道具主交付物属性。` : ""}${guidance}`,
+    `${referenceText ? `参考图等权使用：${referenceText}。角色或场景参考用于比例参照、使用语境、摆放关系或动作语境；材质和纹样参考用于表面质感与装饰位置，不改变用户指定绑定。` : ""}${guidance}`,
     "画面必须覆盖整体视图、正面视图、侧面视图、背面视图、顶部 / 底部视图、结构拆解、材质特写、纹样 / 工艺特写、比例参照和使用场景参考。每个视图都服务于建模、绘制、材质还原和资产复用。",
     "重点展示道具轮廓、体块关系、尺寸比例、连接部位、边缘厚度、活动结构、装饰分布、表面纹理、磨损层次、材质差异和局部工艺。背景保持简洁，辅助对象只解释尺度和使用关系。",
-    "不要生成角色立绘、场景多视图或故事板；不要改变主参考道具的核心外形，不要新增未提供的主道具，不要让人物或背景喧宾夺主，不要出现文字、水印、标签、比例错乱、材质混淆、结构前后矛盾、低清晰度或单一角度展示。"
+    "不要生成角色立绘、场景多视图或故事板；不要改变参考道具的核心外形，不要新增未提供的道具，不要让人物或背景喧宾夺主，不要出现文字、水印、标签、比例错乱、材质混淆、结构前后矛盾、低清晰度或单一角度展示。"
   ].filter(Boolean).join("\n\n");
 }
 
@@ -539,14 +542,14 @@ function validateTextImagePrompt(text) {
 
 function validateImageReferencePrompt(text, plan) {
   if (!/(基于参考图|参考图生成|保持参考|参考对象|关键视觉特征)/u.test(text)) throw optimizedPromptInvalid();
-  for (const name of plan.primaryEntityNames.length ? plan.primaryEntityNames : plan.allEntityNames) {
+  for (const name of plan.allEntityNames || []) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
   if (/(必须采用 4 格横向布局|采用 3×3|左侧规划区和右侧剧情宫格区|道具多视图资产参考板|场景设定参考板结构)/u.test(text)) throw optimizedPromptInvalid();
 }
 
 function validateCharacterMultiviewPrompt(text, plan) {
-  for (const name of requiredNames(plan.characterPrimaryRefs.length ? plan.characterPrimaryRefs : plan.characterRefs)) {
+  for (const name of requiredNames(plan.characterRefs)) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
   if (!/(人物多视角|四视图|角色设定图|人物一致性参考图)/u.test(text)) throw optimizedPromptInvalid();
@@ -558,20 +561,17 @@ function validateCharacterMultiviewPrompt(text, plan) {
 
 function validateSceneMultiviewPrompt(text, plan = {}) {
   if (!/(场景多视图|多机位|多视图|现场光影参考图|场景设定参考板|场景设定板)/u.test(text)) throw optimizedPromptInvalid();
-  for (const name of requiredNames(plan.scenePrimaryRefs.length ? plan.scenePrimaryRefs : plan.primaryRefs)) {
+  for (const name of plan.allEntityNames || []) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
-  for (const name of plan.auxiliaryEntityNames || []) {
-    if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
-  }
-  if (plan.characterAuxiliaryRefs?.length && !/(辅助角色参考|空间尺度|站位|调度|不作为人物主图|不喧宾夺主)/u.test(text)) throw optimizedPromptInvalid();
+  if (plan.characterRefs?.length && !/(角色参考|空间尺度|站位|调度|不作为人物主图|不喧宾夺主)/u.test(text)) throw optimizedPromptInvalid();
   const viewWords = ["全景", "中景", "特写", "俯视", "平面布局", "分镜", "材质", "光影"];
   if (viewWords.filter((word) => text.includes(word)).length < 5) throw optimizedPromptInvalid();
   if (/(角色四视图|道具多视图|剧情宫格|左侧规划区|右侧剧情宫格区)/u.test(text)) throw optimizedPromptInvalid();
 }
 
 function validatePropMultiviewPrompt(text, plan) {
-  for (const name of requiredNames(propMainRefs(plan))) {
+  for (const name of requiredNames(plan.propRefs || [])) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
   if (!/(道具多视图|道具资产|多角度资产图|资产参考板)/u.test(text)) throw optimizedPromptInvalid();
@@ -621,42 +621,24 @@ export function buildReferencePlan(input = {}) {
       ? input.references
       : [];
   const allRefs = refs.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-  const primaryRefs = allRefs.filter((ref) => ref.usage === "primary");
-  const auxiliaryRefs = allRefs.filter((ref) => ref.usage === "auxiliary");
   const characterRefs = allRefs.filter(isCharacterReference);
   const sceneRefs = allRefs.filter(isSceneReference);
   const propRefs = allRefs.filter(isPropReference);
   const styleRefs = allRefs.filter(isStyleReference);
   const lightingRefs = allRefs.filter(isLightingReference);
   const compositionRefs = allRefs.filter(isCompositionReference);
-  const characterPrimaryRefs = primaryRefs.filter(isCharacterReference);
-  const characterAuxiliaryRefs = auxiliaryRefs.filter(isCharacterReference);
-  const scenePrimaryRefs = primaryRefs.filter(isSceneReference);
-  const sceneAuxiliaryRefs = auxiliaryRefs.filter(isSceneReference);
-  const propPrimaryRefs = primaryRefs.filter(isPropReference);
-  const propAuxiliaryRefs = auxiliaryRefs.filter(isPropReference);
-  const styleAuxiliaryRefs = auxiliaryRefs.filter((ref) => isStyleReference(ref) || isLightingReference(ref) || isCompositionReference(ref));
+  const visualGuidanceRefs = allRefs.filter((ref) => isStyleReference(ref) || isLightingReference(ref) || isCompositionReference(ref));
   const entityMentions = input.entity_mentions || input.request?.entity_mentions || [];
   const unboundMentions = entityMentions.filter((mention) => mention.reference_status === "unbound");
   return {
     allRefs,
-    primaryRefs,
-    auxiliaryRefs,
     characterRefs,
     sceneRefs,
     propRefs,
     styleRefs,
     lightingRefs,
     compositionRefs,
-    characterPrimaryRefs,
-    characterAuxiliaryRefs,
-    scenePrimaryRefs,
-    sceneAuxiliaryRefs,
-    propPrimaryRefs,
-    propAuxiliaryRefs,
-    styleAuxiliaryRefs,
-    primaryEntityNames: uniqueNames(primaryRefs),
-    auxiliaryEntityNames: uniqueNames(auxiliaryRefs),
+    visualGuidanceRefs,
     allEntityNames: uniqueNames(allRefs),
     entityMentions,
     resolvedReferences: allRefs,
@@ -665,27 +647,19 @@ export function buildReferencePlan(input = {}) {
   };
 }
 
-function sceneMainRefs(plan) {
-  if (plan.scenePrimaryRefs.length) return plan.scenePrimaryRefs;
-  if (plan.primaryRefs.length) return plan.primaryRefs;
-  if (plan.sceneRefs.length) return [plan.sceneRefs[0]];
-  return [];
+function sceneTaskRefs(plan) {
+  if (plan.sceneRefs.length) return plan.sceneRefs;
+  return plan.allRefs || [];
 }
 
-function characterMainRefs(plan) {
-  if (plan.characterPrimaryRefs.length) return plan.characterPrimaryRefs;
-  if (plan.primaryRefs.length) return plan.primaryRefs.filter(isCharacterReference);
-  if (plan.characterRefs.length) return [plan.characterRefs[0]];
-  if (plan.primaryRefs.length) return plan.primaryRefs;
-  return [];
+function characterTaskRefs(plan) {
+  if (plan.characterRefs.length) return plan.characterRefs;
+  return plan.allRefs || [];
 }
 
-function propMainRefs(plan) {
-  if (plan.propPrimaryRefs.length) return plan.propPrimaryRefs;
-  if (plan.primaryRefs.length) return plan.primaryRefs.filter((ref) => isPropReference(ref) || isMaterialReference(ref) || isPatternReference(ref));
-  if (plan.propRefs.length) return [plan.propRefs[0]];
-  if (plan.primaryRefs.length) return plan.primaryRefs;
-  return [];
+function propTaskRefs(plan) {
+  if (plan.propRefs.length) return plan.propRefs;
+  return plan.allRefs || [];
 }
 
 function uniqueNames(refs) {
@@ -703,14 +677,12 @@ function namesText(refs, fallback) {
   return names.map((name) => name.startsWith("@") ? name : `@${name}`).join("、");
 }
 
-function auxiliaryRefsText(plan) {
-  return (plan.auxiliaryRefs || [])
-    .map((ref) => `${mention(ref, ref.entity_type || "辅助参考")}（${roleUsageText(ref)}${ref.description ? `，${ref.description}` : ""}）`)
+function roleRefsText(plan, excludeRefs = []) {
+  const excluded = new Set((excludeRefs || []).map((ref) => ref.reference_id));
+  return (plan.allRefs || [])
+    .filter((ref) => !excluded.has(ref.reference_id))
+    .map((ref) => `${mention(ref, ref.entity_type || "参考对象")}（${roleUsageText(ref)}${ref.description ? `，${ref.description}` : ""}）`)
     .join("、");
-}
-
-function isSameRefList(ref, refs) {
-  return (refs || []).some((item) => item.reference_id === ref.reference_id);
 }
 
 function isSceneReference(ref) {
@@ -718,7 +690,7 @@ function isSceneReference(ref) {
 }
 
 function isCharacterReference(ref) {
-  return ref && (ref.entity_type === "character" || ref.entity_type === "face" || ref.entity_type === "outfit" || ref.entity_type === "hair" || ["character_reference", "face_reference", "outfit_reference", "hair_reference"].includes(ref.role));
+  return ref && (ref.entity_type === "character" || ref.entity_type === "outfit" || ref.entity_type === "hair" || ["character_reference", "face_reference", "outfit_reference", "hair_reference"].includes(ref.role));
 }
 
 function isPropReference(ref) {
@@ -762,23 +734,19 @@ function mentionFromRaw(prompt, fallback) {
 
 function roleUsageText(ref) {
   if (!ref) return "视觉参考";
-  if (ref.role === "scene_reference" && ref.usage === "primary") return "场景主参考";
   if (ref.role === "scene_reference") return "场景参考";
-  if (ref.role === "face_reference" && ref.usage === "primary") return "脸部主参考";
   if (ref.role === "face_reference") return "脸部参考";
-  if (ref.role === "character_reference" && ref.usage === "primary") return "角色主参考";
-  if (ref.role === "character_reference" && ref.usage === "auxiliary") return "辅助角色参考、空间尺度和调度参照";
   if (ref.role === "character_reference") return "角色参考";
   if (ref.role === "outfit_reference") return "服装 / 造型参考";
   if (ref.role === "hair_reference") return "发型参考";
-  if (ref.role === "prop_reference" && ref.usage === "primary") return "道具主参考";
   if (ref.role === "prop_reference") return "道具参考";
   if (ref.role === "material_reference") return "材质参考";
   if (ref.role === "ornament_reference") return "纹样 / 装饰参考";
   if (ref.role === "style_reference") return "风格参考";
   if (ref.role === "lighting_reference") return "光影参考";
   if (ref.role === "composition_reference") return "构图参考";
-  return ref.usage === "primary" ? "主参考" : ref.usage === "auxiliary" ? "辅助参考" : "视觉参考";
+  if (ref.role === "storyboard_reference") return "故事板参考";
+  return "视觉参考";
 }
 
 function enhancementText(context, keys) {

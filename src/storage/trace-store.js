@@ -16,6 +16,7 @@ export async function appendTrace(record) {
     generation_mode: record.generation_mode,
     prompt_sha256_16: sha256Short(record.prompt || ""),
     reference_count: Number(record.reference_count || 0),
+    callback_present: Boolean(record.callback_present),
     image_count: Number(record.image_count || 0),
     status: record.status,
     error_code: record.error_code || "",

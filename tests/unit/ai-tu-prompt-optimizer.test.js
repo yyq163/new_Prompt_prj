@@ -24,7 +24,7 @@ test("ai-tu original page contains prompt optimizer entry and six task_type opti
   for (const taskType of ["text_image", "image_reference", "character_multiview", "scene_multiview", "prop_multiview", "storyboard"]) {
     assert.match(html, new RegExp(`<option value="${taskType}"`));
   }
-  for (const field of ["reference_id", "entity_name", "entity_type", "role", "usage", "url", "mime_type", "display_name", "description"]) {
+  for (const field of ["reference_id", "entity_name", "entity_type", "role", "url", "mime_type", "display_name", "description"]) {
     assert.match(html, new RegExp(field));
   }
 });
@@ -54,22 +54,21 @@ test("frontend image job request includes structured references", () => {
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
-    reference("ref_scene", "古巷", "scene", "scene_reference", "primary"),
-    reference("ref_char", "行人", "character", "character_reference", "auxiliary"),
-    reference("ref_light", "黄昏逆光", "lighting", "lighting_reference", "auxiliary"),
-    reference("ref_comp", "对称构图", "composition", "composition_reference", "auxiliary")
+    reference("ref_scene", "古巷", "scene", "scene_reference"),
+    reference("ref_char", "行人", "character", "character_reference"),
+    reference("ref_light", "黄昏逆光", "lighting", "lighting_reference"),
+    reference("ref_comp", "对称构图", "composition", "composition_reference")
   ];
   const plan = buildReferencePlan({
     resolved_references: refs,
     entity_mentions: [{ entity_name: "行人", reference_status: "bound" }]
   });
   assert.equal(plan.generationMode, "image_to_image");
-  assert.equal(plan.scenePrimaryRefs[0].entity_name, "古巷");
-  assert.equal(plan.characterAuxiliaryRefs[0].entity_name, "行人");
+  assert.equal(plan.sceneRefs[0].entity_name, "古巷");
+  assert.equal(plan.characterRefs[0].entity_name, "行人");
   assert.equal(plan.lightingRefs[0].entity_name, "黄昏逆光");
   assert.equal(plan.compositionRefs[0].entity_name, "对称构图");
-  assert.deepEqual(plan.primaryEntityNames, ["古巷"]);
-  assert.deepEqual(plan.auxiliaryEntityNames, ["行人", "黄昏逆光", "对称构图"]);
+  assert.deepEqual(plan.allEntityNames, ["古巷", "行人", "黄昏逆光", "对称构图"]);
 });
 
 test("six task_type requests compile deterministic optimized prompts", async () => {
@@ -84,14 +83,14 @@ test("six task_type requests compile deterministic optimized prompts", async () 
     {
       task_type: "image_reference",
       prompt: "基于 @海报参考 生成一张新的品牌视觉图",
-      references: [reference("ref_poster", "海报参考", "style", "style_reference", "primary")],
+      references: [reference("ref_poster", "海报参考", "style", "style_reference")],
       assertPrompt: (prompt) => assertImageReferencePrompt(prompt, ["海报参考"]),
       generation_mode: "image_to_image"
     },
     {
       task_type: "character_multiview",
       prompt: "生成 @云岚 的角色一致性参考图",
-      references: [reference("ref_char", "云岚", "character", "character_reference", "primary")],
+      references: [reference("ref_char", "云岚", "character", "character_reference")],
       assertPrompt: (prompt) => assertCharacterPrompt(prompt, "云岚"),
       generation_mode: "image_to_image"
     },
@@ -99,8 +98,8 @@ test("six task_type requests compile deterministic optimized prompts", async () 
       task_type: "scene_multiview",
       prompt: "生成 @茶馆 与 @掌柜 的现场光影多视角参考图",
       references: [
-        reference("ref_scene", "茶馆", "scene", "scene_reference", "primary"),
-        reference("ref_char", "掌柜", "character", "character_reference", "auxiliary")
+        reference("ref_scene", "茶馆", "scene", "scene_reference"),
+        reference("ref_char", "掌柜", "character", "character_reference")
       ],
       assertPrompt: (prompt) => assertScenePrompt(prompt, ["茶馆", "掌柜"]),
       generation_mode: "image_to_image"
@@ -108,7 +107,7 @@ test("six task_type requests compile deterministic optimized prompts", async () 
     {
       task_type: "prop_multiview",
       prompt: "生成 @铜铃 的结构和材质多角度资产图",
-      references: [reference("ref_prop", "铜铃", "prop", "prop_reference", "primary")],
+      references: [reference("ref_prop", "铜铃", "prop", "prop_reference")],
       assertPrompt: (prompt) => assertPropPrompt(prompt, "铜铃"),
       generation_mode: "image_to_image"
     },
@@ -152,7 +151,7 @@ test("task_type is separated from generation_mode", async () => {
   const sceneImageToImage = await handlePromptOptimization({
     task_type: "scene_multiview",
     prompt: "生成 @庭院 的现场光影多视角参考图",
-    references: [reference("ref_scene", "庭院", "scene", "scene_reference", "primary")]
+    references: [reference("ref_scene", "庭院", "scene", "scene_reference")]
   }, offlineOptions());
   assert.equal(sceneImageToImage.statusCode, 200);
   assert.equal(sceneImageToImage.payload.generation_mode, "image_to_image");
@@ -214,7 +213,7 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
 
 test("validateRagflowEnhancement rejects internal and unauthorized content", () => {
   const context = {
-    binding: { resolved_references: [reference("ref_scene", "庭院", "scene", "scene_reference", "primary", "https://example.com/ref_scene.png")] }
+    binding: { resolved_references: [reference("ref_scene", "庭院", "scene", "scene_reference", "https://example.com/ref_scene.png")] }
   };
   assert.equal(validateRagflowEnhancement({ final_prompt: "x" }, context), null);
   assert.equal(validateRagflowEnhancement({ visual_focus: "http://bad.example/x.png" }, context), null);
@@ -272,7 +271,7 @@ test("field-summary output is never returned as optimized_prompt", async () => {
   const result = await handlePromptOptimization({
     task_type: "scene_multiview",
     prompt: "生成 @营帐 在夜色中的现场光影多视角参考图",
-    references: [reference("ref_scene", "营帐", "scene", "scene_reference", "primary")]
+    references: [reference("ref_scene", "营帐", "scene", "scene_reference")]
   }, {
     env: ragflowEnv(),
     fetchImpl: async () => jsonResponse({
@@ -290,8 +289,8 @@ test("scene_multiview dynamic fixtures do not bleed entities", async () => {
     task_type: "scene_multiview",
     prompt: "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图",
     references: [
-      reference("ref_char", "萧昭宁", "character", "character_reference", "auxiliary"),
-      reference("ref_scene", "营帐", "scene", "scene_reference", "primary")
+      reference("ref_char", "萧昭宁", "character", "character_reference"),
+      reference("ref_scene", "营帐", "scene", "scene_reference")
     ]
   }, offlineOptions());
   assertScenePrompt(caseA.payload.optimized_prompt, ["营帐", "萧昭宁"]);
@@ -300,8 +299,8 @@ test("scene_multiview dynamic fixtures do not bleed entities", async () => {
     task_type: "scene_multiview",
     prompt: "生成 @研究员 在 @现代实验室 中的冷色调现场光影多视角参考图",
     references: [
-      reference("ref_researcher", "研究员", "character", "character_reference", "auxiliary"),
-      reference("ref_lab", "现代实验室", "scene", "scene_reference", "primary")
+      reference("ref_researcher", "研究员", "character", "character_reference"),
+      reference("ref_lab", "现代实验室", "scene", "scene_reference")
     ]
   }, offlineOptions());
   assertScenePrompt(caseB.payload.optimized_prompt, ["现代实验室", "研究员"]);
@@ -313,7 +312,7 @@ test("prop_multiview dynamic fixture does not bleed unrelated sample props", asy
   const result = await handlePromptOptimization({
     task_type: "prop_multiview",
     prompt: "生成 @折叠罗盘 的道具结构多视图资产图",
-    references: [reference("ref_prop", "折叠罗盘", "prop", "prop_reference", "primary")]
+    references: [reference("ref_prop", "折叠罗盘", "prop", "prop_reference")]
   }, offlineOptions());
   assertPropPrompt(result.payload.optimized_prompt, "折叠罗盘");
   for (const leaked of ["青铜香炉", "机械钥匙", "营帐", "现代实验室"]) {
@@ -325,7 +324,7 @@ test("prompt optimizer failure does not return optimized_prompt", async () => {
   const result = await handlePromptOptimization({
     task_type: "image_reference",
     prompt: "生成 @萧昭宁 和 @营帐",
-    references: [reference("ref_char", "萧昭宁", "character", "character_reference", "auxiliary")],
+    references: [reference("ref_char", "萧昭宁", "character", "character_reference")],
     reference_policy: { unbound_entity: "block" }
   }, offlineOptions());
   assert.equal(result.payload.status, "needs_clarification");
@@ -350,13 +349,12 @@ test("new frontend does not expose forbidden internal labels", () => {
   }
 });
 
-function reference(reference_id, entity_name, entity_type, role, usage, url = `https://example.com/${reference_id}.png`, description = `${entity_name}参考图`) {
+function reference(reference_id, entity_name, entity_type, role, url = `https://example.com/${reference_id}.png`, description = `${entity_name}参考图`) {
   return {
     reference_id,
     entity_name,
     entity_type,
     role,
-    usage,
     url,
     mime_type: "image/png",
     display_name: `${entity_name}.png`,

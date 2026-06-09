@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/routes/image-generations.js && node --check src/routes/prompt-optimizations.js && node --check src/providers/ai-tu-provider-adapter.js && node --check src/core/entity-mentions.js && node --check src/core/reference-binding.js && node --check src/core/prompt-compiler.js && node --check src/core/ragflow-enhancement.js && node --check src/core/runtime.js && node --check src/core/errors.js && node --check src/core/labels.js && node --check src/storage/trace-store.js",
+    "check": "node --check server.js && node --check src/routes/image-generations.js && node --check src/routes/prompt-optimizations.js && node --check src/providers/ai-tu-provider-adapter.js && node --check src/providers/provider-result-normalizer.js && node --check src/core/entity-mentions.js && node --check src/core/reference-binding.js && node --check src/core/prompt-compiler.js && node --check src/core/ragflow-enhancement.js && node --check src/core/runtime.js && node --check src/core/errors.js && node --check src/core/labels.js && node --check src/core/generated-image-store.js && node --check src/core/generated-image-response.js && node --check src/storage/trace-store.js && node --check src/storage/generated-image-store.js",
     "test": "node --test tests/unit/*.test.js"
   },
   "engines": {

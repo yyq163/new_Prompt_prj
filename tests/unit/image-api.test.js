@@ -7,6 +7,7 @@ import { handleImageGeneration } from "../../src/routes/image-generations.js";
 import { extractEntityMentions } from "../../src/core/entity-mentions.js";
 import { resolveReferences } from "../../src/core/reference-binding.js";
 import { normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
+import { VALID_ENTITY_TYPES, VALID_REFERENCE_ROLES } from "../../src/core/labels.js";
 import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
 import { inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
 import {
@@ -14,10 +15,19 @@ import {
   extractImageUrls,
   hasRequiredProviderConfig,
   longRunningSubmitConfig,
+  normalizeProviderImageObject,
   normalizeProviderResult,
+  fetchUpstreamOnce,
   postLiveImageUrlJson,
   sanitizeProviderConfig
 } from "../../src/providers/ai-tu-provider-adapter.js";
+import {
+  clearGeneratedImagesForTest,
+  deleteGeneratedImage,
+  getGeneratedImage,
+  putGeneratedImage
+} from "../../src/core/generated-image-store.js";
+import { generatedImageHttpResponse } from "../../src/core/generated-image-response.js";
 
 const imageUrl = "https://provider.example.com/generated.png";
 
@@ -87,79 +97,81 @@ test("image_reference with references succeeds", async () => {
   assert.equal(result.payload.generation_mode, "image_to_image");
 });
 
-test("character_multiview character primary succeeds", async () => {
+test("character_multiview character reference succeeds", async () => {
   const result = await call({
     task_type: "character_multiview",
     prompt: "生成 @萧昭宁 的四视图。",
-    references: [characterRef({ usage: "primary" })]
+    references: [characterRef()]
   });
   assert.equal(result.payload.status, "succeeded");
   assert.equal(result.payload.normalized.references_used[0].role, "character_reference");
+  assert.equal("usage" in result.payload.normalized.references_used[0], false);
 });
 
-test("character_multiview accepts primary face_reference", async () => {
+test("character_multiview accepts face_reference", async () => {
   const result = await call({
     task_type: "character_multiview",
     prompt: "生成 @萧昭宁 的四视图。",
-    references: [characterRef({ role: "face_reference", entity_type: "face", usage: "primary" })]
+    references: [characterRef({ role: "face_reference", entity_type: "character" })]
   });
   assert.equal(result.payload.status, "succeeded");
   assert.equal(result.payload.normalized.references_used[0].role, "face_reference");
 });
 
-test("character_multiview character primary plus scene auxiliary succeeds", async () => {
+test("character_multiview character plus scene references succeed", async () => {
   const result = await call({
     task_type: "character_multiview",
     prompt: "生成 @萧昭宁 在 @营帐 中的角色设定。",
-    references: [characterRef({ usage: "primary" }), sceneRef({ usage: "auxiliary" })]
+    references: [characterRef(), sceneRef()]
   });
   assert.equal(result.payload.status, "succeeded");
   assert.equal(result.payload.normalized.references_used.length, 2);
 });
 
-test("scene_multiview scene primary plus character auxiliary succeeds", async () => {
+test("scene_multiview scene plus character references succeed", async () => {
   const result = await call({
     task_type: "scene_multiview",
     prompt: "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图",
-    references: [characterRef({ usage: "auxiliary" }), sceneRef({ usage: "primary" })]
+    references: [characterRef(), sceneRef()]
   });
   assert.equal(result.payload.status, "succeeded");
   assert.equal(result.payload.task_type, "scene_multiview");
   assert.equal(result.payload.normalized.entity_mentions.length, 2);
 });
 
-test("scene_multiview accepts primary lighting and composition references", async () => {
+test("scene_multiview accepts lighting and composition references without scene role", async () => {
   const lighting = await call({
     task_type: "scene_multiview",
     prompt: "生成 @冷色光影 的现场光影多视角参考图",
-    references: [sceneRef({ reference_id: "ref_light", entity_name: "冷色光影", entity_type: "lighting", role: "lighting_reference", usage: "primary" })]
+    references: [sceneRef({ reference_id: "ref_light", entity_name: "冷色光影", entity_type: "lighting", role: "lighting_reference" })]
   });
   assert.equal(lighting.payload.status, "succeeded");
   assert.equal(lighting.payload.normalized.references_used[0].role, "lighting_reference");
+  assert.equal(lighting.payload.warnings[0].code, "SCENE_REFERENCE_MISSING");
 
   const composition = await call({
     task_type: "scene_multiview",
     prompt: "生成 @对称构图 的现场光影多视角参考图",
-    references: [sceneRef({ reference_id: "ref_comp", entity_name: "对称构图", entity_type: "composition", role: "composition_reference", usage: "primary" })]
+    references: [sceneRef({ reference_id: "ref_comp", entity_name: "对称构图", entity_type: "composition", role: "composition_reference" })]
   });
   assert.equal(composition.payload.status, "succeeded");
   assert.equal(composition.payload.normalized.references_used[0].role, "composition_reference");
 });
 
-test("prop_multiview prop primary succeeds", async () => {
+test("prop_multiview prop reference succeeds", async () => {
   const result = await call({
     task_type: "prop_multiview",
     prompt: "生成 @铜镜 的道具多视图。",
-    references: [propRef({ usage: "primary" })]
+    references: [propRef()]
   });
   assert.equal(result.payload.status, "succeeded");
 });
 
-test("prop_multiview accepts primary material and ornament references", async () => {
+test("prop_multiview accepts material and ornament references", async () => {
   const material = await call({
     task_type: "prop_multiview",
     prompt: "生成 @青铜材质 的道具材质多视图。",
-    references: [propRef({ reference_id: "ref_material", entity_name: "青铜材质", entity_type: "material", role: "material_reference", usage: "primary" })]
+    references: [propRef({ reference_id: "ref_material", entity_name: "青铜材质", entity_type: "material", role: "material_reference" })]
   });
   assert.equal(material.payload.status, "succeeded");
   assert.equal(material.payload.normalized.references_used[0].role, "material_reference");
@@ -167,20 +179,69 @@ test("prop_multiview accepts primary material and ornament references", async ()
   const ornament = await call({
     task_type: "prop_multiview",
     prompt: "生成 @云纹装饰 的道具纹样多视图。",
-    references: [propRef({ reference_id: "ref_ornament", entity_name: "云纹装饰", entity_type: "ornament", role: "ornament_reference", usage: "primary" })]
+    references: [propRef({ reference_id: "ref_ornament", entity_name: "云纹装饰", entity_type: "ornament", role: "ornament_reference" })]
   });
   assert.equal(ornament.payload.status, "succeeded");
   assert.equal(ornament.payload.normalized.references_used[0].role, "ornament_reference");
+});
+
+test("character_multiview without character or face reference returns warning but succeeds", async () => {
+  const result = await call({
+    task_type: "character_multiview",
+    prompt: "生成一名银发医师的角色四视图。",
+    references: [sceneRef({ entity_name: "医馆", role: "scene_reference", entity_type: "scene" })]
+  });
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(result.payload.warnings[0].code, "CHARACTER_REFERENCE_MISSING");
+});
+
+test("scene_multiview without scene reference returns warning but succeeds", async () => {
+  const result = await call({
+    task_type: "scene_multiview",
+    prompt: "生成 @研究员 的现场光影多视角参考图。",
+    references: [characterRef({ entity_name: "研究员" })]
+  });
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(result.payload.warnings[0].code, "SCENE_REFERENCE_MISSING");
+});
+
+test("prop_multiview without prop material or ornament reference returns warning but succeeds", async () => {
+  const result = await call({
+    task_type: "prop_multiview",
+    prompt: "生成一件符文器具的多角度资产图。",
+    references: [sceneRef({ entity_name: "工坊", role: "scene_reference", entity_type: "scene" })]
+  });
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(result.payload.warnings[0].code, "PROP_REFERENCE_MISSING");
 });
 
 test("pattern_reference is aliased to ornament_reference", () => {
   const request = normalizeRequest({
     task_type: "prop_multiview",
     prompt: "生成 @云纹 的道具纹样多视图。",
-    references: [propRef({ entity_name: "云纹", entity_type: "pattern", role: "pattern_reference", usage: "primary" })]
+    references: [propRef({ entity_name: "云纹", entity_type: "pattern", role: "pattern_reference" })]
   });
   assert.equal(request.references[0].role, "ornament_reference");
   assert.equal(request.references[0].entity_type, "ornament");
+});
+
+test("role enum and entity_type enum accept the full PRD set", () => {
+  for (const role of VALID_REFERENCE_ROLES) {
+    const request = normalizeRequest({
+      task_type: "image_reference",
+      prompt: "参考 @对象 生成新图。",
+      references: [characterRef({ reference_id: `ref_${role}`, entity_name: "对象", entity_type: "other", role })]
+    });
+    assert.equal(request.references[0].role, role);
+  }
+  for (const entityType of VALID_ENTITY_TYPES) {
+    const request = normalizeRequest({
+      task_type: "image_reference",
+      prompt: "参考 @对象 生成新图。",
+      references: [characterRef({ reference_id: `ref_${entityType}`, entity_name: "对象", entity_type: entityType, role: "style_reference" })]
+    });
+    assert.equal(request.references[0].entity_type, entityType);
+  }
 });
 
 test("storyboard script enhancement uses script-to-storyboard path internally", () => {
@@ -219,15 +280,15 @@ test("storyboard complete prompt preserve path", () => {
   assert.equal(path, "preserve_full_prompt");
 });
 
-test("single reference without usage defaults to primary", () => {
+test("usage field is accepted but ignored and never returned", () => {
   const request = normalizeRequest({
     task_type: "image_reference",
     prompt: "参考 @萧昭宁 生成新图。",
-    references: [characterRef({ usage: "" })]
+    references: [characterRef({ usage: "primary" })]
   });
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));
-  assert.equal(binding.resolved_references[0].usage, "primary");
-  assert.equal(binding.references_used[0].usage, "primary");
+  assert.equal("usage" in binding.resolved_references[0], false);
+  assert.equal("usage" in binding.references_used[0], false);
 });
 
 test("RAGFlow missing/failing enhancement still succeeds with local compiler and provider", async () => {
@@ -236,7 +297,7 @@ test("RAGFlow missing/failing enhancement still succeeds with local compiler and
   const result = await call({
     task_type: "scene_multiview",
     prompt: "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图",
-    references: [characterRef({ usage: "auxiliary" }), sceneRef({ usage: "primary" })]
+    references: [characterRef(), sceneRef()]
   }, {
     fetchImpl: async () => { throw new Error("connection refused"); }
   });
@@ -269,40 +330,43 @@ test("duplicate reference_id fails", async () => {
   assert.equal(result.payload.error_code, "DUPLICATE_REFERENCE_ID");
 });
 
-test("same entity and role multiple references without usage fails", async () => {
+test("same entity and role multiple references all bind successfully", async () => {
   const result = await call({
     task_type: "image_reference",
     prompt: "参考 @萧昭宁",
     references: [
-      characterRef({ reference_id: "ref_a", usage: "" }),
-      characterRef({ reference_id: "ref_b", url: "https://example.com/b.png", usage: "" })
+      characterRef({ reference_id: "ref_a" }),
+      characterRef({ reference_id: "ref_b", url: "https://example.com/b.png" })
     ]
   });
-  assert.equal(result.payload.error_code, "DUPLICATE_ENTITY_ROLE_REFERENCE");
+  assert.equal(result.payload.status, "succeeded");
+  assert.deepEqual(result.payload.normalized.entity_mentions[0].matched_reference_ids, ["ref_a", "ref_b"]);
+  assert.equal(result.payload.normalized.references_used.length, 2);
 });
 
-test("multiple primary references fails", async () => {
+test("unmentioned references are still included in references_used", async () => {
   const result = await call({
     task_type: "image_reference",
     prompt: "参考 @萧昭宁",
     references: [
-      characterRef({ reference_id: "ref_a", usage: "primary" }),
-      characterRef({ reference_id: "ref_b", url: "https://example.com/b.png", usage: "primary" })
+      characterRef({ reference_id: "ref_a" }),
+      sceneRef({ reference_id: "ref_scene_unmentioned", entity_name: "营帐" })
     ]
   });
-  assert.equal(result.payload.error_code, "MULTIPLE_PRIMARY_REFERENCES");
+  assert.equal(result.payload.status, "succeeded");
+  assert.deepEqual(result.payload.normalized.references_used.map((item) => item.reference_id), ["ref_a", "ref_scene_unmentioned"]);
 });
 
 test("strict role entity and output schema reject invalid values", () => {
   assert.throws(() => normalizeRequest({
     task_type: "image_reference",
     prompt: "参考 @对象",
-    references: [characterRef({ role: "pattern_reference_old_bad", usage: "primary" })]
+    references: [characterRef({ role: "pattern_reference_old_bad" })]
   }), /参考图 role 不合法/);
   assert.throws(() => normalizeRequest({
     task_type: "image_reference",
     prompt: "参考 @对象",
-    references: [characterRef({ entity_type: "unknown_entity", usage: "primary" })]
+    references: [characterRef({ entity_type: "unknown_entity" })]
   }), /reference\.entity_type 不合法/);
   assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { count: 5 } }), /output\.count/);
   assert.throws(() => normalizeRequest({ task_type: "text_image", prompt: "生成山水。", output: { aspect_ratio: "2:3" } }), /output\.aspect_ratio/);
@@ -333,9 +397,14 @@ test("unbound_entity block returns needs_clarification", async () => {
 });
 
 test("provider base64-only response is exposed through generated image URL", () => {
-  const images = extractImageUrls({ data: [{ b64_json: Buffer.from("image-bytes").toString("base64") }] });
+  clearGeneratedImagesForTest();
+  const images = extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] });
   assert.equal(images.length, 1);
   assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.equal(images[0].format, "png");
+  const stored = getGeneratedImage(images[0].image_id);
+  assert.equal(stored.mime, "image/png");
+  assert.equal(Buffer.isBuffer(stored.bytes), true);
 });
 
 test("provider URL response mapper accepts url, image_url, and output_url", () => {
@@ -351,6 +420,124 @@ test("provider URL response mapper accepts url, image_url, and output_url", () =
     "https://provider.example.com/b.webp",
     "https://provider.example.com/c.jpeg"
   ]);
+});
+
+test("provider data URL response is exposed through generated image URL", () => {
+  clearGeneratedImagesForTest();
+  const images = extractImageUrls({
+    data: [{ image: `data:image/png;base64,${samplePngBase64()}`, width: 64, height: 64 }]
+  });
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.equal(images[0].width, 64);
+  assert.equal(images[0].height, 64);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+});
+
+test("provider binary buffer response is exposed through generated image URL", () => {
+  clearGeneratedImagesForTest();
+  const image = normalizeProviderImageObject({ binary: samplePngBytes(), mime_type: "image/png" }, "png");
+  assert.match(image.url, /^\/api\/v1\/generated-images\/img_/);
+  assert.equal(image.format, "png");
+  assert.equal(getGeneratedImage(image.image_id).mime, "image/png");
+});
+
+test("provider direct binary HTTP image response is normalized as generated image bytes", async () => {
+  clearGeneratedImagesForTest();
+  const json = await fetchUpstreamOnce("https://provider.example.com/v1/images/generations", {
+    method: "POST",
+    headers: {}
+  }, async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null },
+    arrayBuffer: async () => samplePngBytes().buffer.slice(
+      samplePngBytes().byteOffset,
+      samplePngBytes().byteOffset + samplePngBytes().byteLength
+    )
+  }), {
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    requestTimeoutSeconds: 10
+  });
+  const images = extractImageUrls(json);
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+});
+
+test("generated image store supports put get delete cleanup and TTL", () => {
+  clearGeneratedImagesForTest();
+  const stored = putGeneratedImage({ bytes: samplePngBytes(), mime: "image/png", ttlMs: 1000 });
+  assert.match(stored.id, /^img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(stored.id).mime, "image/png");
+  assert.equal(deleteGeneratedImage(stored.id), true);
+  assert.equal(getGeneratedImage(stored.id), null);
+
+  const expired = putGeneratedImage({ bytes: samplePngBytes(), mime: "image/png", ttlMs: 1000 });
+  const item = getGeneratedImage(expired.id);
+  item.expiresAt = Date.now() - 1;
+  assert.equal(getGeneratedImage(expired.id), null);
+});
+
+test("generated image route response metadata returns correct content headers and 404", () => {
+  clearGeneratedImagesForTest();
+  const stored = putGeneratedImage({ bytes: samplePngBytes(), mime: "image/png", ttlMs: 1000 });
+  const ok = generatedImageHttpResponse(stored.id);
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.headers["Content-Type"], "image/png");
+  assert.equal(ok.headers["Content-Length"], String(samplePngBytes().length));
+  assert.equal(ok.headers["Cache-Control"], "no-store");
+  assert.equal(ok.body.equals(samplePngBytes()), true);
+
+  const missing = generatedImageHttpResponse("img_missing");
+  assert.equal(missing.statusCode, 404);
+  assert.equal(missing.headers["Cache-Control"], "no-store");
+});
+
+test("provider invalid image mime or oversized bytes returns PROVIDER_RESPONSE_UNSUPPORTED", () => {
+  assert.throws(() => extractImageUrls({
+    data: [{ b64_json: "not-valid-base64***" }]
+  }), /base64 图片格式非法/);
+  assert.throws(() => normalizeProviderImageObject({
+    b64_json: Buffer.from("not-an-image").toString("base64"),
+    mime_type: "image/gif"
+  }, "gif"), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: sampleGifBytes(),
+    mime: "image/gif"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: samplePngBytes(),
+    mime: "image/jpeg"
+  }), /MIME 类型与图片字节不匹配/);
+  assert.throws(() => putGeneratedImage({
+    bytes: samplePngBytes(),
+    mime: "image/png",
+    maxBytes: 4
+  }), /超过大小限制/);
+});
+
+test("plain provider result text is not treated as base64 image", () => {
+  assert.throws(() => extractImageUrls({ result: "task completed without image bytes" }), /没有找到可访问的图片/);
+});
+
+test("public API returns URL only for provider-generated bytes and never exposes base64", async () => {
+  clearGeneratedImagesForTest();
+  const result = await handleImageGeneration({
+    task_type: "text_image",
+    prompt: "生成一张山间晨雾图。",
+    references: []
+  }, {
+    provider: async () => ({
+      status: "succeeded",
+      images: extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] })
+    })
+  });
+  assert.equal(result.statusCode, 200);
+  assert.match(result.payload.images[0].url, /^http:\/\/127\.0\.0\.1:8787\/api\/v1\/generated-images\/img_/);
+  assert.equal(JSON.stringify(result.payload).includes(samplePngBase64()), false);
+  assert.equal(JSON.stringify(result.payload).includes("provider_internal_payload"), false);
+  assertNoForbidden(result.payload);
 });
 
 test("long-running image submit waits beyond relay completion time and does not retry non-idempotent generation", async () => {
@@ -570,7 +757,6 @@ function characterRef(overrides = {}) {
     entity_name: "萧昭宁",
     entity_type: "character",
     role: "character_reference",
-    usage: "primary",
     url: "https://example.com/xzn.png",
     mime_type: "image/png",
     display_name: "萧昭宁.png",
@@ -586,7 +772,6 @@ function sceneRef(overrides = {}) {
     entity_name: "营帐",
     entity_type: "scene",
     role: "scene_reference",
-    usage: "primary",
     url: "https://example.com/camp.png",
     mime_type: "image/png",
     display_name: "营帐.png",
@@ -602,7 +787,6 @@ function propRef(overrides = {}) {
     entity_name: "铜镜",
     entity_type: "prop",
     role: "prop_reference",
-    usage: "primary",
     url: "https://example.com/mirror.png",
     mime_type: "image/png",
     display_name: "铜镜.png",
@@ -622,4 +806,22 @@ function assertNoForbidden(payload) {
 function restoreEnv(name, oldValue) {
   if (oldValue == null) delete process.env[name];
   else process.env[name] = oldValue;
+}
+
+function samplePngBase64() {
+  return samplePngBytes().toString("base64");
+}
+
+function samplePngBytes() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89
+  ]);
+}
+
+function sampleGifBytes() {
+  return Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00]);
 }

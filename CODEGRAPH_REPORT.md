@@ -6,36 +6,31 @@ Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
 ## Verification State
 
-CodeGraph was refreshed from the project root and used as the structural source of truth for this report.
+CodeGraph was refreshed from the project root and used as the structural source for this report.
 
 Commands run:
 
 ```bash
-python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard
+codegraph status --json
+python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root .
+codegraph files --json
 npm run check
 npm test
+node --test tests/integration/*.test.js
 ```
 
-CodeGraph status after refresh:
+Latest CodeGraph status:
 
 ```json
 {
   "initialized": true,
   "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
-  "fileCount": 17,
-  "nodeCount": 418,
-  "edgeCount": 1125,
+  "fileCount": 20,
+  "nodeCount": 468,
+  "edgeCount": 1238,
   "backend": "native",
   "languages": ["javascript"],
-  "nodesByKind": {
-    "class": 1,
-    "constant": 60,
-    "file": 17,
-    "function": 270,
-    "import": 65,
-    "method": 1,
-    "variable": 4
-  }
+  "pendingChanges": {"added": 3, "modified": 0, "removed": 0}
 }
 ```
 
@@ -45,23 +40,25 @@ Generated code-map artifacts:
 - `.understand-anything/code-map-report.md`
 - `.understand-anything/code-map-report.html`
 - `.understand-anything/code-map-summary.json`
-- Dashboard URL: `http://127.0.0.1:5175/?token=f70c3623a734606b4ee294e83c11f0ed`
 
-## Indexed Source Tree
+The dashboard was not launched in this refresh run, so no local dashboard token is written into this durable report.
 
-CodeGraph indexed the JavaScript runtime and tests:
+## Indexed Source Files
 
 ```text
-server.js
 ai-tu/gateway/server.js
+server.js
 src/core/entity-mentions.js
 src/core/errors.js
+src/core/generated-image-response.js
+src/core/generated-image-store.js
 src/core/labels.js
 src/core/prompt-compiler.js
 src/core/ragflow-enhancement.js
 src/core/reference-binding.js
 src/core/runtime.js
 src/providers/ai-tu-provider-adapter.js
+src/providers/provider-result-normalizer.js
 src/routes/image-generations.js
 src/routes/prompt-optimizations.js
 src/storage/generated-image-store.js
@@ -71,118 +68,60 @@ tests/unit/ai-tu-prompt-optimizer.test.js
 tests/unit/image-api.test.js
 ```
 
-The repository also contains PRD/spec/design documents, visual evidence, and the ai-tu HTML frontend. Those files are covered in this handoff even when they are not JavaScript symbols in CodeGraph.
+`ai-tu/gateway/server.js` remains an indexed migration reference only. The final service does not import it at runtime.
 
-## Runtime Entry Points
+## Active Entry Points
 
-`server.js` is the service entry point started by `npm start`.
+`server.js` is the current runtime entry point.
 
-HTTP routes:
+- `GET /health`: service health check.
+- `GET /` and `GET /ai-image-generator.html`: serve the original ai-tu frontend page.
+- `POST /api/prompt-optimizer`: prompt optimization endpoint used by the ai-tu page.
+- `POST /api/v1/prompt-optimizations`: prompt optimization alias.
+- `POST /api/v1/image-generations`: final PRD image generation API.
+- `GET /api/v1/generated-images/:image_id`: temporary URL for real provider bytes normalized by the service.
+- Legacy `/api/image-jobs` remains for compatibility but is not a PRD verification entrypoint.
 
-- `GET /health`: health check.
-- `GET /` and `GET /ai-image-generator.html`: serve the existing ai-tu frontend at `ai-tu/ai-image-generator.html`.
-- `POST /api/prompt-optimizer`: ai-tu prompt optimization entry.
-- `POST /api/v1/prompt-optimizations`: alias for prompt optimization.
-- `POST /api/v1/image-generations`: final image generation API.
-- `GET /api/v1/generated-images/:id`: short-lived in-memory image URL for real upstream image bytes returned as base64.
-- `POST /api/image-jobs` and `GET /api/image-jobs/:id`: legacy ai-tu-compatible route.
+## `/api/v1/image-generations` Main Chain
 
-The root route deliberately serves the ai-tu original page rather than the discarded standalone console.
+The final API flow is:
 
-## Major Layers
-
-### Frontend
-
-`ai-tu/ai-image-generator.html` is the active browser page at `http://127.0.0.1:8787/`.
-
-Current responsibilities:
-
-- Preserve the original ai-tu page and generation workflow.
-- Add prompt optimization controls.
-- Let the user select all 6 PRD `task_type` values.
-- Collect structured `references[]` fields.
-- Call `POST /api/prompt-optimizer` for prompt optimization.
-- On prompt optimization success, overwrite the original ai-tu prompt textarea with `optimized_prompt`.
-- Call `POST /api/v1/image-generations` from the visible `开始生成` button.
-- Render returned image URLs and previews.
-- Avoid rendering internal fields such as compiled prompt, enhancement, fallback state, provider payload, callback status, or secrets.
-
-### Prompt Optimization Route
-
-`src/routes/prompt-optimizations.js` implements the deterministic prompt optimizer / compiler.
-
-Primary flow:
-
-1. `handlePromptOptimization`.
-2. Normalize request and output schema.
-3. Extract entity mentions from `@实体名` and `[实体名]`.
-4. Validate and resolve `references[]`.
-5. Build a dynamic reference plan.
-6. Optionally call RAGFlow for structured enhancement.
-7. Validate enhancement.
-8. Compile backend-owned `optimized_prompt` for 6 task types.
-9. Validate public prompt quality and return a public response.
-
-RAGFlow is an optional enhancement layer, not the final prompt author. The backend Prompt Compiler owns the final `optimized_prompt`.
-
-### Final Image Generation Route
-
-`src/routes/image-generations.js` implements `POST /api/v1/image-generations`.
-
-Primary flow:
-
-1. `normalizeRequest` validates schema and callback fields.
-2. `extractEntityMentions` reads prompt mentions.
-3. `resolveReferences` deterministically binds references.
-4. `getRagflowEnhancement` optionally adds safe structured enhancement.
-5. `compilePrompt` builds the internal provider prompt.
+1. `normalizeRequest` validates task type, references, output, callback URL, and generation mode.
+2. `extractEntityMentions` extracts `@实体名` and `[实体名]`.
+3. `resolveReferences` binds mentions by `entity_name` and keeps all references.
+4. `getRagflowEnhancement` optionally requests safe structured enhancement.
+5. `compilePrompt` deterministically creates the internal provider prompt.
 6. `generateWithAiTuProvider` calls the real upstream provider.
-7. The route returns public images, normalized mentions/references, warnings, and trace id.
+7. `provider-result-normalizer.js` converts URL/base64/data URL/binary provider results into public image URLs.
+8. Public response returns `images[].url`, normalized mentions/references, warnings, and trace id.
 
-The public response does not expose final prompt, compiled prompt, raw enhancement, fallback state, provider payload, provider key, callback status, or internal debug data.
+The public response does not expose `final_prompt`, `compiled_prompt`, raw enhancement, RAGFlow state, fallback state, provider payload, base64 text, callback status, provider key, Authorization header, or Cookie.
 
-### Provider Adapter
+## Reference Binding Status
 
-`src/providers/ai-tu-provider-adapter.js` contains the migrated real-provider capability from ai-tu gateway logic.
+Latest PRD behavior is implemented:
 
-Implemented provider capabilities:
+- `reference_id` must be unique.
+- `references[].url` must be HTTP(S).
+- `entity_name`, `role`, and `entity_type` are validated.
+- `pattern_reference` aliases to `ornament_reference`.
+- `usage` is accepted for old clients but ignored.
+- `usage` is not returned in `normalized.references_used`.
+- No primary/auxiliary weighting is applied.
+- Same `entity_name + role` with multiple images is allowed.
+- A mention can bind to multiple `reference_id` values through `matched_reference_ids`.
+- References that are not explicitly mentioned in the prompt are still included in `references_used`, Prompt Compiler context, and provider URL input.
 
-- Runtime configuration from environment variables or ai-tu runtime config.
-- Endpoint validation.
-- API key selection without public exposure.
-- Authorization bearer request construction.
-- JSON text-to-image payload.
-- JSON image-to-image URL payload.
-- Long-running submit timeout for real image generation.
-- No automatic retry for non-idempotent image-generation submission.
-- Retry/retry-after logic for appropriate follow-up requests.
-- Provider URL response mapping.
-- Provider base64 image response mapping via real upstream bytes.
-- Async submit + poll support when upstream returns a task handle.
-- Public error mapping.
+Task-level reference rules:
 
-Important real-provider fix:
+- `text_image`: references are forbidden and return `REFERENCES_NOT_ALLOWED`.
+- `image_reference`: at least one reference is required and missing references return `REFERENCE_REQUIRED`.
+- `character_multiview`: references are optional; missing face/character reference returns a warning, not a blocker.
+- `scene_multiview`: references are optional; missing scene reference returns a warning, not a blocker.
+- `prop_multiview`: references are optional; missing prop/material/ornament reference returns a warning, not a blocker.
+- `storyboard`: pure text or mixed references are allowed.
 
-- The upstream relay returned successful images as `data[0].b64_json`, not an external URL.
-- The adapter now accepts real upstream base64 image bytes, stores them in memory through `src/storage/generated-image-store.js`, and returns a short-lived URL under `/api/v1/generated-images/<id>`.
-- This is not mock data and not fake success; the bytes are from the real upstream provider response.
-- No imgbb upload, multipart upload, or local file conversion is used.
-
-### Storage
-
-`src/storage/generated-image-store.js`
-
-- Holds real upstream image bytes in memory for short-lived browser preview.
-- Returns `/api/v1/generated-images/<id>` paths.
-- Enforces TTL and a small maximum image count.
-
-`src/storage/trace-store.js`
-
-- Writes sanitized trace metadata only.
-- Stores endpoint, method, ids, task type, generation mode, prompt hash, reference count, image count, status, and error code.
-- Does not store prompt text, provider payload, provider key, Authorization header, Cookie, or upstream raw output.
-
-## PRD Task Coverage
+## Schema Status
 
 Supported `task_type` values:
 
@@ -193,113 +132,152 @@ Supported `task_type` values:
 - `prop_multiview`
 - `storyboard`
 
-`generation_mode` is separate from `task_type`:
+Supported `role` values:
 
-- `references[]` empty -> `text_to_image`.
-- `references[]` non-empty -> `image_to_image`.
+- `face_reference`
+- `character_reference`
+- `outfit_reference`
+- `hair_reference`
+- `prop_reference`
+- `scene_reference`
+- `style_reference`
+- `composition_reference`
+- `lighting_reference`
+- `material_reference`
+- `ornament_reference`
+- `storyboard_reference`
 
-TASK-1 callback:
+Supported `entity_type` values:
 
-- Accepts `callback_url` and `callback`.
-- Does not execute callback.
-- Does not block the main generation chain.
-- Does not return `callback_status`.
-- `CALLBACK_NOT_IMPLEMENTED` no longer affects normal requests.
+- `character`
+- `scene`
+- `prop`
+- `outfit`
+- `hair`
+- `style`
+- `composition`
+- `lighting`
+- `material`
+- `ornament`
+- `storyboard`
+- `other`
 
-TASK-2 schema:
+`output` constraints:
 
-- Role enum aligned to PRD, including `face_reference`, `material_reference`, `ornament_reference`, `lighting_reference`, and `composition_reference`.
-- `pattern_reference` aliases to `ornament_reference`.
-- `entity_type` uses a strict enum.
-- `output.count` is restricted to `1-4`.
-- `aspect_ratio`, `quality`, and `language` use strict enums.
+- `count`: 1-4
+- `aspect_ratio`: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
+- `quality`: `standard`, `high`
+- `return_format`: `url`
+- `language`: `zh-CN`
 
-TASK-3 primary reference rules:
+## Prompt Compiler / RAGFlow Boundary
 
-- `character_multiview` allows primary `face_reference` or `character_reference`.
-- `scene_multiview` allows primary `scene_reference`, `lighting_reference`, or `composition_reference`.
-- `prop_multiview` allows primary `prop_reference`, `material_reference`, or `ornament_reference`.
-- `image_reference` requires at least one reference.
-- `storyboard` can be pure text.
-- `text_image` forbids references.
+Prompt Compiler owns the final internal provider prompt. RAGFlow is only an optional structured enhancement source.
 
-TASK-4 single reference default primary:
+Implemented boundaries:
 
-- One reference for the same `entity_name + role` with empty `usage` is normalized to `primary`.
-- Multiple references for the same `entity_name + role` with empty `usage` still block.
-- Multiple primary references still block.
+- RAGFlow missing configuration does not block the image generation chain unless explicitly required.
+- Invalid JSON, field-summary output, `final_prompt`, unknown reference IDs, unknown URLs, and excessive enhancement content are discarded.
+- References are compiled as equal-weight role-specific guidance.
+- Unmentioned references are still included in reference guidance.
+- Storyboard path analysis remains internal and is not returned publicly.
 
-TASK-5 final visual E2E evidence:
+## Provider Result Normalizer
 
-- Page triggered `POST /api/v1/image-generations`.
-- Page filled `references[].url`, `entity_name`, `role`, and `usage`.
-- Real provider was called.
-- Provider returned one real image through upstream bytes.
-- Page displayed a real image preview.
-- `evidence/network-summary.json` proves endpoint, HTTP 200, trace id, image count, and image preview visibility.
+`src/providers/provider-result-normalizer.js` supports:
 
-## Current Verification Results
+- external provider URL fields: `url`, `image_url`, `output_url`, `download_url`
+- nested arrays: `images[]`, `data[]`, `output[]`
+- `b64_json`
+- `base64`
+- `data:image/...;base64,...`
+- binary `Buffer`, `ArrayBuffer`, and typed arrays
+- direct binary HTTP image responses parsed by `fetchUpstreamOnce`
 
-Automation:
+If the provider returns an external URL, the service returns that URL. If the provider returns real image bytes, the service stores them through Generated Image Store and returns `/api/v1/generated-images/:image_id`.
+
+Failure mapping:
+
+- provider call failure: `IMAGE_PROVIDER_CALL_FAILED`
+- provider timeout: `IMAGE_PROVIDER_TIMEOUT`
+- no image result: `IMAGE_RESULT_EMPTY`
+- unsupported bytes/MIME/base64: `PROVIDER_RESPONSE_UNSUPPORTED`
+
+## Generated Image Store
+
+`src/core/generated-image-store.js` and `GET /api/v1/generated-images/:image_id` provide temporary access to real provider bytes.
+
+Implemented controls:
+
+- random, non-enumerable `image_id`
+- default TTL: 1 hour
+- `GENERATED_IMAGE_TTL_MS`
+- `GENERATED_IMAGE_MAX_COUNT`
+- `GENERATED_IMAGE_MAX_BYTES`, default 20 MB
+- MIME whitelist: `image/png`, `image/jpeg`, `image/webp`
+- magic-byte MIME validation
+- cleanup, get, delete, and test clear helpers
+- response headers: `Content-Type`, `Content-Length`, `Cache-Control: no-store`
+- expired or missing images return 404
+
+The store is an in-memory default and is shaped so it can be replaced by object storage later. It is not a reference upload store.
+
+## Callback Status
+
+Current callback behavior is the C plan:
+
+- accepts `callback_url`
+- accepts `callback.url`
+- validates HTTP(S) URL
+- does not create callback jobs
+- does not send callback requests
+- does not return `callback_status`
+- does not return `CALLBACK_NOT_IMPLEMENTED`
+- records only callback presence in sanitized trace metadata
+
+## Provider Adapter Migration
+
+Detailed migration mapping is maintained in:
+
+```text
+docs/provider-adapter-migration-map.md
+```
+
+That map covers allowed provider config/auth/payload/call/retry/error/result normalization behavior and forbidden upload, imgbb, multipart, old UI, old response, and hardcoded secret behavior.
+
+## Evidence Paths
+
+- Visual E2E report: `evidence/visual-e2e-report.md`
+- Network summary: `evidence/network-summary.json`
+- Screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
+- Code-map artifacts: `.understand-anything/`
+
+Evidence files must not contain raw provider payloads, full base64 strings, Authorization headers, Cookies, provider keys, RAGFlow keys, internal prompts, or raw enhancement output.
+
+## Test Results
+
+Last automated results before final browser rerun:
 
 ```text
 npm run check: pass
-npm test: pass, 54 tests
+npm test: pass, 66 tests
+node --test tests/integration/*.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
 ```
 
-Browser evidence:
+## Concurrency Status
 
-- Screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
-- Network summary: `evidence/network-summary.json`
-- Visual report: `evidence/visual-e2e-report.md`
-- Latest successful trace: `trace_f8cfe50955db4268ac`
-- Latest final API result: `status=succeeded`, `image_count=1`, `http_status=200`
+See `docs/concurrency-status.md`.
 
-Privacy checks:
+Current service supports concurrent HTTP requests, provider timeout/retry basics, credential rotation, polling, and a bounded generated-image memory store.
 
-- No key/token stored in evidence.
-- No Authorization header stored in evidence.
-- No Cookie stored in evidence.
-- No provider raw payload stored in evidence.
-- No final prompt / compiled prompt / enhancement / fallback / callback status shown publicly.
+It does not yet implement a global task queue, global provider semaphore, per-key concurrency controls, backpressure, persisted job state, 1000-concurrency traffic shaping, cancellation, queue recovery, or durable resume.
 
-## Newcomer Handoff
+This project must not claim industrial 1000-concurrency readiness.
 
-Start locally:
+## Remaining Work
 
-```bash
-cd /Volumes/App_Dev/new_Prompt_prj
-npm install
-npm start
-```
-
-Open:
-
-```text
-http://127.0.0.1:8787/
-```
-
-Main manual test:
-
-1. Open the ai-tu original page.
-2. Choose `scene_multiview`.
-3. Fill prompt: `生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图`.
-4. Fill two references:
-   - `ref_char`, `萧昭宁`, `character_reference`, `auxiliary`, URL present.
-   - `ref_scene`, `营帐`, `scene_reference`, `primary`, URL present.
-5. Click `开始生成`.
-6. Confirm `POST /api/v1/image-generations` returns 200.
-7. Confirm image preview is visible.
-8. Confirm public page does not show internal prompt/enhancement/provider payload/key/token.
-
-Refresh the code map:
-
-```bash
-python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard
-```
-
-## Git / Report Notes
-
-- `.understand-anything/` contains generated local dashboard artifacts and may be ignored by git.
-- `CODEGRAPH_REPORT.md` is the root-level durable handoff report.
-- The ai-tu source file `ai-tu/gateway/server.js` remains a migration reference and was not modified for the final API service path.
+- Complete the latest Browser visual E2E after this report refresh.
+- Keep legacy `/api/image-jobs` out of final PRD evidence.
+- Replace memory Generated Image Store with object storage before multi-instance deployment.
+- Add production SSRF policy review before enabling private-network reference URLs.
+- Add queue and provider concurrency controls before high-concurrency production claims.

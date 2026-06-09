@@ -1836,7 +1836,6 @@
         entity_name: "萧昭宁",
         entity_type: "character",
         role: "character_reference",
-        usage: "auxiliary",
         url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
         mime_type: "image/png",
         display_name: "萧昭宁.png",
@@ -1847,7 +1846,6 @@
         entity_name: "营帐",
         entity_type: "scene",
         role: "scene_reference",
-        usage: "primary",
         url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
         mime_type: "image/png",
         display_name: "营帐.png",
@@ -1861,7 +1859,6 @@
         entity_name: "研究员",
         entity_type: "character",
         role: "character_reference",
-        usage: "auxiliary",
         url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
         mime_type: "image/png",
         display_name: "研究员.png",
@@ -1872,7 +1869,6 @@
         entity_name: "现代实验室",
         entity_type: "scene",
         role: "scene_reference",
-        usage: "primary",
         url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
         mime_type: "image/png",
         display_name: "现代实验室.png",
@@ -1894,7 +1890,6 @@
             entity_name: "海报参考",
             entity_type: "style",
             role: "style_reference",
-            usage: "primary",
             url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
             mime_type: "image/png",
             display_name: "海报参考.png",
@@ -1911,11 +1906,10 @@
             entity_name: "云岚",
             entity_type: "character",
             role: "character_reference",
-            usage: "primary",
             url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
             mime_type: "image/png",
             display_name: "云岚.png",
-            description: "云岚角色主参考"
+            description: "云岚角色参考"
           }
         ]
       },
@@ -1933,11 +1927,10 @@
             entity_name: "折叠罗盘",
             entity_type: "prop",
             role: "prop_reference",
-            usage: "primary",
             url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
             mime_type: "image/png",
             display_name: "折叠罗盘.png",
-            description: "折叠罗盘道具主参考"
+            description: "折叠罗盘道具参考"
           }
         ]
       },
@@ -2181,7 +2174,6 @@
         entity_name: index === 0 ? "萧昭宁" : index === 1 ? "营帐" : "",
         entity_type: index === 0 ? "character" : index === 1 ? "scene" : "character",
         role: index === 0 ? "character_reference" : index === 1 ? "scene_reference" : "character_reference",
-        usage: index === 0 ? "auxiliary" : index === 1 ? "primary" : "auxiliary",
         url: "",
         mime_type: "image/png",
         display_name: index === 0 ? "萧昭宁.png" : index === 1 ? "营帐.png" : "",
@@ -2200,8 +2192,7 @@
         row.innerHTML = `
           ${optimizerInput("reference_id", "reference_id", reference.reference_id)}
           ${optimizerInput("entity_name", "entity_name", reference.entity_name)}
-          ${optimizerSelect("entity_type", "entity_type", ["character", "scene", "prop", "outfit", "hair", "face", "material", "ornament", "style", "lighting", "composition", "storyboard"], reference.entity_type)}
-          ${optimizerSelect("usage", "usage", ["primary", "auxiliary"], reference.usage)}
+          ${optimizerSelect("entity_type", "entity_type", ["character", "scene", "prop", "outfit", "hair", "style", "composition", "lighting", "material", "ornament", "storyboard", "other"], reference.entity_type)}
           ${optimizerSelect("role", "role", ["face_reference", "character_reference", "outfit_reference", "hair_reference", "prop_reference", "scene_reference", "style_reference", "composition_reference", "lighting_reference", "material_reference", "ornament_reference", "storyboard_reference"], reference.role)}
           ${optimizerInput("url", "url", reference.url, "wide")}
           ${optimizerInput("mime_type", "mime_type", reference.mime_type)}
@@ -2241,7 +2232,6 @@
           entity_name: get("entity_name"),
           entity_type: get("entity_type"),
           role: get("role"),
-          usage: get("usage"),
           url: get("url"),
           mime_type: get("mime_type"),
           display_name: get("display_name"),
@@ -2770,7 +2760,6 @@
           entity_name: reference.entity_name || "",
           entity_type: reference.entity_type || "",
           role: reference.role || "",
-          usage: reference.usage || "",
           url: reference.url || "",
           mime_type: reference.mime_type || "",
           display_name: reference.display_name || "",

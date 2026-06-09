@@ -6,7 +6,7 @@ import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
 import { ImageApiError } from "./src/core/errors.js";
 import { makeId, stringValue } from "./src/core/runtime.js";
 import { generateWithAiTuProvider } from "./src/providers/ai-tu-provider-adapter.js";
-import { getGeneratedImage } from "./src/storage/generated-image-store.js";
+import { generatedImageHttpResponse } from "./src/core/generated-image-response.js";
 
 const ROOT = resolve(import.meta.dirname);
 const AI_TU_HTML_FILE = resolve(ROOT, "ai-tu/ai-image-generator.html");
@@ -60,14 +60,9 @@ async function route(request, response) {
   }
   const generatedImageMatch = url.pathname.match(/^\/api\/v1\/generated-images\/([^/]+)$/);
   if (request.method === "GET" && generatedImageMatch) {
-    const image = getGeneratedImage(decodeURIComponent(generatedImageMatch[1]));
-    if (!image) return sendJson(response, 404, { status: "failed", error_code: "IMAGE_NOT_FOUND", message: "图片不存在或已过期。" });
-    response.writeHead(200, {
-      "Content-Type": image.mime || "image/png",
-      "Content-Length": image.bytes.length,
-      "Cache-Control": "no-store"
-    });
-    return response.end(image.bytes);
+    const result = generatedImageHttpResponse(decodeURIComponent(generatedImageMatch[1]));
+    response.writeHead(result.statusCode, result.headers);
+    return response.end(result.body);
   }
   if (request.method === "GET") {
     return serveStatic(url.pathname, response);
@@ -167,7 +162,6 @@ function normalizeLegacyReferences(body) {
       entity_name: stringValue(image.entity_name || image.name || `参考图${index + 1}`).trim(),
       entity_type: stringValue(image.entity_type || "image").trim(),
       role: stringValue(image.role || "style_reference").trim(),
-      usage: stringValue(image.usage || "auxiliary").trim(),
       url,
       mime_type: stringValue(image.mime_type || image.type || "image/*").trim(),
       display_name: stringValue(image.display_name || image.name || basename(new URL(url).pathname) || `reference-${index + 1}`).trim(),
@@ -184,7 +178,6 @@ function normalizeLegacyReferences(body) {
       entity_name: stringValue(ref.entity_name || ref.display_name || `参考对象${index + 1}`).trim(),
       entity_type: stringValue(ref.entity_type || "image").trim(),
       role: stringValue(ref.role || "style_reference").trim(),
-      usage: stringValue(ref.usage || "auxiliary").trim(),
       url,
       mime_type: stringValue(ref.mime_type || "image/*").trim(),
       display_name: stringValue(ref.display_name || basename(new URL(url).pathname) || `reference-${index + 1}`).trim(),

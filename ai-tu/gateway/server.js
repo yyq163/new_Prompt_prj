@@ -216,9 +216,14 @@ function normalizeImageRequest(body, ownerToken = "") {
   const outputFormat = enumValue(body.output_format || body.format, ["png", "jpeg", "webp"], "png");
   const size = normalizeSize(body.size);
   const rawImages = Array.isArray(body.images) ? body.images : [];
-  const images = rawImages.map(normalizeReferenceImage).filter(Boolean);
-  if (rawImages.length && images.length !== rawImages.length) {
-    throw httpError(400, "invalid_reference_image", "参考图必须先上传到图床，并使用 image_url。");
+  const rawReferences = Array.isArray(body.references) ? body.references : [];
+  const activeRawReferences = rawReferences.filter((item) => stringValue(item && item.url).trim());
+  const images = [
+    ...rawImages.map(normalizeReferenceImage),
+    ...activeRawReferences.map(normalizeStructuredReferenceImage)
+  ].filter(Boolean);
+  if (rawImages.length + activeRawReferences.length && images.length !== rawImages.length + activeRawReferences.length) {
+    throw httpError(400, "invalid_reference_image", "参考图必须使用可访问的 http 或 https URL。");
   }
   const mode = body.mode === "image" || images.length ? "image" : "text";
 
@@ -243,6 +248,24 @@ function normalizeReferenceImage(item, index) {
       referenceId: stringValue(item.referenceId).trim(),
       name: safeFilename(item.name || `reference-${index + 1}`),
       type: stringValue(item.type || "image/*").toLowerCase(),
+      url: remoteUrl,
+      image_url: remoteUrl
+    };
+  }
+  return null;
+}
+
+function normalizeStructuredReferenceImage(item, index) {
+  if (!item || typeof item !== "object") return null;
+  const remoteUrl = stringValue(item.url).trim();
+  if (/^https?:\/\//i.test(remoteUrl)) {
+    return {
+      referenceId: stringValue(item.reference_id || item.referenceId).trim(),
+      entityName: stringValue(item.entity_name).trim(),
+      role: stringValue(item.role).trim(),
+      usage: stringValue(item.usage).trim(),
+      name: safeFilename(item.display_name || item.entity_name || `reference-${index + 1}`),
+      type: stringValue(item.mime_type || "image/*").toLowerCase(),
       url: remoteUrl,
       image_url: remoteUrl
     };

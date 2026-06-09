@@ -1,14 +1,14 @@
 {
-  "name": "ai-tu",
+  "name": "final-image-generation-api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node gateway/server.js",
-    "check": "node --check gateway/server.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check src/routes/image-generations.js && node --check src/routes/prompt-optimizations.js && node --check src/providers/ai-tu-provider-adapter.js && node --check src/core/entity-mentions.js && node --check src/core/reference-binding.js && node --check src/core/prompt-compiler.js && node --check src/core/ragflow-enhancement.js && node --check src/core/runtime.js && node --check src/core/errors.js && node --check src/core/labels.js && node --check src/storage/trace-store.js",
+    "test": "node --test tests/unit/*.test.js"
   },
   "engines": {
     "node": ">=22"
   }
 }
-

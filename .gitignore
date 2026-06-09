@@ -5,12 +5,17 @@ runtime-config.json
 .env.*
 !.env.example
 .code-index/
+.codegraph/
+.understand-anything/
 .codex-agent-team/
 .playwright-cli/
 output/
 test-image/
+ai-tu/runtime-config.json
+ai-tu/runtime-config.example.json
 .server.pid
 .server.log
 .server-*.pid
 .server-*.log
 .visual-review*/
+evidence/visual-6task-results.json

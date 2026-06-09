@@ -604,6 +604,129 @@
       color: #555763;
     }
 
+    .optimizer-panel {
+      margin-top: 12px;
+      border: 1px solid rgba(128, 140, 166, .22);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .72);
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .optimizer-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .optimizer-title {
+      margin: 0;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .optimizer-tools,
+    .optimizer-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .optimizer-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .optimizer-field {
+      display: grid;
+      gap: 6px;
+      color: #6f707d;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .optimizer-field input,
+    .optimizer-field select {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid rgba(128, 140, 166, .28);
+      border-radius: 10px;
+      background: #fff;
+      color: #30313a;
+      padding: 0 10px;
+      font: inherit;
+      font-weight: 700;
+      outline: none;
+    }
+
+    .optimizer-reference-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .optimizer-reference-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+      gap: 8px;
+      align-items: end;
+      padding: 10px;
+      border: 1px solid rgba(128, 140, 166, .2);
+      border-radius: 12px;
+      background: rgba(248, 250, 252, .82);
+    }
+
+    .optimizer-reference-row .wide {
+      grid-column: span 2;
+    }
+
+    .optimizer-reference-row .remove-reference {
+      width: 38px;
+      height: 38px;
+      min-width: 38px;
+      padding: 0;
+    }
+
+    .optimizer-status {
+      min-height: 18px;
+      color: #6f707d;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .optimizer-status.good {
+      color: #287a44;
+    }
+
+    .optimizer-status.bad {
+      color: #bd3434;
+    }
+
+    .optimizer-status.busy {
+      color: #555763;
+    }
+
+    .optimizer-trace {
+      color: #6f707d;
+      font-size: 12px;
+      font-weight: 800;
+      word-break: break-all;
+    }
+
+    .optimizer-warnings {
+      margin: 0;
+      padding-left: 18px;
+      color: #6f707d;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
     .app-toast {
       position: fixed;
       right: 28px;
@@ -1522,8 +1645,14 @@
       }
 
       .reference-film,
+      .optimizer-grid,
+      .optimizer-reference-row,
       .two {
         grid-template-columns: 1fr;
+      }
+
+      .optimizer-reference-row .wide {
+        grid-column: span 1;
       }
     }
   </style>
@@ -1585,6 +1714,45 @@
             <div class="reference-film" id="referenceGrid" aria-label="参考图槽位"></div>
           </div>
           <textarea id="prompt" class="prompt-box" placeholder="提示词"></textarea>
+          <section class="optimizer-panel" aria-label="提示词优化">
+            <div class="optimizer-head">
+              <h3 class="optimizer-title">提示词优化</h3>
+              <div class="optimizer-tools">
+                <button class="ghost" id="optimizerSamplePromptBtn" type="button">填入示例提示词</button>
+                <button class="ghost" id="optimizerSampleRefsBtn" type="button">填入示例参考</button>
+                <button class="ghost" id="optimizerLabSampleBtn" type="button">填入实验室样例</button>
+                <button class="ghost" id="optimizerSixTaskSamplesBtn" type="button">切换 6 类样例</button>
+              </div>
+            </div>
+            <div class="optimizer-grid">
+              <label class="optimizer-field">
+                <span>task_type</span>
+                <select id="optimizerTaskType">
+                  <option value="text_image">text_image</option>
+                  <option value="image_reference">image_reference</option>
+                  <option value="character_multiview">character_multiview</option>
+                  <option value="scene_multiview" selected>scene_multiview</option>
+                  <option value="prop_multiview">prop_multiview</option>
+                  <option value="storyboard">storyboard</option>
+                </select>
+              </label>
+              <label class="optimizer-field">
+                <span>unbound_entity</span>
+                <select id="optimizerUnboundEntity">
+                  <option value="warn" selected>warn</option>
+                  <option value="block">block</option>
+                </select>
+              </label>
+            </div>
+            <div class="optimizer-reference-list" id="optimizerReferenceList"></div>
+            <div class="optimizer-actions">
+              <button class="ghost" id="addOptimizerReferenceBtn" type="button">添加 reference</button>
+              <button class="primary" id="optimizePromptBtn" type="button">优化提示词</button>
+            </div>
+            <div class="optimizer-status" id="optimizerStatus" role="status" aria-live="polite"></div>
+            <div class="optimizer-trace" id="optimizerTrace"></div>
+            <ul class="optimizer-warnings" id="optimizerWarnings"></ul>
+          </section>
           <div class="control-row">
             <button class="primary generate-action" id="generateBtn" type="button" onclick="window.generateImageToolNow && window.generateImageToolNow()">开始生成</button>
             <label class="select-chip control-count">
@@ -1674,6 +1842,124 @@
     const HISTORY_DB_NAME = "ai-image-tool-history-v1";
     const HISTORY_DB_VERSION = 1;
     const HISTORY_STORE_NAME = "jobs";
+    const OPTIMIZER_SAMPLE_PROMPT = "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图";
+    const OPTIMIZER_SAMPLE_REFERENCES = [
+      {
+        reference_id: "ref_char",
+        entity_name: "萧昭宁",
+        entity_type: "character",
+        role: "character_reference",
+        usage: "auxiliary",
+        url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
+        mime_type: "image/png",
+        display_name: "萧昭宁.png",
+        description: "萧昭宁角色参考图"
+      },
+      {
+        reference_id: "ref_scene",
+        entity_name: "营帐",
+        entity_type: "scene",
+        role: "scene_reference",
+        usage: "primary",
+        url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
+        mime_type: "image/png",
+        display_name: "营帐.png",
+        description: "营帐场景参考图"
+      }
+    ];
+    const OPTIMIZER_LAB_SAMPLE_PROMPT = "生成 @研究员 在 @现代实验室 中的冷色调现场光影多视角参考图";
+    const OPTIMIZER_LAB_SAMPLE_REFERENCES = [
+      {
+        reference_id: "ref_researcher",
+        entity_name: "研究员",
+        entity_type: "character",
+        role: "character_reference",
+        usage: "auxiliary",
+        url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
+        mime_type: "image/png",
+        display_name: "研究员.png",
+        description: "研究员角色参考"
+      },
+      {
+        reference_id: "ref_lab",
+        entity_name: "现代实验室",
+        entity_type: "scene",
+        role: "scene_reference",
+        usage: "primary",
+        url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
+        mime_type: "image/png",
+        display_name: "现代实验室.png",
+        description: "现代实验室场景参考图"
+      }
+    ];
+    const OPTIMIZER_TASK_SAMPLES = [
+      {
+        task_type: "text_image",
+        prompt: "一座雨夜霓虹街角的电影感画面，路面有倒影，远处店铺亮着暖光。",
+        references: []
+      },
+      {
+        task_type: "image_reference",
+        prompt: "基于 @海报参考 生成一张新的品牌视觉图，保留参考图的版式气质和色彩节奏。",
+        references: [
+          {
+            reference_id: "ref_poster",
+            entity_name: "海报参考",
+            entity_type: "style",
+            role: "style_reference",
+            usage: "primary",
+            url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
+            mime_type: "image/png",
+            display_name: "海报参考.png",
+            description: "品牌海报风格参考"
+          }
+        ]
+      },
+      {
+        task_type: "character_multiview",
+        prompt: "生成 @云岚 的角色四视图设定图，强调人物一致性和完整服饰结构。",
+        references: [
+          {
+            reference_id: "ref_yunlan",
+            entity_name: "云岚",
+            entity_type: "character",
+            role: "character_reference",
+            usage: "primary",
+            url: "https://upload.wikimedia.org/wikipedia/commons/6/65/No-Image-Placeholder.svg",
+            mime_type: "image/png",
+            display_name: "云岚.png",
+            description: "云岚角色主参考"
+          }
+        ]
+      },
+      {
+        task_type: "scene_multiview",
+        prompt: "生成 @研究员 在 @现代实验室 中的冷色调现场光影多视角参考图",
+        references: OPTIMIZER_LAB_SAMPLE_REFERENCES
+      },
+      {
+        task_type: "prop_multiview",
+        prompt: "生成 @折叠罗盘 的道具结构、材质和纹样多角度资产图。",
+        references: [
+          {
+            reference_id: "ref_compass",
+            entity_name: "折叠罗盘",
+            entity_type: "prop",
+            role: "prop_reference",
+            usage: "primary",
+            url: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Placeholder_view_vector.svg",
+            mime_type: "image/png",
+            display_name: "折叠罗盘.png",
+            description: "折叠罗盘道具主参考"
+          }
+        ]
+      },
+      {
+        task_type: "storyboard",
+        prompt: "少女推开门，看见远处灯塔亮起，短暂停顿后奔向海岸，海风逐渐增强。",
+        references: []
+      }
+    ];
     const IMAGE2_SIZE = {
       maxEdge: 3840,
       minPixels: 655360,
@@ -1738,8 +2024,21 @@
       downloadPreviewBtn: $("downloadPreviewBtn"),
       fullscreenPreviewBtn: $("fitPreviewBtn"),
       previewStage: $("previewStage"),
-      sizePreview: $("sizePreview")
+      sizePreview: $("sizePreview"),
+      optimizerTaskType: $("optimizerTaskType"),
+      optimizerUnboundEntity: $("optimizerUnboundEntity"),
+      optimizerReferenceList: $("optimizerReferenceList"),
+      optimizerStatus: $("optimizerStatus"),
+      optimizerTrace: $("optimizerTrace"),
+      optimizerWarnings: $("optimizerWarnings"),
+      optimizePromptBtn: $("optimizePromptBtn"),
+      addOptimizerReferenceBtn: $("addOptimizerReferenceBtn"),
+      optimizerSamplePromptBtn: $("optimizerSamplePromptBtn"),
+      optimizerSampleRefsBtn: $("optimizerSampleRefsBtn"),
+      optimizerLabSampleBtn: $("optimizerLabSampleBtn"),
+      optimizerSixTaskSamplesBtn: $("optimizerSixTaskSamplesBtn")
     };
+    let optimizerTaskSampleIndex = 0;
 
     init();
 
@@ -1748,6 +2047,7 @@
       updateServiceText();
       await restorePersistedJobs();
       renderReferenceSlots();
+      renderOptimizerReferences([blankOptimizerReference(0), blankOptimizerReference(1)]);
       renderJobs();
       bindEvents();
       refreshMode();
@@ -1783,6 +2083,36 @@
         event.target.value = "";
       });
       controls.prompt.addEventListener("focus", clearPromptPlaceholder);
+      controls.optimizePromptBtn.addEventListener("click", optimizePrompt);
+      controls.addOptimizerReferenceBtn.addEventListener("click", () => {
+        const references = collectOptimizerReferences({ includeEmpty: true });
+        references.push(blankOptimizerReference(references.length));
+        renderOptimizerReferences(references);
+      });
+      controls.optimizerSamplePromptBtn.addEventListener("click", () => {
+        controls.prompt.value = OPTIMIZER_SAMPLE_PROMPT;
+        clearOptimizerStatus();
+        controls.prompt.focus();
+      });
+      controls.optimizerSampleRefsBtn.addEventListener("click", () => {
+        renderOptimizerReferences(OPTIMIZER_SAMPLE_REFERENCES);
+        clearOptimizerStatus();
+      });
+      controls.optimizerLabSampleBtn.addEventListener("click", () => {
+        controls.prompt.value = OPTIMIZER_LAB_SAMPLE_PROMPT;
+        renderOptimizerReferences(OPTIMIZER_LAB_SAMPLE_REFERENCES);
+        clearOptimizerStatus();
+        controls.prompt.focus();
+      });
+      controls.optimizerSixTaskSamplesBtn.addEventListener("click", () => {
+        const sample = OPTIMIZER_TASK_SAMPLES[optimizerTaskSampleIndex % OPTIMIZER_TASK_SAMPLES.length];
+        optimizerTaskSampleIndex += 1;
+        controls.optimizerTaskType.value = sample.task_type;
+        controls.prompt.value = sample.prompt;
+        renderOptimizerReferences(sample.references);
+        clearOptimizerStatus();
+        controls.prompt.focus();
+      });
 
       $("textModeBtn").addEventListener("click", (event) => {
         event.preventDefault();
@@ -1856,6 +2186,163 @@
     function updateServiceText() {
       if (!controls.serviceText) return;
       controls.serviceText.textContent = `服务：${window.location.host || "本地页面"}`;
+    }
+
+    function blankOptimizerReference(index = 0) {
+      return {
+        reference_id: index === 0 ? "ref_char" : index === 1 ? "ref_scene" : `ref_${index + 1}`,
+        entity_name: index === 0 ? "萧昭宁" : index === 1 ? "营帐" : "",
+        entity_type: index === 0 ? "character" : index === 1 ? "scene" : "character",
+        role: index === 0 ? "character_reference" : index === 1 ? "scene_reference" : "character_reference",
+        usage: index === 0 ? "auxiliary" : index === 1 ? "primary" : "auxiliary",
+        url: "",
+        mime_type: "image/png",
+        display_name: index === 0 ? "萧昭宁.png" : index === 1 ? "营帐.png" : "",
+        description: index === 0 ? "萧昭宁角色参考图" : index === 1 ? "营帐场景参考图" : ""
+      };
+    }
+
+    function renderOptimizerReferences(references = []) {
+      const list = controls.optimizerReferenceList;
+      if (!list) return;
+      list.innerHTML = "";
+      references.forEach((reference, index) => {
+        const row = document.createElement("div");
+        row.className = "optimizer-reference-row";
+        row.dataset.referenceIndex = String(index);
+        row.innerHTML = `
+          ${optimizerInput("reference_id", "reference_id", reference.reference_id)}
+          ${optimizerInput("entity_name", "entity_name", reference.entity_name)}
+          ${optimizerSelect("entity_type", "entity_type", ["character", "scene", "prop", "style", "lighting", "composition"], reference.entity_type)}
+          ${optimizerSelect("usage", "usage", ["primary", "auxiliary"], reference.usage)}
+          ${optimizerSelect("role", "role", ["character_reference", "scene_reference", "prop_reference", "style_reference", "lighting_reference", "composition_reference"], reference.role)}
+          ${optimizerInput("url", "url", reference.url, "wide")}
+          ${optimizerInput("mime_type", "mime_type", reference.mime_type)}
+          ${optimizerInput("display_name", "display_name", reference.display_name)}
+          ${optimizerInput("description", "description", reference.description, "wide")}
+          <button class="ghost remove-reference" type="button" title="删除 reference" aria-label="删除 reference">×</button>
+        `;
+        row.querySelector(".remove-reference").addEventListener("click", () => {
+          const current = collectOptimizerReferences({ includeEmpty: true });
+          current.splice(index, 1);
+          renderOptimizerReferences(current.length ? current : [blankOptimizerReference(0)]);
+        });
+        list.appendChild(row);
+      });
+    }
+
+    function optimizerInput(field, label, value = "", className = "") {
+      return `<label class="optimizer-field ${className}"><span>${label}</span><input data-reference-field="${field}" value="${escapeAttribute(value || "")}"></label>`;
+    }
+
+    function optimizerSelect(field, label, options, value = "") {
+      const normalizedValue = value || options[0];
+      const optionHtml = options.map((option) => (
+        `<option value="${escapeAttribute(option)}"${option === normalizedValue ? " selected" : ""}>${escapeHtml(option)}</option>`
+      )).join("");
+      return `<label class="optimizer-field"><span>${label}</span><select data-reference-field="${field}">${optionHtml}</select></label>`;
+    }
+
+    function collectOptimizerReferences(options = {}) {
+      const includeEmpty = Boolean(options.includeEmpty);
+      const requireUrl = Boolean(options.requireUrl);
+      const rows = Array.from(controls.optimizerReferenceList?.querySelectorAll(".optimizer-reference-row") || []);
+      return rows.map((row, index) => {
+        const get = (field) => (row.querySelector(`[data-reference-field="${field}"]`)?.value || "").trim();
+        return {
+          reference_id: get("reference_id"),
+          entity_name: get("entity_name"),
+          entity_type: get("entity_type"),
+          role: get("role"),
+          usage: get("usage"),
+          url: get("url"),
+          mime_type: get("mime_type"),
+          display_name: get("display_name"),
+          description: get("description"),
+          order: index + 1
+        };
+      }).filter((reference) => {
+        if (includeEmpty) return true;
+        if (requireUrl) return Boolean(reference.url);
+        return reference.url || reference.entity_name || reference.reference_id || reference.description;
+      });
+    }
+
+    async function optimizePrompt() {
+      const originalPrompt = getPromptValue();
+      try {
+        if (isFileProtocol()) throw new Error(fileProtocolMessage());
+        if (!originalPrompt) throw new Error("请先填写原始提示词。");
+        const payload = {
+          task_type: controls.optimizerTaskType.value || "scene_multiview",
+          prompt: originalPrompt,
+          references: collectOptimizerReferences(),
+          reference_policy: {
+            unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
+          }
+        };
+        setOptimizerStatus("正在优化提示词。", "busy");
+        controls.optimizePromptBtn.disabled = true;
+        const response = await fetch("/api/prompt-optimizer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const result = await parseJsonResponseSafe(response);
+        if (!response.ok) {
+          renderOptimizerResultMeta(result);
+          throw new Error(result.message || "提示词优化失败，请重新优化。");
+        }
+        if (result.status !== "succeeded" || !result.optimized_prompt) {
+          throw new Error(result.message || result.error || "提示词优化失败。");
+        }
+        controls.prompt.value = result.optimized_prompt;
+        setOptimizerStatus("优化成功，已回填到提示词输入框。", "good");
+        renderOptimizerResultMeta(result);
+      } catch (error) {
+        controls.prompt.value = originalPrompt;
+        setOptimizerStatus(`优化失败：${errorToMessage(error)}`, "bad");
+      } finally {
+        controls.optimizePromptBtn.disabled = false;
+      }
+    }
+
+    async function parseJsonResponseSafe(response) {
+      const text = await response.text();
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch {
+        return {
+          status: "failed",
+          message: response.ok ? "" : "提示词优化失败，请重新优化。"
+        };
+      }
+    }
+
+    function setOptimizerStatus(message, type = "") {
+      if (!controls.optimizerStatus) return;
+      controls.optimizerStatus.textContent = message;
+      controls.optimizerStatus.className = ["optimizer-status", type].filter(Boolean).join(" ");
+    }
+
+    function renderOptimizerResultMeta(result = {}) {
+      if (controls.optimizerTrace) {
+        controls.optimizerTrace.textContent = result.trace_id ? `trace_id：${result.trace_id}` : "";
+      }
+      if (controls.optimizerWarnings) {
+        controls.optimizerWarnings.innerHTML = "";
+        (Array.isArray(result.warnings) ? result.warnings : []).forEach((warning) => {
+          const item = document.createElement("li");
+          item.textContent = warning.message || warning.code || String(warning);
+          controls.optimizerWarnings.appendChild(item);
+        });
+      }
+    }
+
+    function clearOptimizerStatus() {
+      setOptimizerStatus("", "");
+      if (controls.optimizerTrace) controls.optimizerTrace.textContent = "";
+      if (controls.optimizerWarnings) controls.optimizerWarnings.innerHTML = "";
     }
 
     function isFileProtocol() {
@@ -2238,14 +2725,21 @@
     function buildJobRequest() {
       const prompt = getPromptValue();
       const refList = selectedRefs();
+      const structuredReferences = collectOptimizerReferences({ requireUrl: true });
+      const hasReferenceUrls = structuredReferences.some((reference) => /^https?:\/\//i.test(reference.url));
       return {
         prompt,
         model: DEFAULT_MODEL,
-        mode: preferredMode === "image" || refList.length ? "image" : "text",
+        task_type: controls.optimizerTaskType.value || "image_reference",
+        mode: preferredMode === "image" || refList.length || hasReferenceUrls ? "image" : "text",
         size: computeSize(),
         quality: controls.quality.value || "auto",
         output_format: controls.outputFormat.value || "png",
         n: clampNumber(Number(controls.n.value || 1), 1, 10),
+        reference_policy: {
+          unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
+        },
+        references: structuredReferences,
         images: refList.map((ref) => ({
           referenceId: ref.referenceId || "",
           name: ref.name,
@@ -2266,6 +2760,17 @@
         quality: request.quality,
         output_format: request.output_format,
         n: request.n,
+        references: Array.isArray(request.references) ? request.references.map((reference) => ({
+          reference_id: reference.reference_id || "",
+          entity_name: reference.entity_name || "",
+          entity_type: reference.entity_type || "",
+          role: reference.role || "",
+          usage: reference.usage || "",
+          url: reference.url || "",
+          mime_type: reference.mime_type || "",
+          display_name: reference.display_name || "",
+          description: reference.description || ""
+        })) : [],
         images: Array.isArray(request.images) ? request.images.map((image) => ({
           referenceId: image.referenceId || "",
           name: image.name,
@@ -2278,11 +2783,15 @@
 
     function validateJobRequest(request) {
       if (!request.prompt) throw new Error("请填写提示词。");
-      if (request.mode === "image" && request.images.length === 0) {
-        throw new Error("图生图模式请先上传参考图。");
+      const hasUrlReferences = Array.isArray(request.references) && request.references.some((reference) => /^https?:\/\//i.test(reference.url || ""));
+      if (request.mode === "image" && request.images.length === 0 && !hasUrlReferences) {
+        throw new Error("图生图模式请先上传参考图或填写 reference URL。");
       }
       if (request.mode === "image" && request.images.some((image) => !image.image_url)) {
-        throw new Error("参考图必须先上传到图床。");
+        throw new Error("上传槽位参考图需要先得到可访问 URL。");
+      }
+      if (Array.isArray(request.references) && request.references.some((reference) => reference.url && !/^https?:\/\//i.test(reference.url))) {
+        throw new Error("references[].url 只支持 http 或 https URL。");
       }
     }
 
@@ -3263,6 +3772,10 @@
         '"': "&quot;",
         "'": "&#39;"
       }[char]));
+    }
+
+    function escapeAttribute(value) {
+      return escapeHtml(value);
     }
   </script>
 </body>

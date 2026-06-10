@@ -4,25 +4,22 @@ Date: 2026-06-10
 
 ## Scope
 
-- Page: `http://127.0.0.1:8787/`
+- Page: `http://127.0.0.1:8791/`
 - Source page: `ai-tu/ai-image-generator.html`
-- Entry used: visible ai-tu page, not standalone API script
+- Entry used: visible ai-tu page
 - Final endpoint: `POST /api/v1/image-generations`
 
 ## Browser Steps
 
-1. Opened `http://127.0.0.1:8787/` in Codex Browser.
-2. Confirmed the page title is `帧界图片生成器快速版`.
+1. Opened the local page in Codex Browser.
+2. Confirmed the visible title was `帧界图片生成器快速版`.
 3. Selected `scene_multiview`.
-4. Filled prompt: `生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图`.
-5. Filled three structured URL references:
-   - `ref_char_1`, `萧昭宁`, `character`, `character_reference`
-   - `ref_char_2`, `萧昭宁`, `character`, `face_reference`
-   - `ref_scene_1`, `营帐`, `scene`, `scene_reference`
-6. Confirmed the page did not require or display `usage`, `primary`, or `auxiliary`.
+4. Filled a prompt that mentions `@萧昭宁` and `@营帐`.
+5. Filled three structured URL reference rows with required fields.
+6. Confirmed old priority controls were not part of the visible flow.
 7. Clicked the visible `开始生成` button.
 8. Waited for the real provider result.
-9. Confirmed the page displayed `生成完成` and a visible generated image preview.
+9. Confirmed the page displayed `生成完成` with a visible generated image preview.
 
 ## Result
 
@@ -33,39 +30,38 @@ Date: 2026-06-10
 - Reference count: `3`
 - Image count from final API trace: `1`
 - Image preview visible: `true`
-- Image URL kind: `service_generated_image_url_from_real_provider_bytes`
 - Generated image route used: `/api/v1/generated-images/:image_id`
-- Trace id: `trace_e54714c1b6874898ba`
-- Generation id: `gen_8bb2801fa71244cf93`
+- Trace id: `trace_566adaa7bda24623b5`
+- Generation id: `gen_1a1bc7c910a94647a3`
 - Blocked: `false`
 
-The provider returned real image bytes. The service stored those bytes in Generated Image Store and returned a temporary generated-image URL for browser preview.
+The provider returned real image bytes. The service stored them in Generated Image Store and returned a temporary generated-image URL for browser preview.
 
 ## Generated Image Route Check
 
 - `GET /api/v1/generated-images/:image_id`: `200`
 - `Content-Type`: `image/png`
-- `Content-Length`: `2504876`
+- `Content-Length`: `2403683`
 - `Cache-Control`: `no-store`
-- Downloaded bytes were verified as a PNG image.
+- Downloaded bytes were verified as PNG.
 
 ## Privacy Checks
 
-- forbidden internal fields visible: `false`
-- raw provider payload visible: `false`
-- raw generated-image bytes or base64 visible: `false`
-- secret header or cookie visible: `false`
-- callback status visible: `false`
-- RAGFlow or fallback status visible: `false`
+- forbidden response fields visible: `false`
+- sensitive provider details visible: `false`
+- encoded image text visible: `false`
+- credential strings visible: `false`
+- callback delivery metadata visible: `false`
+- enhancement runtime status visible: `false`
 
 ## Artifacts
 
-- Final screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
-- Filled-form pre-submit screenshot: `evidence/screenshots/final-image-generation-api-e2e-before-submit.png`
-- Network summary: `evidence/network-summary.json`
+- Final screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
+- Filled-form pre-submit screenshot: `evidence/screenshots/final-v1-4-contract-before-submit.png`
+- Network summary: `evidence/final-v1-4-network-summary.json`
 
 ## Notes
 
 - The final screenshot shows the visible generated image preview after completion.
 - The pre-submit screenshot shows all three structured reference rows filled before clicking `开始生成`.
-- Network summary uses sanitized trace metadata plus browser-visible completion state. It does not store request bodies, provider payload, generated-image bytes, raw base64, keys, Authorization headers, Cookies, internal prompts, or raw enhancement output.
+- The network summary stores sanitized trace metadata and browser-visible completion state only.

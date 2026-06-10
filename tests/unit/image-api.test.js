@@ -4,12 +4,14 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleImageGeneration } from "../../src/routes/image-generations.js";
+import { resolveGeneratedImagePublicBaseUrl } from "../../src/routes/image-generations.js";
 import { extractEntityMentions } from "../../src/core/entity-mentions.js";
 import { resolveReferences } from "../../src/core/reference-binding.js";
-import { assertNoForbiddenPublicFields, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
+import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
 import { VALID_ENTITY_TYPES, VALID_REFERENCE_ROLES } from "../../src/core/labels.js";
 import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
 import { inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
+import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "../../src/core/legacy-api.js";
 import {
   defaultProviderConfig,
   extractImageUrls,
@@ -68,16 +70,23 @@ test("schema errors still include trace_id and no internal fields", async () => 
 });
 
 test("callback_url and callback are accepted but not executed or exposed", async () => {
+  let callbackFetches = 0;
   const withCallbackUrl = await call({
     task_type: "text_image",
     prompt: "生成一张山间晨雾图。",
     references: [],
     callback_url: "https://client.example.com/callback"
+  }, {
+    fetchImpl: async () => {
+      callbackFetches += 1;
+      throw new Error("callback must not execute");
+    }
   });
   assert.equal(withCallbackUrl.statusCode, 200);
   assert.equal(withCallbackUrl.payload.status, "succeeded");
   assert.equal("callback_status" in withCallbackUrl.payload, false);
   assert.equal(JSON.stringify(withCallbackUrl.payload).includes("CALLBACK_NOT_IMPLEMENTED"), false);
+  assert.equal(callbackFetches, 0);
 
   const withCallbackObject = normalizeRequest({
     task_type: "storyboard",
@@ -85,6 +94,70 @@ test("callback_url and callback are accepted but not executed or exposed", async
     callback: { url: "https://client.example.com/cb" }
   });
   assert.equal(withCallbackObject.callback_url, "https://client.example.com/cb");
+});
+
+test("callback_url rejects localhost private link-local IPv6 and unsafe schemes", () => {
+  const unsafe = [
+    "http://127.0.0.1:8787/cb",
+    "http://localhost:8787/cb",
+    "http://0.0.0.0/cb",
+    "http://10.0.0.1/cb",
+    "http://172.16.0.1/cb",
+    "http://172.31.255.1/cb",
+    "http://192.168.1.2/cb",
+    "http://169.254.10.20/cb",
+    "http://[::1]/cb",
+    "http://[fe80::1]/cb",
+    "http://[fc00::1]/cb",
+    "http://[::ffff:127.0.0.1]/cb",
+    "http://[::ffff:7f00:1]/cb",
+    "http://2130706433/cb",
+    "http://0177.0.0.1/cb",
+    "file:///tmp/cb",
+    "data:text/plain,cb",
+    "javascript:alert(1)"
+  ];
+  for (const callback_url of unsafe) {
+    assert.throws(() => normalizeRequest({
+      task_type: "text_image",
+      prompt: "生成山水。",
+      callback_url
+    }), /callback_url/);
+  }
+  assert.equal(normalizeRequest({
+    task_type: "text_image",
+    prompt: "生成山水。",
+    callback: { url: "https://example.com/cb" }
+  }).callback_url, "https://example.com/cb");
+});
+
+test("reference URL security rejects private hosts by default and allows dev override only for references", () => {
+  const oldAllowLocal = process.env.ALLOW_LOCAL_REFERENCE_URLS;
+  try {
+    delete process.env.ALLOW_LOCAL_REFERENCE_URLS;
+    for (const url of [
+      "http://127.0.0.1/ref.png",
+      "http://10.0.0.1/ref.png",
+      "http://172.16.1.2/ref.png",
+      "http://192.168.1.2/ref.png",
+      "http://169.254.1.2/ref.png",
+      "http://[::1]/ref.png",
+      "http://[::ffff:7f00:1]/ref.png",
+      "http://2130706433/ref.png",
+      "file:///tmp/ref.png"
+    ]) {
+      assert.throws(() => assertReferenceUrlAllowed(url), /reference\.url|http 或 https/);
+    }
+    process.env.ALLOW_LOCAL_REFERENCE_URLS = "true";
+    assert.equal(assertReferenceUrlAllowed("http://127.0.0.1/ref.png"), "http://127.0.0.1/ref.png");
+    assert.throws(() => normalizeRequest({
+      task_type: "text_image",
+      prompt: "生成山水。",
+      callback_url: "http://127.0.0.1/cb"
+    }), /callback_url/);
+  } finally {
+    restoreEnv("ALLOW_LOCAL_REFERENCE_URLS", oldAllowLocal);
+  }
 });
 
 test("forbidden public field gate covers raw provider image and callback internals", () => {
@@ -100,6 +173,53 @@ test("forbidden public field gate covers raw provider image and callback interna
   ]) {
     assert.throws(() => assertNoForbiddenPublicFields({ [field]: "x" }), /公共响应包含内部字段/);
   }
+});
+
+test("PUBLIC_BASE_URL controls generated image public URL and production requires it", async () => {
+  const oldBase = process.env.PUBLIC_BASE_URL;
+  const oldNodeEnv = process.env.NODE_ENV;
+  const oldHost = process.env.HOST;
+  const oldPort = process.env.PORT;
+  try {
+    process.env.PUBLIC_BASE_URL = "https://img.example.com///";
+    assert.equal(resolveGeneratedImagePublicBaseUrl(), "https://img.example.com");
+    clearGeneratedImagesForTest();
+    const result = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }, {
+      provider: async () => ({
+        status: "succeeded",
+        images: extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] })
+      })
+    });
+    assert.match(result.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_/);
+    assert.doesNotMatch(result.payload.images[0].url, /\/\/api\/v1/);
+
+    process.env.PUBLIC_BASE_URL = "ftp://bad.example.com";
+    assert.throws(() => resolveGeneratedImagePublicBaseUrl(), /PUBLIC_BASE_URL/);
+
+    delete process.env.PUBLIC_BASE_URL;
+    process.env.NODE_ENV = "production";
+    assert.throws(() => resolveGeneratedImagePublicBaseUrl(), /PUBLIC_BASE_URL/);
+
+    process.env.NODE_ENV = "development";
+    process.env.HOST = "0.0.0.0";
+    process.env.PORT = "9876";
+    assert.equal(resolveGeneratedImagePublicBaseUrl(), "http://127.0.0.1:9876");
+  } finally {
+    restoreEnv("PUBLIC_BASE_URL", oldBase);
+    restoreEnv("NODE_ENV", oldNodeEnv);
+    restoreEnv("HOST", oldHost);
+    restoreEnv("PORT", oldPort);
+  }
+});
+
+test("legacy image job API exposes deprecation boundary headers", () => {
+  assert.equal(LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS.Deprecation, "true");
+  assert.match(LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS.Warning, /Deprecated legacy image job API/);
+  assert.match(LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS.Link, /\/api\/v1\/image-generations/);
 });
 
 test("image_reference with references succeeds", async () => {

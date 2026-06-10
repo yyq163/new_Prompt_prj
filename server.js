@@ -4,9 +4,12 @@ import { basename, extname, normalize, resolve } from "node:path";
 import { handleImageGeneration } from "./src/routes/image-generations.js";
 import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
 import { ImageApiError } from "./src/core/errors.js";
-import { makeId, stringValue } from "./src/core/runtime.js";
+import { makeId, normalizeRequest, stringValue } from "./src/core/runtime.js";
+import { extractEntityMentions } from "./src/core/entity-mentions.js";
+import { resolveReferences } from "./src/core/reference-binding.js";
 import { generateWithAiTuProvider } from "./src/providers/ai-tu-provider-adapter.js";
 import { generatedImageHttpResponse } from "./src/core/generated-image-response.js";
+import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "./src/core/legacy-api.js";
 
 const ROOT = resolve(import.meta.dirname);
 const AI_TU_HTML_FILE = resolve(ROOT, "ai-tu/ai-image-generator.html");
@@ -50,13 +53,13 @@ async function route(request, response) {
   if (request.method === "POST" && url.pathname === "/api/image-jobs") {
     const body = await readJson(request);
     const result = await createLegacyImageJob(body);
-    return sendJson(response, result.statusCode, result.payload);
+    return sendJson(response, result.statusCode, result.payload, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
   }
   const legacyJobMatch = url.pathname.match(/^\/api\/image-jobs\/([^/]+)$/);
   if (request.method === "GET" && legacyJobMatch) {
     const job = legacyJobs.get(legacyJobMatch[1]);
-    if (!job) return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" });
-    return sendJson(response, 200, publicLegacyJob(job));
+    if (!job) return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" }, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
+    return sendJson(response, 200, publicLegacyJob(job), LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
   }
   const generatedImageMatch = url.pathname.match(/^\/api\/v1\/generated-images\/([^/]+)$/);
   if (request.method === "GET" && generatedImageMatch) {
@@ -135,7 +138,7 @@ function normalizeLegacyImageJobRequest(body) {
   const prompt = stringValue(body.prompt).trim();
   if (!prompt) throw new ImageApiError({ statusCode: 400, message: "请填写提示词。" });
 
-  const references = normalizeLegacyReferences(body);
+  const references = normalizeLegacyReferences(body, prompt);
   const mode = body.mode === "image" || references.length ? "image" : "text";
   return {
     prompt,
@@ -149,43 +152,34 @@ function normalizeLegacyImageJobRequest(body) {
   };
 }
 
-function normalizeLegacyReferences(body) {
+function normalizeLegacyReferences(body, prompt) {
   const images = Array.isArray(body.images) ? body.images : [];
   const structuredRefs = Array.isArray(body.references) ? body.references : [];
-  const refs = [];
-  images.forEach((image, index) => {
-    const url = stringValue(image && (image.image_url || image.url)).trim();
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) throw new ImageApiError({ statusCode: 400, message: "参考图只支持 http 或 https URL。" });
-    refs.push({
-      reference_id: stringValue(image.referenceId || image.reference_id || `legacy_image_${index + 1}`).trim(),
-      entity_name: stringValue(image.entity_name || image.name || `参考图${index + 1}`).trim(),
-      entity_type: stringValue(image.entity_type || "image").trim(),
-      role: stringValue(image.role || "style_reference").trim(),
-      url,
-      mime_type: stringValue(image.mime_type || image.type || "image/*").trim(),
-      display_name: stringValue(image.display_name || image.name || basename(new URL(url).pathname) || `reference-${index + 1}`).trim(),
-      description: stringValue(image.description).trim(),
-      order: refs.length + 1
+  if (images.length) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "INVALID_REQUEST_SCHEMA",
+      message: "Deprecated /api/image-jobs 不再接受 URL-only images[]；请使用结构化 references[]。"
     });
+  }
+  if (!structuredRefs.length) return [];
+  const taskType = stringValue(body.task_type).trim() || "image_reference";
+  const request = normalizeRequest({
+    task_type: taskType,
+    prompt,
+    references: structuredRefs,
+    reference_policy: { unbound_entity: "warn" },
+    output: {
+      count: clamp(Number(body.n || 1), 1, 4),
+      aspect_ratio: sizeToAspect(body.size),
+      quality: stringValue(body.quality).trim() || "high",
+      return_format: "url",
+      language: "zh-CN"
+    }
   });
-  structuredRefs.forEach((ref, index) => {
-    const url = stringValue(ref && ref.url).trim();
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) throw new ImageApiError({ statusCode: 400, message: "references[].url 只支持 http 或 https URL。" });
-    refs.push({
-      reference_id: stringValue(ref.reference_id || `ref_${index + 1}`).trim(),
-      entity_name: stringValue(ref.entity_name || ref.display_name || `参考对象${index + 1}`).trim(),
-      entity_type: stringValue(ref.entity_type || "image").trim(),
-      role: stringValue(ref.role || "style_reference").trim(),
-      url,
-      mime_type: stringValue(ref.mime_type || "image/*").trim(),
-      display_name: stringValue(ref.display_name || basename(new URL(url).pathname) || `reference-${index + 1}`).trim(),
-      description: stringValue(ref.description).trim(),
-      order: refs.length + 1
-    });
-  });
-  return refs;
+  const binding = resolveReferences(request, extractEntityMentions(prompt));
+  return binding.resolved_references;
 }
 
 async function runLegacyImageJob(job) {
@@ -296,10 +290,11 @@ async function readJson(request) {
   }
 }
 
-function sendJson(response, statusCode, payload) {
+function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...extraHeaders
   });
   response.end(JSON.stringify(payload, null, 2));
 }

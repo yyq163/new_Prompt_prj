@@ -27,8 +27,11 @@ npm start
 - `IMAGE_PROVIDER_POLL_BASE`
 - `IMAGE_PROVIDER_POLL_TIMEOUT_SECONDS`
 - `IMAGE_PROVIDER_POLL_INTERVAL_SECONDS`
+- `PUBLIC_BASE_URL`
 
 如果 ai-tu 配置只提供 `imageModel` 和 key，服务会使用 ai-tu 默认 JSON generations endpoint，并以 `imageModel` 作为 model。缺少 provider model 或 key 时，服务返回 `PROVIDER_CONFIG_MISSING`，不会返回假成功。
+
+`PUBLIC_BASE_URL` 用于生成 Generated Image Store 的公网图片 URL。生产环境必须配置 HTTP(S) base URL；服务会去掉尾部 `/` 后拼接 `/api/v1/generated-images/:image_id`。本地开发未配置时才回退到当前本地 host，不在生产环境静默返回 `127.0.0.1`。
 
 ## 边界
 
@@ -40,7 +43,8 @@ npm start
 - 旧请求中的 `usage` 字段可以被接收，但当前版本会忽略它，不参与权重、排序或阻断，也不会在响应中返回。
 - 同一 `entity_name + role` 可以有多张参考图，系统会全部使用；未被 prompt 显式 mention 的参考图也会参与编译和 provider 请求。
 - Provider 返回的 URL、base64、data URL 或 binary 生成图会统一标准化为 `images[].url`；其中真实上游 bytes 会通过短期内存 Generated Image Store 暴露为 `/api/v1/generated-images/:image_id`。
-- `callback_url` / `callback.url` 只接收和校验，不执行回调。
+- `callback_url` / `callback.url` 只接收和校验，不执行回调。校验默认拒绝 localhost、loopback、link-local、内网地址和非 HTTP(S) scheme。
+- 兼容路由 `/api/image-jobs` 已标记 deprecated，仅服务旧页面/旧客户端，不作为 Final API V1.4 验收入口，也不允许 URL-only reference 绕过结构化合同。
 - API 响应不返回 final prompt、compiled prompt、enhancement、RAGFlow 状态、fallback 状态、storyboard 路径或 provider payload。
 - 当前阶段不宣称完成工业级高并发能力；现状见 `docs/concurrency-status.md`。
 
@@ -50,6 +54,8 @@ npm start
 npm run check
 npm test
 node tests/integration/provider-config.test.js
+node tests/integration/final-v1-4-evidence.test.js
+git diff --check
 ```
 
 集成检查没有真实 provider 环境变量时会报告 `BLOCKED_BY_MISSING_PROVIDER_CONFIG`，这是预期的安全阻断，不代表业务验收通过。

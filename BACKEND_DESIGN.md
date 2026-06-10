@@ -33,7 +33,8 @@
 - `character_multiview`, `scene_multiview`, `prop_multiview`, and `storyboard` can run with or without references. Missing task-specific reference types produce warnings, not blockers.
 - `usage` is accepted from old clients but ignored; it does not affect weighting, ordering, or validation.
 - Multiple references with the same `entity_name + role` are allowed and all are used.
-- `callback_url` and `callback.url` are accepted and validated but not executed.
+- `callback_url` and `callback.url` are accepted and validated as public HTTP(S) URLs but not executed.
+- Callback URL validation rejects localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes by default.
 
 ## Reference Binding
 
@@ -60,6 +61,8 @@ Supported result forms:
 
 The public API always returns `images[].url`. Real provider bytes are stored in Generated Image Store and exposed through `/api/v1/generated-images/:image_id`.
 
+`PUBLIC_BASE_URL` is the production base for service-generated image URLs. It must be HTTP(S), is normalized without trailing slash, and is required in production before returning `/api/v1/generated-images/:image_id` URLs. Local development can fall back to the local host and port.
+
 ## Generated Image Store
 
 The in-memory default store is only for real provider generated-image bytes. It is not a reference upload store.
@@ -73,6 +76,10 @@ The in-memory default store is only for real provider generated-image bytes. It 
 - magic-byte MIME validation
 - expired or missing images return 404
 - image route returns correct `Content-Type`, `Content-Length`, and `Cache-Control: no-store`
+
+## Legacy Route
+
+`/api/image-jobs` is deprecated and compatibility-only. It sends deprecation headers and cannot be used as a Final API V1.4 acceptance endpoint or as a structured-reference bypass.
 
 ## RAGFlow
 

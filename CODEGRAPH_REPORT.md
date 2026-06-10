@@ -18,6 +18,7 @@ codegraph files --json
 npm run check
 npm test
 node tests/integration/provider-config.test.js
+node tests/integration/final-v1-4-evidence.test.js
 git diff --check
 ```
 
@@ -27,12 +28,12 @@ Latest CodeGraph status:
 {
   "initialized": true,
   "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
-  "fileCount": 20,
-  "nodeCount": 468,
-  "edgeCount": 1130,
+  "fileCount": 23,
+  "nodeCount": 513,
+  "edgeCount": 1312,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 3, "modified": 0, "removed": 0}
 }
 ```
 
@@ -59,12 +60,15 @@ src/core/prompt-compiler.js
 src/core/ragflow-enhancement.js
 src/core/reference-binding.js
 src/core/runtime.js
+src/core/url-security.js
+src/core/legacy-api.js
 src/providers/ai-tu-provider-adapter.js
 src/providers/provider-result-normalizer.js
 src/routes/image-generations.js
 src/routes/prompt-optimizations.js
 src/storage/generated-image-store.js
 src/storage/trace-store.js
+tests/integration/final-v1-4-evidence.test.js
 tests/integration/provider-config.test.js
 tests/unit/ai-tu-prompt-optimizer.test.js
 tests/unit/image-api.test.js
@@ -82,13 +86,13 @@ tests/unit/image-api.test.js
 - `POST /api/v1/prompt-optimizations`: prompt optimization alias.
 - `POST /api/v1/image-generations`: final PRD image generation API.
 - `GET /api/v1/generated-images/:image_id`: temporary URL for real provider bytes normalized by the service.
-- Legacy `/api/image-jobs` remains for compatibility but is not a PRD verification entrypoint.
+- Legacy `/api/image-jobs` remains for compatibility, sends deprecation headers, and is not a PRD verification entrypoint.
 
 ## `/api/v1/image-generations` Main Chain
 
 The final API flow is:
 
-1. `normalizeRequest` validates task type, references, output, callback URL, and generation mode.
+1. `normalizeRequest` validates task type, references, output, public callback URL, and generation mode.
 2. `extractEntityMentions` extracts `@实体名` and `[实体名]`.
 3. `resolveReferences` binds mentions by `entity_name` and keeps all references.
 4. `getRagflowEnhancement` optionally requests safe structured enhancement.
@@ -232,12 +236,17 @@ Current callback behavior is the C plan:
 
 - accepts `callback_url`
 - accepts `callback.url`
-- validates HTTP(S) URL
+- validates public HTTP(S) URL
+- rejects localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes by default
 - does not create callback jobs
 - does not send callback requests
 - does not return `callback_status`
 - does not return `CALLBACK_NOT_IMPLEMENTED`
 - records only callback presence in sanitized trace metadata
+
+## Public Generated Image Base URL
+
+Generated Image Store URLs prefer `PUBLIC_BASE_URL`. The value must be HTTP(S), is normalized without trailing slashes, and is required in production before returning service-generated image URLs. Local development may fall back to the configured local host and port.
 
 ## Provider Adapter Migration
 
@@ -252,9 +261,10 @@ That map covers allowed provider config/auth/payload/call/retry/error/result nor
 ## Evidence Paths
 
 - Visual E2E report: `evidence/visual-e2e-report.md`
-- Network summary: `evidence/network-summary.json`
-- Screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
-- Filled-form screenshot: `evidence/screenshots/final-image-generation-api-e2e-before-submit.png`
+- Network summary: `evidence/final-v1-4-network-summary.json`
+- Fix report: `evidence/final-v1-4-fix-report.md`
+- Screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
+- Filled-form screenshot: `evidence/screenshots/final-v1-4-contract-before-submit.png`
 - Code-map artifacts: `.understand-anything/`
 
 Evidence files must not contain raw provider payloads, full base64 strings, Authorization headers, Cookies, provider keys, RAGFlow keys, internal prompts, or raw enhancement output.
@@ -265,11 +275,12 @@ Final closure results:
 
 ```text
 npm run check: pass
-npm test: pass, 67 tests
+npm test: pass, 71 tests
 node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
+node tests/integration/final-v1-4-evidence.test.js: pass, FINAL_V1_4_EVIDENCE_SCAN_PASS
 git diff --check: pass
-Browser visual E2E: pass, trace_e54714c1b6874898ba, POST /api/v1/image-generations, HTTP 200, status=succeeded, image_count=1
-Generated image GET: pass, Content-Type=image/png, Content-Length=2504876, Cache-Control=no-store
+Browser visual E2E: pass, trace_566adaa7bda24623b5, POST /api/v1/image-generations, HTTP 200, status=succeeded, image_count=1, reference_count=3
+Generated image GET: pass, Content-Type=image/png, Content-Length=2403683, Cache-Control=no-store
 ```
 
 ## Concurrency Status
@@ -284,7 +295,7 @@ This project must not claim industrial 1000-concurrency readiness.
 
 ## Remaining Work
 
-- Keep legacy `/api/image-jobs` out of final PRD evidence.
+- Keep deprecated legacy `/api/image-jobs` out of final PRD evidence.
 - Replace memory Generated Image Store with object storage before multi-instance deployment.
 - Add production SSRF policy review before enabling private-network reference URLs.
 - Add queue and provider concurrency controls before high-concurrency production claims.

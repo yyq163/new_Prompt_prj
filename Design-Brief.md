@@ -20,8 +20,8 @@ The user must be able to perform the visual E2E case:
 
 1. Select `scene_multiview`.
 2. Enter: `生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图。`
-3. Add a character reference for `萧昭宁` with `usage=auxiliary`.
-4. Add a scene reference for `营帐` with `usage=primary`.
+3. Add a structured character reference for `萧昭宁` with `reference_id`, `entity_name`, `entity_type`, `role`, and `url`.
+4. Add a structured scene reference for `营帐` with `reference_id`, `entity_name`, `entity_type`, `role`, and `url`.
 5. Submit and see real provider image URL or preview, plus `request_id`, `generation_id`, and `trace_id`.
 
 ## Hidden Internals

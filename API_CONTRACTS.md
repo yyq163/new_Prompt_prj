@@ -106,7 +106,17 @@ Reference task rules:
 
 ### callback
 
-`callback_url` and `callback.url` are accepted and validated as HTTP(S) URLs, but this version does not execute callbacks, create callback jobs, or return callback status.
+`callback_url` and `callback.url` are accepted and validated as public HTTP(S) URLs, but this version does not execute callbacks, create callback jobs, or return callback status. Callback URL validation defaults to rejecting localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes.
+
+### Generated image public URL
+
+Generated Image Store URLs are built from `PUBLIC_BASE_URL` when configured. The value must be HTTP(S); trailing slashes are removed before appending `/api/v1/generated-images/:image_id`.
+
+In production, `PUBLIC_BASE_URL` is required for service-generated image URLs. Local development may fall back to the current local host and port.
+
+### Legacy route
+
+`/api/image-jobs` is a deprecated compatibility route for old page/client behavior. It sends deprecation headers and is not a Final API V1.4 acceptance endpoint. It must not be used to bypass the structured `references[]` contract.
 
 ### Response
 

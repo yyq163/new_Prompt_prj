@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { clarification, fail } from "./errors.js";
+import { normalizePublicHttpUrl } from "./url-security.js";
 import {
   ENTITY_TYPE_ALIASES,
   ROLE_ALIASES,
@@ -128,20 +129,9 @@ export function normalizeRequest(body) {
 }
 
 export function assertReferenceUrlAllowed(value, field = "reference.url") {
-  const url = stringValue(value).trim();
-  if (!/^https?:\/\//i.test(url)) {
-    fail("INVALID_REQUEST_SCHEMA", `${field} 必须是 http 或 https URL。`);
-  }
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    fail("INVALID_REQUEST_SCHEMA", `${field} 必须是合法 URL。`);
-  }
-  if (isLocalReferenceHost(parsed.hostname) && process.env.ALLOW_LOCAL_REFERENCE_URLS !== "true") {
-    fail("INVALID_REQUEST_SCHEMA", `${field} 默认不允许 localhost 或内网地址。`);
-  }
-  return url;
+  return normalizePublicHttpUrl(value, field, {
+    allowLocal: process.env.ALLOW_LOCAL_REFERENCE_URLS === "true"
+  });
 }
 
 function normalizeReference(item, index) {
@@ -159,17 +149,6 @@ function normalizeReference(item, index) {
     description: stringValue(item.description).trim(),
     order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1
   };
-}
-
-function isLocalReferenceHost(hostname) {
-  const host = stringValue(hostname).trim().toLowerCase();
-  if (!host) return false;
-  if (host === "localhost" || host === "::1" || host === "0.0.0.0") return true;
-  if (/^127\./.test(host)) return true;
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  const private172 = host.match(/^172\.(\d+)\./);
-  return Boolean(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
 }
 
 function normalizeReferencePolicy(value) {
@@ -249,11 +228,7 @@ function normalizeCallbackUrl(body) {
       ? body.callback_url
       : "";
   if (!raw) return "";
-  const value = raw.trim();
-  if (!/^https?:\/\//i.test(value)) {
-    fail("INVALID_REQUEST_SCHEMA", "callback_url 必须是 http 或 https URL。");
-  }
-  return value;
+  return normalizePublicHttpUrl(raw, "callback_url", { allowLocal: false });
 }
 
 export function assertNoForbiddenPublicFields(payload) {

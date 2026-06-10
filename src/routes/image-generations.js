@@ -7,6 +7,7 @@ import { assertNoForbiddenPublicFields, makeId, normalizeRequest } from "../core
 import { taskTypeLabel } from "../core/labels.js";
 import { generateWithAiTuProvider } from "../providers/ai-tu-provider-adapter.js";
 import { appendTrace } from "../storage/trace-store.js";
+import { normalizePublicBaseUrl } from "../core/url-security.js";
 
 export async function handleImageGeneration(body, { provider = generateWithAiTuProvider, fetchImpl = globalThis.fetch } = {}) {
   let requestId = "";
@@ -104,6 +105,24 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
 
 function publicImageUrl(url) {
   if (!url || /^https?:\/\//i.test(url)) return url;
-  const base = `http://${process.env.HOST || "127.0.0.1"}:${process.env.PORT || 8787}`;
+  const base = resolveGeneratedImagePublicBaseUrl();
   return `${base}${url.startsWith("/") ? url : `/${url}`}`;
+}
+
+export function resolveGeneratedImagePublicBaseUrl() {
+  if (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.trim()) {
+    return normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL);
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new ImageApiError({
+      statusCode: 500,
+      status: "failed",
+      errorCode: "PUBLIC_BASE_URL_REQUIRED",
+      message: "生产环境必须配置 PUBLIC_BASE_URL 才能返回 Generated Image Store 公网图片 URL。"
+    });
+  }
+  const configuredHost = process.env.HOST || "127.0.0.1";
+  const host = configuredHost === "0.0.0.0" || configuredHost === "::" ? "127.0.0.1" : configuredHost;
+  const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${formattedHost}:${process.env.PORT || 8787}`;
 }

@@ -2663,10 +2663,15 @@
     }
 
     async function createImageJob() {
+      let pendingJob = null;
       try {
         if (isFileProtocol()) throw new Error(fileProtocolMessage());
         const request = buildJobRequest();
         validateJobRequest(request);
+        pendingJob = createPendingJob(request);
+        upsertJob(pendingJob);
+        renderJobs();
+        previewJob(pendingJob.jobId);
         setBusy(true);
         setStatus("正在调用最终生图 API。", "busy");
         const finalApiEndpoint = "/api/v1/image-generations";
@@ -2687,17 +2692,41 @@
         ].slice(-20);
         document.documentElement.dataset.finalImageApiNetwork = JSON.stringify(networkEvent);
         console.info("[final-image-api-network]", JSON.stringify(networkEvent));
-        const payload = await parseJsonResponse(response);
+        const payload = await parseJsonResponseForJob(response);
         const job = normalizeJob(payload, request);
+        removeJob(pendingJob.jobId);
         upsertJob(job);
         renderJobs();
         previewJob(job.jobId);
         setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${job.error || "未知错误"}`, job.status === "succeeded" ? "good" : "bad");
       } catch (error) {
-        setStatus(`生成失败：${errorToMessage(error)}`, "bad");
+        const message = errorToMessage(error);
+        if (pendingJob) {
+          pendingJob.status = "failed";
+          pendingJob.error = message;
+          pendingJob.updatedAt = Date.now();
+          upsertJob(pendingJob);
+          renderJobs();
+          previewJob(pendingJob.jobId);
+        }
+        setStatus(`生成失败：${message}`, "bad");
       } finally {
         setBusy(false);
       }
+    }
+
+    function createPendingJob(request) {
+      const now = Date.now();
+      return {
+        jobId: `pending_${now}`,
+        prompt: request.prompt,
+        fill: buildJobFillSnapshot(request),
+        status: "running",
+        images: [],
+        error: null,
+        createdAt: now,
+        updatedAt: now
+      };
     }
 
     function uploadStatusText(action, file, index, progress = null, phaseProgress = null) {
@@ -2886,6 +2915,17 @@
       else jobs[index] = { ...jobs[index], ...job, fill: job.fill || jobs[index].fill || null };
       if (job.status === "queued" || job.status === "running") addPendingJob(job.jobId);
       persistJob(job.jobId);
+    }
+
+    function removeJob(jobId) {
+      const index = jobs.findIndex((item) => item.jobId === jobId);
+      if (index !== -1) jobs.splice(index, 1);
+      removePendingJob(jobId);
+      try {
+        localStorage.removeItem(`${JOB_STORAGE_PREFIX}${jobId}`);
+      } catch {
+        // Ignore localStorage cleanup failures.
+      }
     }
 
     function markJobFailed(jobId, message) {
@@ -3592,6 +3632,26 @@
     async function parseJsonResponse(response) {
       const text = await response.text();
       return parseJsonTextResponse(response.status, response.statusText, text, response.ok);
+    }
+
+    async function parseJsonResponseForJob(response) {
+      const text = await response.text();
+      let json = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { rawText: text };
+      }
+      if (!response.ok) {
+        return {
+          ...json,
+          status: json.status || "failed",
+          error: json.error || json.message || json.error_code || text || response.statusText,
+          message: json.message || json.error || response.statusText,
+          error_code: json.error_code || `HTTP_${response.status}`
+        };
+      }
+      return json;
     }
 
     function parseJsonTextResponse(status, statusText, text, ok = status >= 200 && status < 300) {

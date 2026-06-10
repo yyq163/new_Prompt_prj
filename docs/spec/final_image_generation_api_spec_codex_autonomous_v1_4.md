@@ -128,7 +128,9 @@ Task rules:
 
 ## Callback
 
-`callback_url` and `callback.url` are accepted and validated as HTTP(S), but callbacks are not executed in this version. No callback task is created and no callback status is returned.
+`callback_url` and `callback.url` are accepted and validated as public HTTP(S) URLs, but callbacks are not executed in this version. No callback task is created and no callback status is returned.
+
+Callback URL validation defaults to rejecting localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes.
 
 ## Prompt Compiler and RAGFlow
 
@@ -150,6 +152,8 @@ Provider result forms supported:
 The final API always returns `images[].url`.
 
 If the provider returns external URLs, they are returned as public image URLs. If the provider returns real image bytes, the bytes are stored in Generated Image Store and exposed through `/api/v1/generated-images/:image_id`.
+
+The public base for service-generated image URLs comes from `PUBLIC_BASE_URL` when set. It must be HTTP(S), is normalized by removing trailing slashes, and is required in production. Local development may fall back to the current local host and port.
 
 Generated Image Store requirements:
 
@@ -177,6 +181,10 @@ Generated Image Store requirements:
 - public provider payload
 - public raw generated-image bytes or base64
 - secret values in docs, evidence, traces, or logs
+
+## Legacy Route
+
+`/api/image-jobs` is deprecated and exists only for compatibility with old page/client behavior. It sends deprecation headers and is not part of Final API V1.4 acceptance. It must not bypass the strict structured reference contract.
 
 ## Concurrency Status
 

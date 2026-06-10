@@ -4,10 +4,20 @@
   "method": "POST",
   "http_status": 200,
   "api_status": "succeeded",
+  "browser_surface": "Codex-controlled Chrome after Codex in-app Browser attach timeout",
+  "browser_submitted": true,
+  "post_result": {
+    "endpoint": "/api/v1/image-generations",
+    "http_status": 200,
+    "ok": true,
+    "status": "succeeded",
+    "image_count": 1,
+    "reference_count": 3
+  },
   "generated_image_get": {
     "http_status": 200,
     "content_type": "image/png",
-    "content_length": 2403683,
+    "content_length": 3011403,
     "cache_control": "no-store"
   },
   "callback_public_url_validation": "pass",
@@ -16,8 +26,9 @@
   "evidence_text_scan": "pass",
   "browser_visual_e2e": "pass",
   "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "trace_id": "trace_566adaa7bda24623b5",
-  "generation_id": "gen_1a1bc7c910a94647a3",
+  "trace_id": "trace_3d272cf798ba4bac96",
+  "generation_id": "gen_1961e101c1a6419b8d",
+  "generated_image_id": "img_8faafe2617834d35bbdd0d558858979a",
   "browser_page": "http://127.0.0.1:8791/",
   "screenshots": {
     "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",

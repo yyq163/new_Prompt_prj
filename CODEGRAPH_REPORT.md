@@ -4,22 +4,25 @@ Date: 2026-06-10
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
-Commit at report refresh: `e36b00b`
+Baseline commit before evidence-chain correction: `0d7e945f0b57451075baf6a9851974ad45f71280`
+
+This report is refreshed before the final evidence-chain commit. The commit that
+contains this report must be verified after commit with `git log -1 --oneline`.
+The report therefore records the true pre-commit baseline and the true current
+index/worktree checks, rather than predicting a commit hash that would become
+stale as soon as this file is committed.
 
 ## Verification State
 
-CodeGraph was refreshed from the project root and used as the structural source for this report.
+CodeGraph was refreshed from the project root and checked after the evidence
+cleanup.
 
-Commands run:
+Commands run for this report refresh:
 
 ```bash
+python3 /Users/yyq/.codex/.codex-agent-team/scripts/code_indexer.py --root . --out .code-index
 codegraph status --json
-codegraph files --json
-npm run check
-npm test
-node tests/integration/provider-config.test.js
-node tests/integration/final-v1-4-evidence.test.js
-git diff --check
+git status --short --untracked-files=all
 ```
 
 Latest CodeGraph status:
@@ -33,18 +36,19 @@ Latest CodeGraph status:
   "edgeCount": 1312,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 3, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
 }
 ```
 
-Generated code-map artifacts:
+Current pre-commit Git worktree changes are limited to evidence/report cleanup:
 
-- `.understand-anything/knowledge-graph.json`
-- `.understand-anything/code-map-report.md`
-- `.understand-anything/code-map-report.html`
-- `.understand-anything/code-map-summary.json`
+- update current Final V1.4 browser screenshots
+- update Final V1.4 evidence summaries
+- remove old visual screenshots that are not part of the Final V1.4 browser run
+- refresh this CodeGraph report
 
-The dashboard was not launched in this final closure run, so no local dashboard token is written into this durable report.
+After the final commit, `git status --short --untracked-files=all` must be
+empty before claiming final closure.
 
 ## Indexed Source Files
 
@@ -74,59 +78,64 @@ tests/unit/ai-tu-prompt-optimizer.test.js
 tests/unit/image-api.test.js
 ```
 
-`ai-tu/gateway/server.js` remains an indexed migration reference only. The final service does not import it at runtime.
+`ai-tu/gateway/server.js` remains an indexed migration reference only. The final
+service does not import it at runtime.
 
 ## Active Entry Points
 
-`server.js` is the current runtime entry point.
+`server.js` is the runtime entry point.
 
 - `GET /health`: service health check.
-- `GET /` and `GET /ai-image-generator.html`: serve the original ai-tu frontend page.
-- `POST /api/prompt-optimizer`: prompt optimization endpoint used by the ai-tu page.
+- `GET /` and `GET /ai-image-generator.html`: serve the visible local page.
+- `POST /api/prompt-optimizer`: old prompt optimization endpoint for the page.
 - `POST /api/v1/prompt-optimizations`: prompt optimization alias.
-- `POST /api/v1/image-generations`: final PRD image generation API.
-- `GET /api/v1/generated-images/:image_id`: temporary URL for real provider bytes normalized by the service.
-- Legacy `/api/image-jobs` remains for compatibility, sends deprecation headers, and is not a PRD verification entrypoint.
+- `POST /api/v1/image-generations`: Final Image Generation API V1.4 endpoint.
+- `GET /api/v1/generated-images/:image_id`: temporary route for stored image bytes.
+- Legacy `/api/image-jobs` remains compatibility-only and is not a Final V1.4
+  acceptance endpoint.
 
-## `/api/v1/image-generations` Main Chain
+## Final V1.4 Main Chain
 
-The final API flow is:
+The final image generation flow is:
 
-1. `normalizeRequest` validates task type, references, output, public callback URL, and generation mode.
+1. `normalizeRequest` validates task type, references, output, callback URL, and generation mode.
 2. `extractEntityMentions` extracts `@实体名` and `[实体名]`.
-3. `resolveReferences` binds mentions by `entity_name` and keeps all references.
-4. `getRagflowEnhancement` optionally requests safe structured enhancement.
-5. `compilePrompt` deterministically creates the internal provider prompt.
+3. `resolveReferences` binds mentions by `entity_name` and keeps all valid references.
+4. `getRagflowEnhancement` optionally requests structured enhancement.
+5. `compilePrompt` builds backend-only upstream instructions.
 6. `generateWithAiTuProvider` calls the real upstream provider.
-7. `provider-result-normalizer.js` converts URL/base64/data URL/binary provider results into public image URLs.
+7. `provider-result-normalizer.js` normalizes upstream image forms into public image URLs.
 8. Public response returns `images[].url`, normalized mentions/references, warnings, and trace id.
 
-The public response does not expose `final_prompt`, `compiled_prompt`, raw enhancement, RAGFlow state, fallback state, provider payload, base64 text, callback status, provider key, Authorization header, or Cookie.
+Public responses remain sanitized: no backend-only prompt text, optional
+enhancement state, upstream request details, raw image bytes, callback delivery
+state, or credential material is returned.
 
 ## Reference Binding Status
 
-Latest PRD behavior is implemented:
+Latest contract behavior is unchanged by this evidence-chain correction:
 
 - `reference_id` must be unique.
 - `references[].url` must be HTTP(S).
-- `entity_name`, `role`, and `entity_type` are validated.
+- `entity_name`, `role`, and `entity_type` are required.
 - URL-only references are not supported.
 - Empty-entity global references are not supported.
 - `pattern_reference` aliases to `ornament_reference`.
-- `usage` is accepted for old clients but ignored.
-- `usage` is not returned in `normalized.references_used`.
-- No reference weighting field is applied.
+- Legacy client `usage` input is accepted only for compatibility and ignored.
+- `usage` is not returned in normalized public output.
+- No primary, auxiliary, or weighting behavior is applied.
 - Same `entity_name + role` with multiple images is allowed.
 - A mention can bind to multiple `reference_id` values through `matched_reference_ids`.
-- References that are not explicitly mentioned in the prompt are still included in `references_used`, Prompt Compiler context, and provider URL input.
+- References that are not explicitly mentioned in the prompt are still included
+  in reference guidance and upstream URL input.
 
 Task-level reference rules:
 
-- `text_image`: references are forbidden and return `REFERENCES_NOT_ALLOWED`.
-- `image_reference`: at least one reference is required and missing references return `REFERENCE_REQUIRED`.
-- `character_multiview`: references are optional; missing face/character reference returns a warning, not a blocker.
-- `scene_multiview`: references are optional; missing scene reference returns a warning, not a blocker.
-- `prop_multiview`: references are optional; missing prop/material/ornament reference returns a warning, not a blocker.
+- `text_image`: references are rejected.
+- `image_reference`: at least one reference is required.
+- `character_multiview`: references are optional; missing character material returns a warning.
+- `scene_multiview`: references are optional; missing scene material returns a warning.
+- `prop_multiview`: references are optional; missing prop/material/ornament material returns a warning.
 - `storyboard`: pure text or mixed references are allowed.
 
 ## Schema Status
@@ -178,42 +187,24 @@ Supported `entity_type` values:
 - `return_format`: `url`
 - `language`: `zh-CN`
 
-## Prompt Compiler / RAGFlow Boundary
+## Callback Status
 
-Prompt Compiler owns the final internal provider prompt. RAGFlow is only an optional structured enhancement source.
+Current callback behavior is unchanged:
 
-Implemented boundaries:
-
-- RAGFlow missing configuration does not block the image generation chain unless explicitly required.
-- Invalid JSON, field-summary output, `final_prompt`, unknown reference IDs, unknown URLs, and excessive enhancement content are discarded.
-- References are compiled as equal-weight role-specific guidance.
-- Unmentioned references are still included in reference guidance.
-- Storyboard path analysis remains internal and is not returned publicly.
-
-## Provider Result Normalizer
-
-`src/providers/provider-result-normalizer.js` supports:
-
-- external provider URL fields: `url`, `image_url`, `output_url`, `download_url`
-- nested arrays: `images[]`, `data[]`, `output[]`
-- `b64_json`
-- `base64`
-- `data:image/...;base64,...`
-- binary `Buffer`, `ArrayBuffer`, and typed arrays
-- direct binary HTTP image responses parsed by `fetchUpstreamOnce`
-
-If the provider returns an external URL, the service returns that URL. If the provider returns real image bytes, the service stores them through Generated Image Store and returns `/api/v1/generated-images/:image_id`.
-
-Failure mapping:
-
-- provider call failure: `IMAGE_PROVIDER_CALL_FAILED`
-- provider timeout: `IMAGE_PROVIDER_TIMEOUT`
-- no image result: `IMAGE_RESULT_EMPTY`
-- unsupported bytes/MIME/base64: `PROVIDER_RESPONSE_UNSUPPORTED`
+- accepts `callback_url`
+- accepts `callback.url`
+- validates public HTTP(S) URL
+- rejects localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes by default
+- does not create callback jobs
+- does not send callback requests
+- does not return callback delivery state
+- records only callback presence in sanitized trace metadata
 
 ## Generated Image Store
 
-`src/core/generated-image-store.js` and `GET /api/v1/generated-images/:image_id` provide temporary access to real provider bytes.
+`src/core/generated-image-store.js` and
+`GET /api/v1/generated-images/:image_id` provide temporary access to real
+upstream image bytes.
 
 Implemented controls:
 
@@ -228,50 +219,43 @@ Implemented controls:
 - response headers: `Content-Type`, `Content-Length`, `Cache-Control: no-store`
 - expired or missing images return 404
 
-The store is an in-memory default and is shaped so it can be replaced by object storage later. It is not a reference upload store.
-
-## Callback Status
-
-Current callback behavior is the C plan:
-
-- accepts `callback_url`
-- accepts `callback.url`
-- validates public HTTP(S) URL
-- rejects localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes by default
-- does not create callback jobs
-- does not send callback requests
-- does not return `callback_status`
-- does not return `CALLBACK_NOT_IMPLEMENTED`
-- records only callback presence in sanitized trace metadata
-
-## Public Generated Image Base URL
-
-Generated Image Store URLs prefer `PUBLIC_BASE_URL`. The value must be HTTP(S), is normalized without trailing slashes, and is required in production before returning service-generated image URLs. Local development may fall back to the configured local host and port.
-
-## Provider Adapter Migration
-
-Detailed migration mapping is maintained in:
-
-```text
-docs/provider-adapter-migration-map.md
-```
-
-That map covers allowed provider config/auth/payload/call/retry/error/result normalization behavior and forbidden upload, imgbb, multipart, old UI, old response, and hardcoded secret behavior.
+The store is an in-memory default and is shaped so it can be replaced by object
+storage later. It is not a reference upload store.
 
 ## Evidence Paths
 
+Current Final V1.4 evidence paths:
+
 - Visual E2E report: `evidence/visual-e2e-report.md`
 - Network summary: `evidence/final-v1-4-network-summary.json`
+- Compatibility network summary: `evidence/network-summary.json`
 - Fix report: `evidence/final-v1-4-fix-report.md`
-- Screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
 - Filled-form screenshot: `evidence/screenshots/final-v1-4-contract-before-submit.png`
-- Code-map artifacts: `.understand-anything/`
+- Final screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
 
-Evidence files must not contain raw provider payloads, full base64 strings, Authorization headers, Cookies, provider keys, RAGFlow keys, internal prompts, or raw enhancement output.
+Old visual screenshots that are not part of the current browser run were removed
+from `evidence/screenshots/` so the final evidence directory no longer mixes old
+and current acceptance artifacts.
+
+## Current Browser Evidence
+
+Current browser run:
+
+- Browser surface: Codex-controlled Chrome after Codex in-app Browser attach timeout
+- Page: `http://127.0.0.1:8791/`
+- Endpoint: `POST /api/v1/image-generations`
+- HTTP status: `200`
+- API status: `succeeded`
+- Trace id: `trace_3d272cf798ba4bac96`
+- Generation id: `gen_1961e101c1a6419b8d`
+- Reference count: `3`
+- Image count: `1`
+- Generated image route: `GET /api/v1/generated-images/:image_id`
+- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=3011403`, `Cache-Control=no-store`
 
 ## Test Results
 
-Final closure results:
+Final pre-commit command results:
 
 ```text
 npm run check: pass
@@ -279,23 +263,32 @@ npm test: pass, 71 tests
 node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
 node tests/integration/final-v1-4-evidence.test.js: pass, FINAL_V1_4_EVIDENCE_SCAN_PASS
 git diff --check: pass
-Browser visual E2E: pass, trace_566adaa7bda24623b5, POST /api/v1/image-generations, HTTP 200, status=succeeded, image_count=1, reference_count=3
-Generated image GET: pass, Content-Type=image/png, Content-Length=2403683, Cache-Control=no-store
+python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-final-image-api-service.json: pass
+codegraph status --json: pass, pendingChanges added=0 modified=0 removed=0
+git status --short --untracked-files=all: expected evidence/report changes before commit
 ```
+
+After the final commit, `git status --short --untracked-files=all` must be empty
+before claiming final closure.
 
 ## Concurrency Status
 
 See `docs/concurrency-status.md`.
 
-Current service supports concurrent HTTP requests, provider timeout/retry basics, credential rotation, polling, and a bounded generated-image memory store.
+Current service supports concurrent HTTP requests, provider timeout/retry
+basics, credential rotation, polling, and a bounded generated-image memory
+store.
 
-It does not yet implement a global task queue, global provider semaphore, per-key concurrency controls, backpressure, persisted job state, 1000-concurrency traffic shaping, cancellation, queue recovery, or durable resume.
+It does not yet implement a global task queue, global provider semaphore,
+per-key concurrency controls, backpressure, persisted job state,
+1000-concurrency traffic shaping, cancellation, queue recovery, or durable
+resume.
 
 This project must not claim industrial 1000-concurrency readiness.
 
 ## Remaining Work
 
-- Keep deprecated legacy `/api/image-jobs` out of final PRD evidence.
+- Keep deprecated legacy `/api/image-jobs` out of final V1.4 evidence.
 - Replace memory Generated Image Store with object storage before multi-instance deployment.
 - Add production SSRF policy review before enabling private-network reference URLs.
 - Add queue and provider concurrency controls before high-concurrency production claims.

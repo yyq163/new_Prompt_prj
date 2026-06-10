@@ -9,10 +9,13 @@
   "real_provider_attempted": true,
   "image_preview_visible": true,
   "primary_auxiliary_ui_present": false,
+  "structured_references_required": true,
+  "url_only_reference_supported": false,
   "source_page": "ai-tu/ai-image-generator.html",
   "page_url": "http://127.0.0.1:8787/",
   "visual_click_used": true,
-  "trace_id": "trace_b969c3374ff4465590",
+  "trace_id": "trace_e54714c1b6874898ba",
+  "generation_id": "gen_8bb2801fa71244cf93",
   "generation_id_present": true,
   "request_id_present": true,
   "task_type": "scene_multiview",
@@ -34,21 +37,29 @@
       "url_present": true
     },
     {
-      "reference_id": "ref_scene_1",
-      "entity_name": "营帐",
-      "entity_type": "scene",
-      "role": "scene_reference",
-      "url_present": true
-    },
-    {
       "reference_id": "ref_char_2",
       "entity_name": "萧昭宁",
       "entity_type": "character",
       "role": "face_reference",
       "url_present": true
+    },
+    {
+      "reference_id": "ref_scene_1",
+      "entity_name": "营帐",
+      "entity_type": "scene",
+      "role": "scene_reference",
+      "url_present": true
     }
   ],
+  "references_used_contains_usage": false,
+  "response_contract_covered_by_tests": true,
   "generated_image_route_used": true,
   "generated_image_route_preview_visible": true,
+  "generated_image_get": {
+    "http_status": 200,
+    "content_type": "image/png",
+    "content_length": 2504876,
+    "cache_control": "no-store"
+  },
   "blocked": false
 }

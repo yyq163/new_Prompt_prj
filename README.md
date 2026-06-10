@@ -35,8 +35,14 @@ npm start
 - 不运行时 import/require `ai-tu/gateway/server.js`。
 - 不接收图片文件上传。
 - 不做 multipart、图床上传、参考图上传或本地文件转存。
+- `references[]` 采用严格结构化协议，不支持只有 URL 的引用对象：`reference_id`、`entity_name`、`entity_type`、`role`、`url` 均为必填字段，且 `reference_id` 在单次请求内必须唯一。
+- `entity_type` 与 `role` 必须使用 API 合同中的枚举值；`pattern_reference` 仅兼容映射为 `ornament_reference`。
+- 旧请求中的 `usage` 字段可以被接收，但当前版本会忽略它，不参与权重、排序或阻断，也不会在响应中返回。
+- 同一 `entity_name + role` 可以有多张参考图，系统会全部使用；未被 prompt 显式 mention 的参考图也会参与编译和 provider 请求。
 - Provider 返回的 URL、base64、data URL 或 binary 生成图会统一标准化为 `images[].url`；其中真实上游 bytes 会通过短期内存 Generated Image Store 暴露为 `/api/v1/generated-images/:image_id`。
+- `callback_url` / `callback.url` 只接收和校验，不执行回调。
 - API 响应不返回 final prompt、compiled prompt、enhancement、RAGFlow 状态、fallback 状态、storyboard 路径或 provider payload。
+- 当前阶段不宣称完成工业级高并发能力；现状见 `docs/concurrency-status.md`。
 
 ## 测试
 

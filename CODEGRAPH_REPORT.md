@@ -1,8 +1,10 @@
 # CodeGraph Detailed Repository Report
 
-Date: 2026-06-09
+Date: 2026-06-10
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
+
+Commit at report refresh: `e36b00b`
 
 ## Verification State
 
@@ -12,11 +14,11 @@ Commands run:
 
 ```bash
 codegraph status --json
-python3 ~/.codex/skills/code-map/scripts/code_map_pipeline.py --root .
 codegraph files --json
 npm run check
 npm test
-node --test tests/integration/*.test.js
+node tests/integration/provider-config.test.js
+git diff --check
 ```
 
 Latest CodeGraph status:
@@ -27,10 +29,10 @@ Latest CodeGraph status:
   "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
   "fileCount": 20,
   "nodeCount": 468,
-  "edgeCount": 1238,
+  "edgeCount": 1130,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 3, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
 }
 ```
 
@@ -41,7 +43,7 @@ Generated code-map artifacts:
 - `.understand-anything/code-map-report.html`
 - `.understand-anything/code-map-summary.json`
 
-The dashboard was not launched in this refresh run, so no local dashboard token is written into this durable report.
+The dashboard was not launched in this final closure run, so no local dashboard token is written into this durable report.
 
 ## Indexed Source Files
 
@@ -104,10 +106,12 @@ Latest PRD behavior is implemented:
 - `reference_id` must be unique.
 - `references[].url` must be HTTP(S).
 - `entity_name`, `role`, and `entity_type` are validated.
+- URL-only references are not supported.
+- Empty-entity global references are not supported.
 - `pattern_reference` aliases to `ornament_reference`.
 - `usage` is accepted for old clients but ignored.
 - `usage` is not returned in `normalized.references_used`.
-- No primary/auxiliary weighting is applied.
+- No reference weighting field is applied.
 - Same `entity_name + role` with multiple images is allowed.
 - A mention can bind to multiple `reference_id` values through `matched_reference_ids`.
 - References that are not explicitly mentioned in the prompt are still included in `references_used`, Prompt Compiler context, and provider URL input.
@@ -250,18 +254,22 @@ That map covers allowed provider config/auth/payload/call/retry/error/result nor
 - Visual E2E report: `evidence/visual-e2e-report.md`
 - Network summary: `evidence/network-summary.json`
 - Screenshot: `evidence/screenshots/final-image-generation-api-e2e.png`
+- Filled-form screenshot: `evidence/screenshots/final-image-generation-api-e2e-before-submit.png`
 - Code-map artifacts: `.understand-anything/`
 
 Evidence files must not contain raw provider payloads, full base64 strings, Authorization headers, Cookies, provider keys, RAGFlow keys, internal prompts, or raw enhancement output.
 
 ## Test Results
 
-Last automated results before final browser rerun:
+Final closure results:
 
 ```text
 npm run check: pass
-npm test: pass, 66 tests
-node --test tests/integration/*.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
+npm test: pass, 67 tests
+node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
+git diff --check: pass
+Browser visual E2E: pass, trace_e54714c1b6874898ba, POST /api/v1/image-generations, HTTP 200, status=succeeded, image_count=1
+Generated image GET: pass, Content-Type=image/png, Content-Length=2504876, Cache-Control=no-store
 ```
 
 ## Concurrency Status
@@ -276,7 +284,6 @@ This project must not claim industrial 1000-concurrency readiness.
 
 ## Remaining Work
 
-- Complete the latest Browser visual E2E after this report refresh.
 - Keep legacy `/api/image-jobs` out of final PRD evidence.
 - Replace memory Generated Image Store with object storage before multi-instance deployment.
 - Add production SSRF policy review before enabling private-network reference URLs.

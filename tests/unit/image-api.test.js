@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { handleImageGeneration } from "../../src/routes/image-generations.js";
 import { extractEntityMentions } from "../../src/core/entity-mentions.js";
 import { resolveReferences } from "../../src/core/reference-binding.js";
-import { normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
+import { assertNoForbiddenPublicFields, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
 import { VALID_ENTITY_TYPES, VALID_REFERENCE_ROLES } from "../../src/core/labels.js";
 import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
 import { inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
@@ -85,6 +85,21 @@ test("callback_url and callback are accepted but not executed or exposed", async
     callback: { url: "https://client.example.com/cb" }
   });
   assert.equal(withCallbackObject.callback_url, "https://client.example.com/cb");
+});
+
+test("forbidden public field gate covers raw provider image and callback internals", () => {
+  for (const field of [
+    "provider_raw_payload",
+    "provider_raw_response",
+    "base64",
+    "b64_json",
+    "binary",
+    "callback_status",
+    "ragflow_state",
+    "fallback_status"
+  ]) {
+    assert.throws(() => assertNoForbiddenPublicFields({ [field]: "x" }), /公共响应包含内部字段/);
+  }
 });
 
 test("image_reference with references succeeds", async () => {

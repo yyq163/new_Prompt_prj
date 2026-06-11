@@ -4,46 +4,56 @@ Date: 2026-06-11
 
 ## Scope
 
-- Page: `http://127.0.0.1:8792/`
+- Page: `http://127.0.0.1:8793/`
 - Source page: `ai-tu/ai-image-generator.html`
 - Entry used: visible local image generation page
 - Final endpoint: `POST /api/v1/image-generations`
+- Change under test: RAGFlow knowledge-driven template repair with minimal local
+  compiler fallback.
 
 ## Browser Steps
 
-1. Opened the local page in the Codex in-app Browser.
-2. Confirmed the visible title was `帧界图片生成器快速版`.
-3. Filled the visible prompt textarea.
-4. Selected `text_image`.
-5. Confirmed no reference rows were used for the text-only path.
+1. Attempted to open the local page in the Codex in-app Browser.
+2. The in-app Browser webview did not attach twice, so validation continued in
+   Codex-controlled Chrome, which was allowed by the task request.
+3. Confirmed the visible title was `帧界图片生成器快速版`.
+4. Filled the visible prompt textarea.
+5. Selected `character_multiview`.
 6. Saved the filled-form screenshot before submit.
 7. Clicked the visible `开始生成` button.
-8. Waited for the real upstream result.
-9. Confirmed the page displayed `生成完成` with a visible generated image preview.
+8. Observed the real Final API request complete with an explicit provider
+   failure.
+9. Retried a minimal `text_image` path and a direct curl path; both remained
+   blocked by the real provider.
 
 ## Result
 
-- HTTP status: `200`
-- API status: `succeeded`
-- Task type: `text_image`
+- HTTP status: `502`
+- API status: `failed`
+- Error code: `IMAGE_PROVIDER_CALL_FAILED`
+- Task type: `character_multiview`
 - Generation mode: `text_to_image`
 - Reference count: `0`
-- Image count from final API trace: `1`
-- Image preview visible: `true`
-- Generated image route used: `/api/v1/generated-images/:image_id`
-- Trace id: `trace_498493fb085144d8ac`
-- Generation id: `gen_eb0bdb009b9842babe`
-- Blocked: `false`
+- Image count from final API trace: `0`
+- Image preview visible: `false`
+- Generated image route used: no
+- Trace id: `trace_38caff6d133c400289`
+- Generation id: none
+- Blocked: `true`
 
-The upstream returned real image bytes. The service stored them in Generated Image Store and returned a temporary generated-image URL for browser preview.
+Provider configuration was present, so the validation used the real upstream
+provider. The provider returned no image URL or bytes. A direct upstream probe
+returned HTTP `429` with a saturation/retry-later message, and a cooldown retry
+through the Final API still returned `502 IMAGE_PROVIDER_CALL_FAILED`.
 
 ## Generated Image Route Check
 
-- `GET /api/v1/generated-images/:image_id`: `200`
-- `Content-Type`: `image/png`
-- `Content-Length`: `3118845`
-- `Cache-Control`: `no-store`
-- Downloaded bytes were verified as PNG.
+- `GET /api/v1/generated-images/:image_id`: not run
+- `Content-Type`: not available
+- `Content-Length`: not available
+- `Cache-Control`: not available
+- Downloaded bytes were verified as PNG: no
+- Blocker: provider did not return an image id, image URL, or image bytes.
 
 ## Safety Checks
 
@@ -53,6 +63,7 @@ The upstream returned real image bytes. The service stored them in Generated Ima
 - 敏感凭据可见：否
 - 回调投递状态可见：否
 - 增强链路运行状态可见：否
+- 专业模板无条件 fallback 可见：否
 
 ## Artifacts
 
@@ -62,6 +73,7 @@ The upstream returned real image bytes. The service stored them in Generated Ima
 
 ## Notes
 
-- The final screenshot shows the visible generated image preview after completion.
-- The pre-submit screenshot shows the filled prompt and selected `text_image` path before clicking `开始生成`.
-- The network summary stores sanitized trace metadata and browser-visible completion state only.
+- The final screenshot shows the explicit provider failure state.
+- The pre-submit screenshot shows the filled prompt and selected
+  `character_multiview` path before clicking `开始生成`.
+- No success was mocked.

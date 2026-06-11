@@ -95,38 +95,37 @@ function imageReferenceTemplate(enhancement) {
 
 function characterMultiviewTemplate(enhancement) {
   return [
-    "模板：生成 4 格横向角色设定图：1 正面全身站姿；2 正面头部特写；3 侧面全身站姿；4 背面全身站姿。",
-    "硬要求：完整头到脚，鞋子可见，A 字站姿，手上无道具，头部特写只能一个，纯色背景。",
-    "禁止：文字/标签/水印/多个头部特写/缺侧面/缺背面。",
-    enhancementLine(enhancement, ["visual_focus", "lighting_notes", "composition_notes", "negative_notes"])
+    "模板：按用户原始需求生成角色设定参考图，保持人物身份、服饰、比例和参考绑定一致。",
+    "本地 fallback 只保留一致性与安全约束；具体视图数量、视角、姿态、背景和版式必须来自用户 prompt 或 RAGFlow knowledge enhancement。",
+    enhancementLine(enhancement, ["visual_focus", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints"])
   ].filter(Boolean).join("\n");
 }
 
 function sceneMultiviewTemplate(enhancement) {
   return [
-    "模板：生成场景空间、现场光影、调度和多机位参考板。所有已绑定参考图等权使用，按 role 表达角色、场景、道具、风格、光影和构图用途，避免参考图串用。",
-    "输出应呈现场景空间结构、入口/纵深/遮挡关系、主要光源和可拍摄机位。",
-    enhancementLine(enhancement, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "negative_notes"])
+    "模板：按用户原始需求生成场景参考图，保持空间身份、角色/道具关系、光影方向和参考绑定一致。",
+    "本地 fallback 不预设固定版式、机位数量或空间拆解方式；具体专业结构必须来自用户 prompt 或 RAGFlow knowledge enhancement。",
+    enhancementLine(enhancement, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints"])
   ].filter(Boolean).join("\n");
 }
 
 function propMultiviewTemplate(enhancement) {
   return [
-    "模板：生成道具资产多视图、结构、材质和纹样参考板。所有已绑定参考图等权使用，按 role 表达比例、使用语境、材质、纹样和场景关系。",
-    "输出应包含正面、侧面、背面、细节材质和使用状态。",
-    enhancementLine(enhancement, ["visual_focus", "lighting_notes", "composition_notes", "negative_notes"])
+    "模板：按用户原始需求生成道具资产参考图，保持道具身份、结构、材质、比例和参考绑定一致。",
+    "本地 fallback 不预设固定视角、细节拆解或使用状态；具体专业结构必须来自用户 prompt 或 RAGFlow knowledge enhancement。",
+    enhancementLine(enhancement, ["visual_focus", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints"])
   ].filter(Boolean).join("\n");
 }
 
 function storyboardTemplate(request, enhancement, referencesDescription) {
   if (!enhancement) {
     return {
-      path: "fallback_generic_storyboard",
+      path: "fallback_generic_storyboard_minimal",
       text: [
-        "模板：以用户原始需求为主体生成剧情宫格电影分镜制作板。",
+        "模板：以用户原始需求为主体生成故事板分镜参考图，保持角色、场景、动作顺序和参考绑定一致。",
         referencesDescription ? `追加参考绑定说明：${referencesDescription}` : "",
-        "布局：左侧规划区包含场景走位示意图、氛围概念图、光影变化示意；右侧剧情宫格区按剧情动作阶段自适应排版。",
-        "禁止固定九宫格、固定四宫格、2x2 或 3x3；禁止文字遮挡主体、角色漂移、场景漂移、动作顺序错误。"
+        "本地 fallback 不默认固定 shot 数量、不默认固定总时长、不默认固定九宫格、四宫格、2×2 或 3×3。",
+        "具体分镜结构、布局分区、镜头计划和画面组织必须来自用户 prompt 或 RAGFlow knowledge enhancement。"
       ].filter(Boolean).join("\n")
     };
   }
@@ -137,8 +136,8 @@ function storyboardTemplate(request, enhancement, referencesDescription) {
       text: [
         "模板：按已有分镜/shot 清单规范化，保留用户原 shot 数量、顺序和核心动作。",
         stringifyEnhancementValue("normalized_shot_plan", enhancement.normalized_shot_plan),
-        enhancementLine(enhancement, ["lighting_notes", "composition_notes", "negative_notes"]),
-        "布局：左侧规划区包含场景走位、氛围概念、光影变化；右侧按原 shot 顺序呈现。"
+        enhancementLine(enhancement, ["lighting_notes", "composition_notes", "negative_notes", "missing_constraints"]),
+        "具体布局与画面组织按 RAGFlow knowledge enhancement 执行，不在本地固定模板。"
       ].filter(Boolean).join("\n")
     };
   }
@@ -150,7 +149,7 @@ function storyboardTemplate(request, enhancement, referencesDescription) {
         "模板：保留用户完整故事板提示词为主体，不重写原提示词。",
         stringifyEnhancementValue("missing_constraints", enhancement.missing_constraints),
         enhancementLine(enhancement, ["lighting_notes", "composition_notes", "negative_notes"]),
-        "只追加参考绑定说明、布局硬约束、左侧规划区要求、右侧剧情宫格要求和负向规则。"
+        "只追加参考绑定说明、RAGFlow knowledge enhancement 中明确给出的约束和通用负向规则。"
       ].filter(Boolean).join("\n")
     };
   }
@@ -158,9 +157,9 @@ function storyboardTemplate(request, enhancement, referencesDescription) {
   return {
     path: "script_to_storyboard",
     text: [
-      "模板：将剧情/剧本/对白转换为剧情宫格电影分镜制作板。",
-      enhancementLine(enhancement, ["scene_summary", "story_function", "action_stages", "shot_plan", "lighting_notes", "composition_notes", "negative_notes"]),
-      "布局：左侧规划区包含场景走位、氛围概念、光影变化；右侧按剧情动作阶段自适应排版。"
+      "模板：将剧情/剧本/对白转换为故事板分镜参考图。",
+      enhancementLine(enhancement, ["scene_summary", "story_function", "action_stages", "shot_plan", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints"]),
+      "具体 shot 数量、布局分区和画面组织按 RAGFlow knowledge enhancement 执行，不在本地固定模板。"
     ].filter(Boolean).join("\n")
   };
 }

@@ -1,0 +1,87 @@
+{
+  "tasks": [
+    {
+      "id": "T1-final-image-api-service",
+      "title": "Build final prompt-optimized image generation API service",
+      "status": "verified",
+      "dependsOn": [],
+      "filesExpected": [
+        "server.js",
+        "src/routes/image-generations.js",
+        "src/core/entity-mentions.js",
+        "src/core/reference-binding.js",
+        "src/core/prompt-compiler.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/runtime.js",
+        "src/core/errors.js",
+        "src/core/labels.js",
+        "src/providers/ai-tu-provider-adapter.js",
+        "src/storage/trace-store.js",
+        "src/web/index.html",
+        "src/web/app.js",
+        "src/web/style.css",
+        "tests/unit/image-api.test.js",
+        "tests/integration/provider-config.test.js",
+        "evidence/visual-e2e-report.md"
+      ],
+      "acceptance": [
+        "POST /api/v1/image-generations implements final response contract without internal fields",
+        "Provider adapter migrates allowed ai-tu live JSON provider capabilities without runtime importing ai-tu",
+        "No upload, multipart, image hosting, mock provider, fake image URL, or callback behavior",
+        "Reference binding and storyboard rules match SPEC",
+        "Browser test console supports the required visual E2E flow",
+        "Tests and review gate pass, or provider/visual validation is truthfully BLOCKED"
+      ],
+      "verify": [
+        "npm test",
+        "npm run check",
+        "node tests/integration/provider-config.test.js",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-final-image-api-service.json"
+      ]
+    },
+    {
+      "id": "T1-ragflow-knowledge-driven-template",
+      "title": "Move professional templates from Prompt Compiler hardcoding to RAGFlow knowledge-driven enhancement",
+      "status": "ready",
+      "dependsOn": [
+        "T1-final-image-api-service"
+      ],
+      "filesExpected": [
+        "src/core/prompt-compiler.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/runtime.js",
+        "src/routes/image-generations.js",
+        "tests/unit/image-api.test.js",
+        "tests/integration/provider-config.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        "docs/ragflow/ragflow_system_prompt_knowledge_driven_v1.md",
+        "docs/ragflow/knowledge/*.md",
+        "README.md",
+        "API_CONTRACTS.md",
+        "docs/spec/final_image_generation_api_spec_codex_autonomous_v1_4.md",
+        "BACKEND_DESIGN.md",
+        "CODEGRAPH_REPORT.md",
+        "evidence/final-v1-4-fix-report.md",
+        "evidence/visual-e2e-report.md"
+      ],
+      "acceptance": [
+        "Prompt Compiler fallback keeps only minimal safety skeleton and does not inject character four-view, scene multi-camera, prop multi-view, or storyboard left/right layout templates without enhancement",
+        "RAGFlow enhancement fields still append deterministically to compiled_prompt, including missing_constraints",
+        "RAGFlow validation discards prompt leaks, unauthorized URLs, unauthorized reference ids, non-JSON, arrays, and internal negative notes",
+        "Final V1.4 public API contract remains unchanged and does not expose internal prompt or enhancement fields",
+        "RAGFlow system prompt documentation is knowledge-driven and template details live in knowledge seed documents",
+        "Required check, test, integration, diff, review gate, codegraph, and browser evidence are fresh"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/integration/provider-config.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json",
+        "codegraph status --json",
+        "git status --short --untracked-files=all"
+      ]
+    }
+  ]
+}

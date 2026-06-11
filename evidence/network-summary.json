@@ -1,25 +1,37 @@
 {
-  "status": "pass",
+  "status": "blocked_by_provider",
+  "checked_at": "2026-06-11T08:31:38Z",
   "endpoint": "/api/v1/image-generations",
   "method": "POST",
-  "http_status": 200,
-  "api_status": "succeeded",
-  "browser_surface": "Codex in-app Browser",
+  "browser_surface": "Codex-controlled Chrome",
+  "browser_plugin_fallback_reason": "Codex in-app Browser webview did not attach twice; Chrome was allowed by the request.",
   "browser_submitted": true,
   "post_result": {
     "endpoint": "/api/v1/image-generations",
-    "http_status": 200,
-    "ok": true,
-    "status": "succeeded",
-    "image_count": 1,
-    "reference_count": 0
+    "http_status": 502,
+    "ok": false,
+    "status": "failed",
+    "error_code": "IMAGE_PROVIDER_CALL_FAILED",
+    "task_type": "character_multiview",
+    "generation_mode": "text_to_image",
+    "reference_count": 0,
+    "trace_id": "trace_38caff6d133c400289"
+  },
+  "provider_probe": {
+    "has_required_provider_config": true,
+    "base_url_host": "memefast.top",
+    "model_present": true,
+    "key_present": true,
+    "direct_upstream_http_status": 429,
+    "direct_upstream_error_summary": "upstream group saturated; retry later"
   },
   "generated_image_get": {
-    "http_status": 200,
-    "content_type": "image/png",
-    "content_length": 3118845,
-    "cache_control": "no-store",
-    "png_magic": true
+    "http_status": null,
+    "content_type": null,
+    "content_length": null,
+    "cache_control": null,
+    "png_magic": false,
+    "blocked_reason": "Provider did not return an image URL or bytes."
   },
   "http_invalid_body": {
     "image_generation_malformed_json": "pass",
@@ -32,12 +44,8 @@
   "callback_delivery_attempted": false,
   "public_response_privacy_scan": "pass",
   "evidence_text_scan": "pass",
-  "browser_visual_e2e": "pass",
+  "browser_visual_e2e": "blocked_by_provider",
   "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "trace_id": "trace_498493fb085144d8ac",
-  "generation_id": "gen_eb0bdb009b9842babe",
-  "generated_image_id": "img_f95359394abc49bcb5be11f025bc86ea",
-  "browser_page": "http://127.0.0.1:8792/",
   "screenshots": {
     "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
     "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png"
@@ -50,6 +58,7 @@
     "usage_ignored": true,
     "public_images_url_only": true,
     "mock_success": false,
-    "high_concurrency_claim": false
+    "high_concurrency_claim": false,
+    "professional_templates_knowledge_driven": true
   }
 }

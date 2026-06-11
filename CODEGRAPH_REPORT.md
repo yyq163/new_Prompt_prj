@@ -4,9 +4,9 @@ Date: 2026-06-11
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
-Baseline commit before HTTP invalid body correction: `abfcdb41bc4ee52538dc44c55ffcee552bfaf655`
+Baseline commit before RAGFlow knowledge-driven template correction: `751b3013a0526f031c04d08946516d5e46cb6a01`
 
-This report is refreshed before the HTTP invalid body correction commit. The commit that
+This report is refreshed before the RAGFlow knowledge-driven template correction commit. The commit that
 contains this report must be verified after commit with `git log -1 --oneline`.
 The report therefore records the true pre-commit baseline and the true current
 index/worktree checks, rather than predicting a commit hash that would become
@@ -14,8 +14,8 @@ stale as soon as this file is committed.
 
 ## Verification State
 
-CodeGraph was refreshed from the project root and checked after the HTTP
-invalid body repair and evidence refresh.
+CodeGraph was refreshed from the project root and checked during the RAGFlow
+knowledge-driven template repair.
 
 Commands run for this report refresh:
 
@@ -25,7 +25,7 @@ codegraph status --json
 git status --short --untracked-files=all
 ```
 
-Latest CodeGraph status:
+Initial CodeGraph status before production edits:
 
 ```json
 {
@@ -36,21 +36,20 @@ Latest CodeGraph status:
   "edgeCount": 1342,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 1, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
 }
 ```
 
-The pre-commit `pendingChanges.added=1` is the newly indexed
-`tests/unit/http-invalid-body.test.js`. After the final commit, CodeGraph status
-must be checked again and should report no pending changes.
+After production and test edits, CodeGraph must be checked again before commit.
 
-Current pre-commit Git worktree changes are limited to the P1 repair:
+Current pre-commit Git worktree changes are limited to the knowledge-driven
+template repair:
 
-- add HTTP invalid body short-circuiting in `server.js`
-- add HTTP layer invalid body tests
-- update current Final V1.4 browser screenshots
-- update Final V1.4 evidence summaries
-- document HTTP 400 `INVALID_REQUEST_SCHEMA` for malformed and oversized bodies
+- remove unconditional professional template detail from `src/core/prompt-compiler.js`
+- add `missing_constraints` to `TYPE_SCHEMAS.RagflowEnhancement`
+- add regression tests for minimal fallback, enhancement consumption, and RAGFlow discard policy
+- add RAGFlow system prompt and knowledge seed documents
+- update Final V1.4 contract, design, and evidence summaries
 - refresh this CodeGraph report
 
 After the final commit, `git status --short --untracked-files=all` must be
@@ -113,8 +112,8 @@ The final image generation flow is:
 1. `normalizeRequest` validates task type, references, output, callback URL, and generation mode.
 2. `extractEntityMentions` extracts `@实体名` and `[实体名]`.
 3. `resolveReferences` binds mentions by `entity_name` and keeps all valid references.
-4. `getRagflowEnhancement` optionally requests structured enhancement.
-5. `compilePrompt` builds backend-only upstream instructions.
+4. `getRagflowEnhancement` optionally requests structured knowledge-driven enhancement.
+5. `compilePrompt` builds backend-only upstream instructions from minimal local fallback plus validated enhancement fields.
 6. `generateWithAiTuProvider` calls the real upstream provider.
 7. `provider-result-normalizer.js` normalizes upstream image forms into public image URLs.
 8. Public response returns `images[].url`, normalized mentions/references, warnings, and trace id.
@@ -122,6 +121,32 @@ The final image generation flow is:
 Public responses remain sanitized: no backend-only prompt text, optional
 enhancement state, upstream request details, raw image bytes, callback delivery
 state, or credential material is returned.
+
+## Prompt Compiler and RAGFlow Knowledge Status
+
+`src/core/prompt-compiler.js` no longer unconditionally injects full
+professional templates for `character_multiview`, `scene_multiview`,
+`prop_multiview`, or `storyboard`.
+
+Local fallback now keeps only:
+
+- task type
+- original user prompt
+- deterministic reference binding
+- output description
+- minimal per-task consistency/safety text
+- common negative rules
+
+Specific professional template content is expected from validated RAGFlow
+enhancement or explicit user prompt content. The compiler appends supported
+enhancement fields including `scene_summary`, `visual_focus`,
+`story_function`, `action_stages`, `shot_plan`, `normalized_shot_plan`,
+`lighting_notes`, `composition_notes`, `negative_notes`, and
+`missing_constraints`.
+
+RAGFlow system prompt and knowledge seed files were added under
+`docs/ragflow/`. These files are documentation and ingestion material; runtime
+code does not read them directly.
 
 ## Reference Binding Status
 

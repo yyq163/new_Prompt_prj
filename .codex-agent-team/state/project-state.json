@@ -1,0 +1,101 @@
+{
+  "artifacts": {
+    "API_CONTRACTS.md": "API contract",
+    "ARCHITECTURE-MAP.md": "Module map",
+    "ARCHITECTURE.md": "System architecture",
+    "BACKEND_DESIGN.md": "Backend detailed design",
+    "DESIGN-DELIVERY.md": "Design delivery for visible browser console",
+    "DEV-PLAN.md": "Development plan",
+    "Design-Brief.md": "Test console design brief",
+    "FRONTEND_DESIGN.md": "Frontend detailed design",
+    "Product-Spec.md": "Product specification derived from final SPEC",
+    "THREAT_MODEL.md": "Security and privacy threat model",
+    "docs/provider-adapter-migration-map.md": "Provider migration map"
+  },
+  "currentPhase": "build",
+  "currentTask": "T1-ragflow-knowledge-driven-template",
+  "schemaVersion": 1,
+  "stage": "development",
+  "tasks": [
+    {
+      "blockers": [],
+      "evidenceRefs": [
+        ".codex-agent-team/context/T1-final-image-api-service.md",
+        "npm-test-21-pass",
+        "npm-run-check-pass",
+        ".codex-agent-team/reports/review-T1-final-image-api-service.json",
+        "evidence/visual-e2e-report.md",
+        "npm-test-24-pass",
+        "npm-run-check-pass-rereview",
+        ".codex-agent-team/reports/review-T1-final-image-api-service.json",
+        ".codex-agent-team/context/T1-final-image-api-service-final-closure.md",
+        "codegraph-status-pendingChanges-0",
+        "npm-run-check-pass-2026-06-10",
+        "npm-test-67-pass-2026-06-10",
+        "provider-config-present-2026-06-10",
+        "browser-visual-e2e-pass-trace_e54714c1b6874898ba",
+        "review-gate-pass-2026-06-10",
+        "npm-test-71-pass-2026-06-10",
+        "evidence-scan-pass-2026-06-10",
+        "browser-visual-e2e-pass-trace_566adaa7bda24623b5",
+        "generated-image-get-pass-2403683-2026-06-10",
+        "review-gate-pass-final-v1-4-2026-06-10",
+        "browser-visual-e2e-pass-trace_3d272cf798ba4bac96",
+        "generated-image-get-pass-3011403-2026-06-10",
+        "codegraph-status-pendingChanges-0-evidence-chain-2026-06-10",
+        "evidence-chain-cleanup-current-final-v1-4-2026-06-10",
+        ".codex-agent-team/context/T1-final-image-api-service-invalid-body.md",
+        "http-invalid-body-tests-pass-2026-06-11",
+        "npm-run-check-pass-2026-06-11",
+        "npm-test-73-pass-2026-06-11",
+        "provider-config-present-2026-06-11",
+        "evidence-scan-pass-2026-06-11",
+        "browser-visual-e2e-pass-trace_498493fb085144d8ac",
+        "generated-image-get-pass-3118845-2026-06-11",
+        "codegraph-index-24-files-2026-06-11",
+        "review-gate-pass-http-invalid-body-2026-06-11"
+      ],
+      "files": [
+        "server.js",
+        "src/**",
+        "tests/**",
+        "evidence/**"
+      ],
+      "id": "T1-final-image-api-service",
+      "owner": "lead-solo-fallback",
+      "status": "verified"
+    },
+    {
+      "blockers": [],
+      "evidenceRefs": [
+        ".codex-agent-team/context/T1-ragflow-knowledge-driven-template.md",
+        "codegraph-status-pendingChanges-0-before-ragflow-template-2026-06-11",
+        "npm-run-check-pass-ragflow-template-2026-06-11",
+        "npm-test-78-pass-ragflow-template-2026-06-11",
+        "provider-config-present-ragflow-template-2026-06-11",
+        "evidence-scan-pass-ragflow-template-2026-06-11",
+        "git-diff-check-pass-ragflow-template-2026-06-11",
+        "chrome-browser-provider-blocked-trace_38caff6d133c400289-2026-06-11",
+        ".codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json"
+      ],
+      "files": [
+        "src/core/prompt-compiler.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/runtime.js",
+        "src/routes/image-generations.js",
+        "tests/**",
+        "docs/ragflow/**",
+        "README.md",
+        "API_CONTRACTS.md",
+        "docs/spec/final_image_generation_api_spec_codex_autonomous_v1_4.md",
+        "BACKEND_DESIGN.md",
+        "CODEGRAPH_REPORT.md",
+        "evidence/**"
+      ],
+      "id": "T1-ragflow-knowledge-driven-template",
+      "owner": "lead-solo-fallback",
+      "status": "blocked"
+    }
+  ],
+  "updatedAt": "2026-06-11T02:44:02+00:00"
+}

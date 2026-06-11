@@ -118,6 +118,40 @@ Generated Image Store URLs are built from `PUBLIC_BASE_URL` when configured. The
 
 In production, `PUBLIC_BASE_URL` is required for service-generated image URLs. Local development may fall back to the current local host and port.
 
+### RAGFlow knowledge enhancement
+
+RAGFlow is optional and may provide only a validated JSON enhancement object for
+the backend Prompt Compiler. It does not produce the public response, provider
+payload, final provider prompt, reference binding, image URLs, or callback
+state.
+
+The Prompt Compiler local fallback is intentionally minimal. Without a valid
+enhancement or explicit user prompt content, it must not inject full
+professional templates such as character four-view sheets, scene 3x3 or
+multi-camera boards, prop front/side/back or material-detail boards, or
+storyboard left/right planning layouts.
+
+Allowed enhancement fields are tracked by `TYPE_SCHEMAS.RagflowEnhancement` and
+include:
+
+- `scene_summary`
+- `visual_focus`
+- `story_function`
+- `action_stages`
+- `shot_plan`
+- `normalized_shot_plan`
+- `lighting_notes`
+- `composition_notes`
+- `negative_notes`
+- `missing_constraints`
+- `input_analysis`
+- `storyboard_processing`
+
+The API discards unsafe enhancement when it leaks `final_prompt` or
+`compiled_prompt`, references unknown IDs, introduces unknown URLs, returns a
+non-object or non-JSON value, changes explicit shot-list count/order, or places
+internal implementation language in `negative_notes`.
+
 ### Legacy route
 
 `/api/image-jobs` is a deprecated compatibility route for old page/client behavior. It sends deprecation headers and is not a Final API V1.4 acceptance endpoint. It must not be used to bypass the structured `references[]` contract.

@@ -1,0 +1,55 @@
+{
+  "task_id": "T1-ragflow-knowledge-driven-template",
+  "status": "blocked",
+  "reviewed_at": "2026-06-11T08:33:00Z",
+  "summary": "Code and contract review passed for the RAGFlow knowledge-driven template change, but final browser/provider acceptance is blocked by the real upstream provider returning saturation/502.",
+  "findings": [],
+  "requirements": {
+    "prompt_compiler_minimal_fallback": "pass",
+    "enhancement_fields_appended": "pass",
+    "missing_constraints_schema": "pass",
+    "ragflow_unsafe_outputs_discarded": "pass",
+    "public_contract_internal_fields_hidden": "pass",
+    "docs_and_seed_knowledge_added": "pass",
+    "browser_provider_success": "blocked"
+  },
+  "evidence": [
+    {
+      "command": "npm run check",
+      "status": "pass"
+    },
+    {
+      "command": "npm test",
+      "status": "pass",
+      "details": "78 tests passed"
+    },
+    {
+      "command": "node tests/integration/provider-config.test.js",
+      "status": "pass",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT"
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "pass",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS"
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass"
+    },
+    {
+      "command": "codegraph status --json",
+      "status": "pass_with_pending_worktree",
+      "details": "pendingChanges modified=3 before commit"
+    },
+    {
+      "command": "Codex-controlled Chrome visual E2E",
+      "status": "blocked",
+      "details": "POST /api/v1/image-generations returned 502 IMAGE_PROVIDER_CALL_FAILED; direct upstream probe returned 429 saturation/retry-later"
+    }
+  ],
+  "blocking_items": [
+    "Real upstream provider returned HTTP 429 saturation in direct probe and Final API returned 502 IMAGE_PROVIDER_CALL_FAILED, so no images[].url or generated image GET no-store proof was available."
+  ],
+  "decision": "Do not mark complete, commit, or push until provider-backed browser acceptance succeeds."
+}

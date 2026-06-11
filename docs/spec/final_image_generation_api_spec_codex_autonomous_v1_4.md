@@ -142,6 +142,23 @@ Callback URL validation defaults to rejecting localhost, loopback, link-local, p
 
 The backend Prompt Compiler owns the internal provider prompt. RAGFlow or other LLM output is optional structured enhancement only.
 
+Professional template detail is knowledge-driven:
+
+- RAGFlow system prompts define only JSON output protocol, field constraints,
+  anti-hallucination rules, and knowledge-driven behavior.
+- Concrete character, scene, prop, storyboard, and reference-binding templates
+  are seed knowledge under `docs/ragflow/knowledge/`.
+- The local Prompt Compiler keeps the task type, original prompt, reference
+  binding, output description, general negative rules, and minimal per-task
+  safety fallback.
+- Without valid enhancement or explicit user prompt content, the compiler does
+  not add character four-view sheets, scene 3x3/multi-camera boards, prop
+  front/side/back or close-up boards, or storyboard left/right planning layouts.
+- When valid enhancement exists, the compiler appends supported fields such as
+  `scene_summary`, `visual_focus`, `story_function`, `action_stages`,
+  `shot_plan`, `normalized_shot_plan`, `lighting_notes`, `composition_notes`,
+  `negative_notes`, and `missing_constraints`.
+
 Discard enhancement when it is unavailable, invalid, unsafe, oversized, leaks internal prompt fields, references unknown IDs, or introduces unknown URLs. Public responses must not expose enhancement, RAGFlow state, fallback state, or internal prompts.
 
 ## Provider Result Normalization

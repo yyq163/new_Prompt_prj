@@ -2,6 +2,7 @@ import { walk } from "./runtime.js";
 
 const DEFAULT_MAX_ENHANCEMENT_CHARS = 12000;
 const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|provider_internal_payload/i;
+const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
 
 export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch } = {}) {
   const endpoint = String(process.env.RAGFLOW_ENHANCEMENT_URL || "").trim();
@@ -53,6 +54,7 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   if (containsForbiddenPromptField(value)) return { enhancement: null, discarded: "prompt_leak" };
   if (containsUnauthorizedReference(value, binding)) return { enhancement: null, discarded: "unauthorized_reference" };
   if (containsUnauthorizedUrl(value, binding)) return { enhancement: null, discarded: "unauthorized_url" };
+  if (containsBindingDecision(value)) return { enhancement: null, discarded: "binding_decision" };
   if (!validStoryboardShape(value)) return { enhancement: null, discarded: "invalid_storyboard_shape" };
   if (!preservesShotList(value, request)) return { enhancement: null, discarded: "shot_plan_changed" };
   if (typeof value.negative_notes === "string" && INTERNAL_TERMS.test(value.negative_notes)) {
@@ -60,6 +62,25 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   }
 
   return { enhancement: structuredCloneSafe(value), discarded: "" };
+}
+
+function containsBindingDecision(value) {
+  let found = false;
+  walk(value, (node) => {
+    if (found || node == null) return;
+    if (typeof node === "string") {
+      if (BINDING_DECISION_TERMS.test(node)) found = true;
+      return;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      if (BINDING_DECISION_TERMS.test(key)) {
+        found = true;
+        return;
+      }
+    }
+  });
+  return found;
 }
 
 function containsForbiddenPromptField(value) {

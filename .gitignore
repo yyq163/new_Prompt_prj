@@ -13,6 +13,7 @@ output/
 test-image/
 ai-tu/runtime-config.json
 ai-tu/runtime-config.example.json
+真实配置.json
 .server.pid
 .server.log
 .server-*.pid

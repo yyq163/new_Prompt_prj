@@ -42,7 +42,7 @@
     {
       "id": "T1-ragflow-knowledge-driven-template",
       "title": "Move professional templates from Prompt Compiler hardcoding to RAGFlow knowledge-driven enhancement",
-      "status": "ready",
+      "status": "verified",
       "dependsOn": [
         "T1-final-image-api-service"
       ],

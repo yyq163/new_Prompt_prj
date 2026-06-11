@@ -12,7 +12,7 @@
     "THREAT_MODEL.md": "Security and privacy threat model",
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
-  "currentPhase": "build",
+  "currentPhase": "verification",
   "currentTask": "T1-ragflow-knowledge-driven-template",
   "schemaVersion": 1,
   "stage": "development",
@@ -76,7 +76,12 @@
         "evidence-scan-pass-ragflow-template-2026-06-11",
         "git-diff-check-pass-ragflow-template-2026-06-11",
         "chrome-browser-provider-blocked-trace_38caff6d133c400289-2026-06-11",
-        ".codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json"
+        ".codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json",
+        "subagent-review-loop-pass-2026-06-11",
+        "browser-visual-e2e-pass-trace_5b17210c1a3a4d0587-2026-06-11",
+        "generated-image-get-pass-1999538-2026-06-11",
+        "ragflow-binding-decision-discard-test-2026-06-11",
+        "evidence-chain-current-run-pass-2026-06-11"
       ],
       "files": [
         "src/core/prompt-compiler.js",
@@ -94,8 +99,8 @@
       ],
       "id": "T1-ragflow-knowledge-driven-template",
       "owner": "lead-solo-fallback",
-      "status": "blocked"
+      "status": "verified"
     }
   ],
-  "updatedAt": "2026-06-11T02:44:02+00:00"
+  "updatedAt": "2026-06-11T09:14:02Z"
 }

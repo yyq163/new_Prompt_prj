@@ -587,6 +587,24 @@ test("RAGFlow unauthorized reference_id is discarded", () => {
   assert.equal(validation.discarded, "unauthorized_reference");
 });
 
+test("RAGFlow binding decision semantics are discarded", () => {
+  const request = normalizeRequest({ task_type: "character_multiview", prompt: "参考 @萧昭宁", references: [characterRef()] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  const cases = [
+    { composition_notes: "Use ref_x as primary reference and ref_y as auxiliary." },
+    { composition_notes: "把 ref_x 作为主参考，ref_y 作为辅参考。" },
+    { composition_notes: "按 0.8 权重处理第一张参考图。" },
+    { reference_weight: { ref_x: 0.8 } },
+    { priority: ["ref_x"] }
+  ];
+
+  for (const enhancement of cases) {
+    const validation = validateEnhancement(enhancement, { request, binding });
+    assert.equal(validation.enhancement, null);
+    assert.equal(validation.discarded, "binding_decision");
+  }
+});
+
 test("RAGFlow unauthorized URL non JSON array and internal negative notes are discarded", () => {
   const request = normalizeRequest({ task_type: "image_reference", prompt: "参考 @萧昭宁", references: [characterRef()] });
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));

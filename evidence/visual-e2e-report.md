@@ -13,47 +13,45 @@ Date: 2026-06-11
 
 ## Browser Steps
 
-1. Attempted to open the local page in the Codex in-app Browser.
-2. The in-app Browser webview did not attach twice, so validation continued in
-   Codex-controlled Chrome, which was allowed by the task request.
-3. Confirmed the visible title was `帧界图片生成器快速版`.
-4. Filled the visible prompt textarea.
-5. Selected `character_multiview`.
-6. Saved the filled-form screenshot before submit.
-7. Clicked the visible `开始生成` button.
-8. Observed the real Final API request complete with an explicit provider
-   failure.
-9. Retried a minimal `text_image` path and a direct curl path; both remained
-   blocked by the real provider.
+1. Opened the local page in the Codex in-app Browser.
+2. Confirmed the visible title was `帧界图片生成器快速版`.
+3. Filled the visible prompt textarea with a `character_multiview` request.
+4. Selected `character_multiview` in the visible task type control.
+5. Saved the filled-form screenshot before submit.
+6. Clicked the visible `开始生成` button.
+7. Observed the page record a completed generation with a visible generated
+   image URL under `/api/v1/generated-images/`.
+8. Cross-checked the accepted browser run against the backend trace store and
+   generated-image GET route.
 
 ## Result
 
-- HTTP status: `502`
-- API status: `failed`
-- Error code: `IMAGE_PROVIDER_CALL_FAILED`
+- Browser surface: Codex in-app Browser
+- HTTP status: `200`
+- API status: `succeeded`
 - Task type: `character_multiview`
 - Generation mode: `text_to_image`
 - Reference count: `0`
-- Image count from final API trace: `0`
-- Image preview visible: `false`
-- Generated image route used: no
-- Trace id: `trace_38caff6d133c400289`
-- Generation id: none
-- Blocked: `true`
+- Image count from final API trace: `1`
+- Image preview visible: `true`
+- Generated image route used: yes
+- Trace id: `trace_5b17210c1a3a4d0587`
+- Generation id: `gen_2741feb461b843db9b`
+- Image URL: `http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37`
+- Blocked: `false`
 
-Provider configuration was present, so the validation used the real upstream
-provider. The provider returned no image URL or bytes. A direct upstream probe
-returned HTTP `429` with a saturation/retry-later message, and a cooldown retry
-through the Final API still returned `502 IMAGE_PROVIDER_CALL_FAILED`.
+The provider configuration was present and the accepted browser run used the
+real Final API provider path. No provider success was mocked. Later exploratory
+provider probes were not used as acceptance evidence and are not part of this
+accepted run.
 
 ## Generated Image Route Check
 
-- `GET /api/v1/generated-images/:image_id`: not run
-- `Content-Type`: not available
-- `Content-Length`: not available
-- `Cache-Control`: not available
-- Downloaded bytes were verified as PNG: no
-- Blocker: provider did not return an image id, image URL, or image bytes.
+- `GET /api/v1/generated-images/:image_id`: HTTP `200`
+- `Content-Type`: `image/png`
+- `Content-Length`: `1999538`
+- `Cache-Control`: `no-store`
+- Downloaded bytes were verified as PNG: yes
 
 ## Safety Checks
 
@@ -67,13 +65,11 @@ through the Final API still returned `502 IMAGE_PROVIDER_CALL_FAILED`.
 
 ## Artifacts
 
-- Final screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
+- Final page-state screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
 - Filled-form pre-submit screenshot: `evidence/screenshots/final-v1-4-contract-before-submit.png`
 - Network summary: `evidence/final-v1-4-network-summary.json`
 
-## Notes
-
-- The final screenshot shows the explicit provider failure state.
-- The pre-submit screenshot shows the filled prompt and selected
-  `character_multiview` path before clicking `开始生成`.
-- No success was mocked.
+Both screenshot files are PNG image files. The screenshot artifacts are kept as
+visible page-operation evidence. The authoritative success evidence is the
+browser submission state, trace-store record, network summary, and
+generated-image GET headers above.

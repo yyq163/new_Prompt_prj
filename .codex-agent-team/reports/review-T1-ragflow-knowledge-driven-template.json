@@ -1,55 +1,132 @@
 {
+  "taskId": "T1-ragflow-knowledge-driven-template",
   "task_id": "T1-ragflow-knowledge-driven-template",
-  "status": "blocked",
-  "reviewed_at": "2026-06-11T08:33:00Z",
-  "summary": "Code and contract review passed for the RAGFlow knowledge-driven template change, but final browser/provider acceptance is blocked by the real upstream provider returning saturation/502.",
+  "status": "pass_on_branch",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-11T09:30:15Z",
+  "summary": "RAGFlow knowledge-driven template code, contract, evidence chain, browser acceptance, generated-image GET, and privacy checks pass on branch. Do not merge main automatically.",
   "findings": [],
   "requirements": {
+    "branch_is_codex_ragflow_knowledge_driven_template": "pass",
+    "main_not_merged": "pass",
     "prompt_compiler_minimal_fallback": "pass",
     "enhancement_fields_appended": "pass",
     "missing_constraints_schema": "pass",
     "ragflow_unsafe_outputs_discarded": "pass",
+    "ragflow_binding_decision_discarded": "pass",
     "public_contract_internal_fields_hidden": "pass",
     "docs_and_seed_knowledge_added": "pass",
-    "browser_provider_success": "blocked"
+    "codegraph_report_current_run": "pass",
+    "network_summaries_same_run": "pass",
+    "browser_provider_success": "pass",
+    "generated_image_get_no_store": "pass",
+    "security_scan": "pass"
   },
+  "subagent_reviews": [
+    {
+      "role": "Evidence Auditor",
+      "initial_decision": "fail",
+      "finding": "CODEGRAPH_REPORT.md still used old 8792 / trace_498493fb085144d8ac success as current evidence; ledger old success rows could be misread.",
+      "repair": "CODEGRAPH_REPORT.md now records the accepted 8793 browser run trace_5b17210c1a3a4d0587 and marks old 8792 evidence historical; evidence summaries describe one accepted run."
+    },
+    {
+      "role": "Contract Reviewer",
+      "initial_decision": "fail",
+      "finding": "RAGFlow enhancement validation did not reject primary/auxiliary/priority/weight binding semantics in allowed text fields.",
+      "repair": "src/core/ragflow-enhancement.js now discards binding-decision semantics; tests/unit/image-api.test.js covers English and Chinese primary/auxiliary/weight cases."
+    },
+    {
+      "role": "Browser QA",
+      "initial_decision": "fail",
+      "finding": "Previous evidence only supported provider blocked; screenshot files were named .png but contained JPEG bytes.",
+      "repair": "Provider later produced accepted browser success on 8793; generated image GET returned 200 image/png no-store; screenshot files were converted to PNG."
+    },
+    {
+      "role": "Security Reviewer",
+      "initial_decision": "pass",
+      "finding": "No page, response, or evidence leakage found; untracked local config file should not be committed.",
+      "repair": "真实配置.json added to .gitignore; evidence stores only boolean provider config presence and sanitized run metadata."
+    },
+    {
+      "role": "Final Integrator",
+      "initial_decision": "fail",
+      "finding": "Branch was correct and main was not merged, but evidence chain and status commands needed refresh.",
+      "repair": "Evidence chain refreshed to one accepted browser run; required commands must be rerun before commit and push."
+    }
+  ],
+  "second_round_reviews": [
+    {
+      "role": "Evidence Auditor",
+      "decision": "pass",
+      "finding": "No remaining evidence-chain blocker.",
+      "details": "Current browser evidence points to 8793 / trace_5b17210c1a3a4d0587; old 8792 / trace_498493fb085144d8ac evidence is historical only; both network summaries are byte-identical."
+    },
+    {
+      "role": "Contract/Security Reviewer",
+      "decision": "pass",
+      "finding": "No remaining contract or leakage blocker.",
+      "details": "Binding-decision semantics are discarded as binding_decision; minimal Prompt Compiler fallback remains intact; evidence and reports do not expose internal prompts, provider payloads, base64, keys, tokens, or raw responses."
+    }
+  ],
   "evidence": [
     {
+      "command": "Codex in-app Browser visual E2E",
+      "status": "pass",
+      "details": "Visible page submitted character_multiview to POST /api/v1/image-generations on http://127.0.0.1:8793/; trace_5b17210c1a3a4d0587 returned status=succeeded with image_count=1."
+    },
+    {
+      "command": "curl GET /api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37",
+      "status": "pass",
+      "details": "HTTP 200, Content-Type image/png, Content-Length 1999538, Cache-Control no-store, PNG magic bytes verified."
+    },
+    {
+      "command": "file evidence/screenshots/final-v1-4-contract-before-submit.png evidence/screenshots/final-v1-4-contract-after-submit.png",
+      "status": "pass",
+      "details": "Both screenshot artifacts are PNG files."
+    }
+  ],
+  "blocking_items": [],
+  "decision": "PASS_ON_BRANCH. Commit and push to codex/ragflow-knowledge-driven-template only; main merge remains no.",
+  "command_results": [
+    {
       "command": "npm run check",
-      "status": "pass"
+      "status": "pass",
+      "details": "Node syntax checks passed for server, routes, providers, core modules, and storage."
     },
     {
       "command": "npm test",
       "status": "pass",
-      "details": "78 tests passed"
+      "details": "node --test tests/unit/*.test.js passed: 79 tests, 79 pass."
     },
     {
       "command": "node tests/integration/provider-config.test.js",
       "status": "pass",
-      "details": "REAL_PROVIDER_CONFIG_PRESENT"
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
     },
     {
       "command": "node tests/integration/final-v1-4-evidence.test.js",
       "status": "pass",
-      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS"
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
     },
     {
       "command": "git diff --check",
-      "status": "pass"
+      "status": "pass",
+      "details": "Whitespace diff check passed."
     },
     {
-      "command": "codegraph status --json",
-      "status": "pass_with_pending_worktree",
-      "details": "pendingChanges modified=3 before commit"
+      "command": "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json",
+      "status": "pass",
+      "details": "Review gate passed with zero blocking findings."
     },
     {
-      "command": "Codex-controlled Chrome visual E2E",
-      "status": "blocked",
-      "details": "POST /api/v1/image-generations returned 502 IMAGE_PROVIDER_CALL_FAILED; direct upstream probe returned 429 saturation/retry-later"
+      "command": "codegraph sync . && codegraph status --json",
+      "status": "pass",
+      "details": "CodeGraph initialized and pendingChanges added=0 modified=0 removed=0."
+    },
+    {
+      "command": "git status --short --untracked-files=all",
+      "status": "pass",
+      "details": "Reviewed before commit; only expected branch files are modified and local sensitive config is ignored."
     }
-  ],
-  "blocking_items": [
-    "Real upstream provider returned HTTP 429 saturation in direct probe and Final API returned 502 IMAGE_PROVIDER_CALL_FAILED, so no images[].url or generated image GET no-store proof was available."
-  ],
-  "decision": "Do not mark complete, commit, or push until provider-backed browser acceptance succeeds."
+  ]
 }

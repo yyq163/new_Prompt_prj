@@ -4,13 +4,16 @@ Date: 2026-06-11
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
-Baseline commit before RAGFlow knowledge-driven template correction: `751b3013a0526f031c04d08946516d5e46cb6a01`
+Baseline commit before the original RAGFlow knowledge-driven template correction:
+`751b3013a0526f031c04d08946516d5e46cb6a01`
 
-This report is refreshed before the RAGFlow knowledge-driven template correction commit. The commit that
-contains this report must be verified after commit with `git log -1 --oneline`.
-The report therefore records the true pre-commit baseline and the true current
-index/worktree checks, rather than predicting a commit hash that would become
-stale as soon as this file is committed.
+Branch commit before this evidence/contract repair:
+`a81d6307605e8e9f99c900ad28b1741ab13f9326`
+
+This report is refreshed before the follow-up commit that repairs the evidence
+chain, subagent review record, and RAGFlow binding-decision validation. The
+commit that contains this report must be verified after commit with
+`git log -1 --oneline`.
 
 ## Verification State
 
@@ -21,6 +24,8 @@ Commands run for this report refresh:
 
 ```bash
 python3 /Users/yyq/.codex/.codex-agent-team/scripts/code_indexer.py --root . --out .code-index
+codegraph status --json
+codegraph sync .
 codegraph status --json
 git status --short --untracked-files=all
 ```
@@ -40,17 +45,30 @@ Initial CodeGraph status before production edits:
 }
 ```
 
-After production and test edits, CodeGraph must be checked again before commit.
+Current CodeGraph status after final repair sync:
 
-Current pre-commit Git worktree changes are limited to the knowledge-driven
-template repair:
+```json
+{
+  "initialized": true,
+  "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
+  "fileCount": 24,
+  "nodeCount": 533,
+  "edgeCount": 1348,
+  "backend": "native",
+  "languages": ["javascript"],
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
+}
+```
 
-- remove unconditional professional template detail from `src/core/prompt-compiler.js`
-- add `missing_constraints` to `TYPE_SCHEMAS.RagflowEnhancement`
-- add regression tests for minimal fallback, enhancement consumption, and RAGFlow discard policy
-- add RAGFlow system prompt and knowledge seed documents
-- update Final V1.4 contract, design, and evidence summaries
-- refresh this CodeGraph report
+Current pre-commit Git worktree changes for this follow-up repair are limited to:
+
+- discard RAGFlow binding-decision semantics such as primary, auxiliary,
+  priority, and weight
+- add regression tests for English and Chinese binding-decision rejection
+- ignore local sensitive runtime config `真实配置.json`
+- refresh evidence reports, network summaries, screenshots, review ledgers, and
+  this CodeGraph report
+- keep old `8792 / trace_498493fb085144d8ac` browser evidence historical only
 
 After the final commit, `git status --short --untracked-files=all` must be
 empty before claiming final closure.
@@ -150,7 +168,7 @@ code does not read them directly.
 
 ## Reference Binding Status
 
-Latest contract behavior is unchanged by this HTTP invalid body correction:
+Latest contract behavior is unchanged by this RAGFlow evidence/contract repair:
 
 - `reference_id` must be unique.
 - `references[].url` must be HTTP(S).
@@ -276,35 +294,42 @@ and current acceptance artifacts.
 
 ## Current Browser Evidence
 
-Current browser run:
+Current accepted browser run:
 
 - Browser surface: Codex in-app Browser
-- Page: `http://127.0.0.1:8792/`
+- Page: `http://127.0.0.1:8793/`
 - Endpoint: `POST /api/v1/image-generations`
 - HTTP status: `200`
 - API status: `succeeded`
-- Trace id: `trace_498493fb085144d8ac`
-- Generation id: `gen_eb0bdb009b9842babe`
+- Trace id: `trace_5b17210c1a3a4d0587`
+- Generation id: `gen_2741feb461b843db9b`
 - Reference count: `0`
 - Image count: `1`
+- Image URL: `http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37`
 - Generated image route: `GET /api/v1/generated-images/:image_id`
-- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=3118845`, `Cache-Control=no-store`
+- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=1999538`, `Cache-Control=no-store`
+- Screenshot files: `evidence/screenshots/final-v1-4-contract-before-submit.png`
+  and `evidence/screenshots/final-v1-4-contract-after-submit.png`, both PNG.
+
+Historical browser/provider runs on port `8792`, including
+`trace_498493fb085144d8ac`, are earlier Final API service evidence and are not
+current acceptance evidence for the RAGFlow knowledge-driven template branch.
+Provider fluctuation probes after the accepted browser run are likewise not part
+of the accepted run.
 
 ## Test Results
 
-Final pre-commit command results:
+Fresh command results at `2026-06-11T09:30:15Z`:
 
 ```text
 npm run check: pass
-npm test: pass, 73 tests
-node --test tests/unit/http-invalid-body.test.js: pass, malformed and oversized body cases
+npm test: pass, 79 tests
 node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
 node tests/integration/final-v1-4-evidence.test.js: pass, FINAL_V1_4_EVIDENCE_SCAN_PASS
 git diff --check: pass
-python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-final-image-api-service.json: pass
-codegraph index --force: pass, indexed 24 files
-codegraph status --json: pass, pre-commit pendingChanges added=1 modified=0 removed=0 for the new indexed test file
-git status --short --untracked-files=all: expected evidence/report changes before commit
+python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json: pass
+codegraph sync . && codegraph status --json: pass, pendingChanges added=0 modified=0 removed=0
+git status --short --untracked-files=all: reviewed before commit; only intended branch changes present
 ```
 
 After the final commit, `git status --short --untracked-files=all` must be empty

@@ -1,37 +1,47 @@
 {
-  "status": "blocked_by_provider",
-  "checked_at": "2026-06-11T08:31:38Z",
-  "endpoint": "/api/v1/image-generations",
-  "method": "POST",
-  "browser_surface": "Codex-controlled Chrome",
-  "browser_plugin_fallback_reason": "Codex in-app Browser webview did not attach twice; Chrome was allowed by the request.",
-  "browser_submitted": true,
-  "post_result": {
+  "status": "PASS_ON_BRANCH",
+  "checked_at": "2026-06-11T09:14:02Z",
+  "accepted_run": {
+    "source": "real visible browser submission on http://127.0.0.1:8793/",
     "endpoint": "/api/v1/image-generations",
-    "http_status": 502,
-    "ok": false,
-    "status": "failed",
-    "error_code": "IMAGE_PROVIDER_CALL_FAILED",
+    "method": "POST",
+    "browser_surface": "Codex in-app Browser",
     "task_type": "character_multiview",
     "generation_mode": "text_to_image",
     "reference_count": 0,
-    "trace_id": "trace_38caff6d133c400289"
-  },
-  "provider_probe": {
-    "has_required_provider_config": true,
-    "base_url_host": "memefast.top",
-    "model_present": true,
-    "key_present": true,
-    "direct_upstream_http_status": 429,
-    "direct_upstream_error_summary": "upstream group saturated; retry later"
+    "http_status": 200,
+    "ok": true,
+    "api_status": "succeeded",
+    "trace_id": "trace_5b17210c1a3a4d0587",
+    "generation_id": "gen_2741feb461b843db9b",
+    "image_count": 1,
+    "images": [
+      {
+        "url": "http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37",
+        "format": "png"
+      }
+    ],
+    "visible_preview": true
   },
   "generated_image_get": {
-    "http_status": null,
-    "content_type": null,
-    "content_length": null,
-    "cache_control": null,
-    "png_magic": false,
-    "blocked_reason": "Provider did not return an image URL or bytes."
+    "url": "http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37",
+    "http_status": 200,
+    "content_type": "image/png",
+    "content_length": 1999538,
+    "cache_control": "no-store",
+    "png_magic": true
+  },
+  "provider": {
+    "has_required_provider_config": true,
+    "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
+    "accepted_run_used_real_provider": true,
+    "mock_success": false,
+    "raw_provider_probe_used_for_accepted_run": false
+  },
+  "screenshots": {
+    "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
+    "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png",
+    "file_format": "png"
   },
   "http_invalid_body": {
     "image_generation_malformed_json": "pass",
@@ -44,12 +54,7 @@
   "callback_delivery_attempted": false,
   "public_response_privacy_scan": "pass",
   "evidence_text_scan": "pass",
-  "browser_visual_e2e": "blocked_by_provider",
-  "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "screenshots": {
-    "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
-    "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png"
-  },
+  "browser_visual_e2e": "pass",
   "contract": {
     "structured_references_required": true,
     "url_only_reference_supported": false,
@@ -59,6 +64,7 @@
     "public_images_url_only": true,
     "mock_success": false,
     "high_concurrency_claim": false,
-    "professional_templates_knowledge_driven": true
+    "professional_templates_knowledge_driven": true,
+    "ragflow_binding_decision_discarded": true
   }
 }

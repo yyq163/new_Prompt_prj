@@ -1,12 +1,12 @@
 # CodeGraph Detailed Repository Report
 
-Date: 2026-06-10
+Date: 2026-06-11
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
-Baseline commit before evidence-chain correction: `0d7e945f0b57451075baf6a9851974ad45f71280`
+Baseline commit before HTTP invalid body correction: `abfcdb41bc4ee52538dc44c55ffcee552bfaf655`
 
-This report is refreshed before the final evidence-chain commit. The commit that
+This report is refreshed before the HTTP invalid body correction commit. The commit that
 contains this report must be verified after commit with `git log -1 --oneline`.
 The report therefore records the true pre-commit baseline and the true current
 index/worktree checks, rather than predicting a commit hash that would become
@@ -14,8 +14,8 @@ stale as soon as this file is committed.
 
 ## Verification State
 
-CodeGraph was refreshed from the project root and checked after the evidence
-cleanup.
+CodeGraph was refreshed from the project root and checked after the HTTP
+invalid body repair and evidence refresh.
 
 Commands run for this report refresh:
 
@@ -31,20 +31,26 @@ Latest CodeGraph status:
 {
   "initialized": true,
   "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
-  "fileCount": 23,
-  "nodeCount": 513,
-  "edgeCount": 1312,
+  "fileCount": 24,
+  "nodeCount": 529,
+  "edgeCount": 1342,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 1, "modified": 0, "removed": 0}
 }
 ```
 
-Current pre-commit Git worktree changes are limited to evidence/report cleanup:
+The pre-commit `pendingChanges.added=1` is the newly indexed
+`tests/unit/http-invalid-body.test.js`. After the final commit, CodeGraph status
+must be checked again and should report no pending changes.
 
+Current pre-commit Git worktree changes are limited to the P1 repair:
+
+- add HTTP invalid body short-circuiting in `server.js`
+- add HTTP layer invalid body tests
 - update current Final V1.4 browser screenshots
 - update Final V1.4 evidence summaries
-- remove old visual screenshots that are not part of the Final V1.4 browser run
+- document HTTP 400 `INVALID_REQUEST_SCHEMA` for malformed and oversized bodies
 - refresh this CodeGraph report
 
 After the final commit, `git status --short --untracked-files=all` must be
@@ -75,6 +81,7 @@ src/storage/trace-store.js
 tests/integration/final-v1-4-evidence.test.js
 tests/integration/provider-config.test.js
 tests/unit/ai-tu-prompt-optimizer.test.js
+tests/unit/http-invalid-body.test.js
 tests/unit/image-api.test.js
 ```
 
@@ -93,6 +100,11 @@ service does not import it at runtime.
 - `GET /api/v1/generated-images/:image_id`: temporary route for stored image bytes.
 - Legacy `/api/image-jobs` remains compatibility-only and is not a Final V1.4
   acceptance endpoint.
+
+Malformed JSON and oversized request bodies are rejected in `server.js` before
+the final image generation handler or prompt optimization handler runs. The
+public response is HTTP 400, `status=failed`, and
+`error_code=INVALID_REQUEST_SCHEMA`.
 
 ## Final V1.4 Main Chain
 
@@ -113,7 +125,7 @@ state, or credential material is returned.
 
 ## Reference Binding Status
 
-Latest contract behavior is unchanged by this evidence-chain correction:
+Latest contract behavior is unchanged by this HTTP invalid body correction:
 
 - `reference_id` must be unique.
 - `references[].url` must be HTTP(S).
@@ -241,17 +253,17 @@ and current acceptance artifacts.
 
 Current browser run:
 
-- Browser surface: Codex-controlled Chrome after Codex in-app Browser attach timeout
-- Page: `http://127.0.0.1:8791/`
+- Browser surface: Codex in-app Browser
+- Page: `http://127.0.0.1:8792/`
 - Endpoint: `POST /api/v1/image-generations`
 - HTTP status: `200`
 - API status: `succeeded`
-- Trace id: `trace_3d272cf798ba4bac96`
-- Generation id: `gen_1961e101c1a6419b8d`
-- Reference count: `3`
+- Trace id: `trace_498493fb085144d8ac`
+- Generation id: `gen_eb0bdb009b9842babe`
+- Reference count: `0`
 - Image count: `1`
 - Generated image route: `GET /api/v1/generated-images/:image_id`
-- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=3011403`, `Cache-Control=no-store`
+- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=3118845`, `Cache-Control=no-store`
 
 ## Test Results
 
@@ -259,12 +271,14 @@ Final pre-commit command results:
 
 ```text
 npm run check: pass
-npm test: pass, 71 tests
+npm test: pass, 73 tests
+node --test tests/unit/http-invalid-body.test.js: pass, malformed and oversized body cases
 node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
 node tests/integration/final-v1-4-evidence.test.js: pass, FINAL_V1_4_EVIDENCE_SCAN_PASS
 git diff --check: pass
 python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-final-image-api-service.json: pass
-codegraph status --json: pass, pendingChanges added=0 modified=0 removed=0
+codegraph index --force: pass, indexed 24 files
+codegraph status --json: pass, pre-commit pendingChanges added=1 modified=0 removed=0 for the new indexed test file
 git status --short --untracked-files=all: expected evidence/report changes before commit
 ```
 

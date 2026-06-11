@@ -4,7 +4,7 @@
   "method": "POST",
   "http_status": 200,
   "api_status": "succeeded",
-  "browser_surface": "Codex-controlled Chrome after Codex in-app Browser attach timeout",
+  "browser_surface": "Codex in-app Browser",
   "browser_submitted": true,
   "post_result": {
     "endpoint": "/api/v1/image-generations",
@@ -12,13 +12,21 @@
     "ok": true,
     "status": "succeeded",
     "image_count": 1,
-    "reference_count": 3
+    "reference_count": 0
   },
   "generated_image_get": {
     "http_status": 200,
     "content_type": "image/png",
-    "content_length": 3011403,
-    "cache_control": "no-store"
+    "content_length": 3118845,
+    "cache_control": "no-store",
+    "png_magic": true
+  },
+  "http_invalid_body": {
+    "image_generation_malformed_json": "pass",
+    "image_generation_oversized_body": "pass",
+    "prompt_optimization_malformed_json": "pass",
+    "prompt_optimization_oversized_body": "pass",
+    "error_code": "INVALID_REQUEST_SCHEMA"
   },
   "callback_public_url_validation": "pass",
   "callback_delivery_attempted": false,
@@ -26,10 +34,10 @@
   "evidence_text_scan": "pass",
   "browser_visual_e2e": "pass",
   "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "trace_id": "trace_3d272cf798ba4bac96",
-  "generation_id": "gen_1961e101c1a6419b8d",
-  "generated_image_id": "img_8faafe2617834d35bbdd0d558858979a",
-  "browser_page": "http://127.0.0.1:8791/",
+  "trace_id": "trace_498493fb085144d8ac",
+  "generation_id": "gen_eb0bdb009b9842babe",
+  "generated_image_id": "img_f95359394abc49bcb5be11f025bc86ea",
+  "browser_page": "http://127.0.0.1:8792/",
   "screenshots": {
     "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
     "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png"

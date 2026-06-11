@@ -1,43 +1,55 @@
 # Final V1.4 Fix Evidence
 
-Date: 2026-06-10
+Date: 2026-06-11
 
-Status: pass after strict local checks and browser rerun
+Status: pass after HTTP invalid body repair, local checks, and browser rerun
 
-## Checks
+## P1 Repair
 
-- Contract endpoint checks: pass
-- Callback public URL validation: pass
-- Callback non-delivery behavior: pass
-- Generated image GET metadata: pass
-- Public response privacy scan: pass
-- Evidence text scan: pass
-- Browser visual E2E: pass
-- Provider configuration integration: pass
-- Whitespace diff check: pass
+- `POST /api/v1/image-generations` now rejects malformed JSON at the HTTP layer with `400 INVALID_REQUEST_SCHEMA`.
+- `POST /api/v1/image-generations` now rejects oversized request bodies at the HTTP layer with `400 INVALID_REQUEST_SCHEMA`.
+- `POST /api/v1/prompt-optimizations` now uses the same HTTP invalid body handling.
+- Deprecated `/api/image-jobs` keeps its compatibility behavior while sharing the same invalid body check.
+- Invalid body responses return only safe public error fields.
+
+## HTTP Invalid Body Tests
+
+- Image generation malformed JSON: pass, message contains `请求体不是合法 JSON`.
+- Image generation oversized body: pass, message contains `请求体过大`.
+- Prompt optimization malformed JSON: pass, message contains `请求体不是合法 JSON`.
+- Prompt optimization oversized body: pass, message contains `请求体过大`.
+- Legal Final V1.4 JSON still enters the normal provider-gated path: pass.
+- Public error response leak scan: pass.
+
+Command:
+
+```bash
+node --test tests/unit/http-invalid-body.test.js
+```
 
 ## Browser
 
-- Page: `http://127.0.0.1:8791/`
-- Browser surface: Codex-controlled Chrome browser after Codex in-app Browser attach timeout
+- Page: `http://127.0.0.1:8792/`
+- Browser surface: Codex in-app Browser
 - Screenshot: `evidence/screenshots/final-v1-4-contract-after-submit.png`
 - Pre-submit screenshot: `evidence/screenshots/final-v1-4-contract-before-submit.png`
 - Visible result: succeeded with generated image preview
-- Trace id: `trace_3d272cf798ba4bac96`
-- Generation id: `gen_1961e101c1a6419b8d`
+- Trace id: `trace_498493fb085144d8ac`
+- Generation id: `gen_eb0bdb009b9842babe`
 
 ## Generated Image GET
 
+- Image id: `img_f95359394abc49bcb5be11f025bc86ea`
 - HTTP status: `200`
 - Content type: `image/png`
 - Cache control: `no-store`
-- Content length: `3011403`
+- Content length: `3118845`
 
 ## Callback
 
-- Public HTTPS callback URL accepted: `true`
-- Local and private callback URLs rejected: `true`
-- Unsafe callback schemes rejected: `true`
+- Public HTTPS callback URL accepted by contract tests: `true`
+- Local and private callback URLs rejected by contract tests: `true`
+- Unsafe callback schemes rejected by contract tests: `true`
 - Callback delivery attempted: `false`
 - Callback task returned: `false`
 
@@ -50,7 +62,7 @@ Status: pass after strict local checks and browser rerun
 - Legacy client `usage` input remains ignored.
 - Public image output remains URL-only.
 - Provider success is not mocked.
-- Production public base URL configuration is enforced for service-generated image URLs.
+- Production public base URL configuration remains enforced for service-generated image URLs.
 - Legacy route is deprecated and not a final acceptance endpoint.
 - Industrial concurrency is not claimed.
 
@@ -58,5 +70,4 @@ Status: pass after strict local checks and browser rerun
 
 - `evidence/visual-e2e-report.md` describes the current Final V1.4 browser run.
 - `evidence/final-v1-4-network-summary.json` and `evidence/network-summary.json` describe the same run.
-- `evidence/screenshots/` keeps only the two current Final V1.4 browser screenshots.
-- Ignored old visual result data and old visual screenshots were removed from the local evidence tree.
+- `evidence/screenshots/` keeps the current Final V1.4 browser screenshots.

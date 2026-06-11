@@ -42,11 +42,15 @@ async function route(request, response) {
   }
   if (request.method === "POST" && url.pathname === "/api/v1/image-generations") {
     const body = await readJson(request);
+    const invalid = invalidJsonPayload(body);
+    if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
     const result = await handleImageGeneration(body);
     return sendJson(response, result.statusCode, result.payload);
   }
   if (request.method === "POST" && (url.pathname === "/api/prompt-optimizer" || url.pathname === "/api/v1/prompt-optimizations")) {
     const body = await readJson(request);
+    const invalid = invalidJsonPayload(body);
+    if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
     const result = await handlePromptOptimization(body);
     return sendJson(response, result.statusCode, result.payload);
   }
@@ -96,12 +100,13 @@ async function serveStatic(pathname, response) {
 
 async function createLegacyImageJob(body) {
   try {
-    if (body && body.__invalid) {
+    const invalid = invalidJsonPayload(body);
+    if (invalid) {
       throw new ImageApiError({
-        statusCode: 400,
-        status: "failed",
-        errorCode: body.error_code || "INVALID_REQUEST_SCHEMA",
-        message: body.message || "请求体不是合法 JSON。"
+        statusCode: invalid.statusCode,
+        status: invalid.payload.status,
+        errorCode: invalid.payload.error_code,
+        message: invalid.payload.message
       });
     }
     const request = normalizeLegacyImageJobRequest(body);
@@ -288,6 +293,21 @@ async function readJson(request) {
       message: "请求体不是合法 JSON。"
     };
   }
+}
+
+function invalidJsonPayload(body) {
+  if (!body || body.__invalid !== true) return null;
+  return {
+    statusCode: 400,
+    payload: {
+      request_id: "",
+      status: "failed",
+      error_code: "INVALID_REQUEST_SCHEMA",
+      message: typeof body.message === "string" && body.message.trim()
+        ? body.message.trim()
+        : "请求体不是合法 JSON。"
+    }
+  };
 }
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {

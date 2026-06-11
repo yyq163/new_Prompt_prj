@@ -14,6 +14,8 @@ npm start
 - 健康检查：`http://127.0.0.1:8787/health`
 - API：`POST http://127.0.0.1:8787/api/v1/image-generations`
 
+HTTP 请求体必须是合法 JSON，且不能超过 `MAX_BODY_SIZE`。非法 JSON 或超大请求体会在 HTTP 层直接返回 `400 INVALID_REQUEST_SCHEMA`，不会进入 provider 调用。
+
 ## Provider 配置
 
 服务优先从环境变量读取真实 provider 配置；如果未设置，则只读读取 `ai-tu/runtime-config.json`，也可以用 `AI_TU_RUNTIME_CONFIG_FILE` 指向 ai-tu 的运行时配置文件。

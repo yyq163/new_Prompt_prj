@@ -4,6 +4,10 @@
 
 Final image generation API. The request body is JSON only.
 
+Malformed JSON and request bodies over `MAX_BODY_SIZE` return HTTP 400 with
+`status: "failed"` and `error_code: "INVALID_REQUEST_SCHEMA"` before request
+normalization or provider execution.
+
 ### Request Fields
 
 Required:

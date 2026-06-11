@@ -7,10 +7,10 @@ import { handleImageGeneration } from "../../src/routes/image-generations.js";
 import { resolveGeneratedImagePublicBaseUrl } from "../../src/routes/image-generations.js";
 import { extractEntityMentions } from "../../src/core/entity-mentions.js";
 import { resolveReferences } from "../../src/core/reference-binding.js";
-import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS } from "../../src/core/runtime.js";
+import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS, TYPE_SCHEMAS } from "../../src/core/runtime.js";
 import { VALID_ENTITY_TYPES, VALID_REFERENCE_ROLES } from "../../src/core/labels.js";
 import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
-import { inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
+import { compilePrompt, inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "../../src/core/legacy-api.js";
 import {
   defaultProviderConfig,
@@ -415,6 +415,130 @@ test("storyboard complete prompt preserve path", () => {
   assert.equal(path, "preserve_full_prompt");
 });
 
+test("Prompt Compiler fallback does not invent professional multiview templates", () => {
+  const fallbackCases = [
+    {
+      task_type: "character_multiview",
+      prompt: "生成一名银发医师的角色设定。",
+      absent: ["4 格", "4格", "头部特写", "侧面", "背面", "A 字站姿", "纯色背景"]
+    },
+    {
+      task_type: "scene_multiview",
+      prompt: "生成一座雪夜医馆的场景参考。",
+      absent: ["3×3", "3x3", "多机位", "全景镜头", "平面布局图", "俯视", "分镜示意"]
+    },
+    {
+      task_type: "prop_multiview",
+      prompt: "生成一枚铜镜的道具参考。",
+      absent: ["正面、侧面、背面", "正面", "侧面", "背面", "顶视", "底部结构", "材质特写", "纹样特写", "使用状态图", "比例图"]
+    },
+    {
+      task_type: "storyboard",
+      prompt: "少女推开门，看见雪夜烛火。",
+      absent: ["左侧规划区", "右侧剧情宫格", "场景走位示意图", "氛围概念图", "光影变化示意"]
+    }
+  ];
+
+  for (const item of fallbackCases) {
+    const request = normalizeRequest({ task_type: item.task_type, prompt: item.prompt, references: [] });
+    const compiled = compilePrompt({ request, binding: emptyBinding(), enhancement: null });
+    for (const phrase of item.absent) {
+      assert.equal(compiled.compiled_prompt.includes(phrase), false, `${item.task_type} fallback leaked ${phrase}`);
+    }
+  }
+
+  const storyboard = compilePrompt({
+    request: normalizeRequest({ task_type: "storyboard", prompt: "少女推开门，看见雪夜烛火。", references: [] }),
+    binding: emptyBinding(),
+    enhancement: null
+  });
+  assert.equal(storyboard.storyboard_path, "fallback_generic_storyboard_minimal");
+  assert.match(storyboard.compiled_prompt, /不默认固定 shot 数量/);
+  assert.match(storyboard.compiled_prompt, /不默认固定.*3×3/);
+});
+
+test("Prompt Compiler appends knowledge-driven enhancement fields including missing constraints", () => {
+  const character = compilePrompt({
+    request: normalizeRequest({ task_type: "character_multiview", prompt: "生成 @萧昭宁 的角色设定。", references: [characterRef()] }),
+    binding: bindingFor({ task_type: "character_multiview", prompt: "生成 @萧昭宁 的角色设定。", references: [characterRef()] }),
+    enhancement: {
+      composition_notes: "知识库命中：四视图横向参考板，保持正侧背和头部信息一致。",
+      missing_constraints: ["需要补充服饰时代边界"]
+    }
+  });
+  assert.match(character.compiled_prompt, /四视图横向参考板/);
+  assert.match(character.compiled_prompt, /missing_constraints/);
+  assert.match(character.compiled_prompt, /服饰时代边界/);
+
+  const scene = compilePrompt({
+    request: normalizeRequest({ task_type: "scene_multiview", prompt: "生成 @营帐 的场景参考。", references: [sceneRef()] }),
+    binding: bindingFor({ task_type: "scene_multiview", prompt: "生成 @营帐 的场景参考。", references: [sceneRef()] }),
+    enhancement: {
+      scene_summary: "雪夜营帐",
+      composition_notes: "知识库命中：3×3 多机位空间参考板。"
+    }
+  });
+  assert.match(scene.compiled_prompt, /3×3 多机位空间参考板/);
+
+  const prop = compilePrompt({
+    request: normalizeRequest({ task_type: "prop_multiview", prompt: "生成 @铜镜 的道具参考。", references: [propRef()] }),
+    binding: bindingFor({ task_type: "prop_multiview", prompt: "生成 @铜镜 的道具参考。", references: [propRef()] }),
+    enhancement: {
+      visual_focus: "铜镜轮廓",
+      composition_notes: "知识库命中：多角度结构、材质特写、纹样特写。"
+    }
+  });
+  assert.match(prop.compiled_prompt, /多角度结构/);
+  assert.match(prop.compiled_prompt, /材质特写/);
+
+  const storyboardShotPlan = compilePrompt({
+    request: normalizeRequest({ task_type: "storyboard", prompt: "少女推门入营。", references: [] }),
+    binding: emptyBinding(),
+    enhancement: {
+      storyboard_processing: "script_to_storyboard",
+      shot_plan: ["镜头1 推门", "镜头2 看见烛火"],
+      lighting_notes: "冷暖对比"
+    }
+  });
+  assert.equal(storyboardShotPlan.storyboard_path, "script_to_storyboard");
+  assert.match(storyboardShotPlan.compiled_prompt, /镜头1 推门/);
+  assert.match(storyboardShotPlan.compiled_prompt, /冷暖对比/);
+
+  const normalized = compilePrompt({
+    request: normalizeRequest({ task_type: "storyboard", prompt: "镜头1：推门\n镜头2：回头", references: [] }),
+    binding: emptyBinding(),
+    enhancement: {
+      storyboard_processing: "normalize_shot_list",
+      normalized_shot_plan: [
+        { original_order: 1, core_action: "推门" },
+        { original_order: 2, core_action: "回头" }
+      ]
+    }
+  });
+  assert.equal(normalized.storyboard_path, "normalized_existing_shots");
+  assert.match(normalized.compiled_prompt, /"original_order":1/);
+  assert.ok(normalized.compiled_prompt.indexOf("推门") < normalized.compiled_prompt.indexOf("回头"));
+
+  const preserve = compilePrompt({
+    request: normalizeRequest({ task_type: "storyboard", prompt: "完整故事板提示词，保留全部结构。", references: [] }),
+    binding: emptyBinding(),
+    enhancement: {
+      storyboard_processing: "preserve_full_prompt",
+      missing_constraints: ["知识库未命中具体布局，保留用户原文"]
+    }
+  });
+  assert.equal(preserve.storyboard_path, "preserve_full_prompt");
+  assert.match(preserve.compiled_prompt, /保留用户原文/);
+});
+
+test("RagflowEnhancement schema includes missing_constraints without public exposure", () => {
+  assert.ok(TYPE_SCHEMAS.RagflowEnhancement.fields.includes("missing_constraints"));
+  assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("input_analysis"));
+  assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("storyboard_processing"));
+  assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("storyboard_path"));
+  assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("enhancement"));
+});
+
 test("usage field is accepted but ignored and never returned", () => {
   const request = normalizeRequest({
     task_type: "image_reference",
@@ -448,12 +572,100 @@ test("RAGFlow output final_prompt is discarded", () => {
   assert.equal(validation.discarded, "prompt_leak");
 });
 
+test("RAGFlow output compiled_prompt is discarded", () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
+  const validation = validateEnhancement(JSON.stringify({ compiled_prompt: "secret" }), { request, binding: { resolved_references: [] } });
+  assert.equal(validation.enhancement, null);
+  assert.equal(validation.discarded, "prompt_leak");
+});
+
 test("RAGFlow unauthorized reference_id is discarded", () => {
   const request = normalizeRequest({ task_type: "image_reference", prompt: "参考 @萧昭宁", references: [characterRef()] });
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));
   const validation = validateEnhancement({ reference_id: "ref_other" }, { request, binding });
   assert.equal(validation.enhancement, null);
-  assert.equal(validation.discarded, "unauthorized_reference");
+  assert.equal(validation.discarded, "reference_emitted");
+});
+
+test("RAGFlow may not emit any reference id URL or unknown enhancement fields", () => {
+  const request = normalizeRequest({ task_type: "image_reference", prompt: "参考 @萧昭宁", references: [characterRef()] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  const knownUrl = binding.resolved_references[0].url;
+  const cases = [
+    [{ reference_id: "ref_char" }, "reference_emitted"],
+    [{ reference_ids: ["ref_char"] }, "reference_emitted"],
+    [{ composition_notes: `match ${knownUrl}` }, "url_emitted"],
+    [{ composition_notes: "inline data:image/png;base64,abc" }, "url_emitted"],
+    [{ composition_notes: "local file:///tmp/reference.png" }, "url_emitted"],
+    [{ composition_notes: "remote ftp://example.com/reference.png" }, "url_emitted"],
+    [{ template_guidance: "not allowed" }, "unknown_field"]
+  ];
+
+  for (const [enhancement, discarded] of cases) {
+    const validation = validateEnhancement(enhancement, { request, binding });
+    assert.equal(validation.enhancement, null);
+    assert.equal(validation.discarded, discarded);
+  }
+});
+
+test("RAGFlow binding decision semantics are discarded", () => {
+  const request = normalizeRequest({ task_type: "character_multiview", prompt: "参考 @萧昭宁", references: [characterRef()] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  const cases = [
+    { composition_notes: "Use ref_x as primary reference and ref_y as auxiliary." },
+    { composition_notes: "把 ref_x 作为主参考，ref_y 作为辅参考。" },
+    { composition_notes: "按 0.8 权重处理第一张参考图。" },
+    { reference_weight: { ref_x: 0.8 } },
+    { priority: ["ref_x"] }
+  ];
+
+  for (const enhancement of cases) {
+    const validation = validateEnhancement(enhancement, { request, binding });
+    assert.equal(validation.enhancement, null);
+    assert.equal(validation.discarded, "binding_decision");
+  }
+});
+
+test("RAGFlow unauthorized URL non JSON array and internal negative notes are discarded", () => {
+  const request = normalizeRequest({ task_type: "image_reference", prompt: "参考 @萧昭宁", references: [characterRef()] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+
+  assert.deepEqual(
+    validateEnhancement({ composition_notes: "see https://unknown.example.com/a.png" }, { request, binding }),
+    { enhancement: null, discarded: "url_emitted" }
+  );
+  assert.deepEqual(
+    validateEnhancement("not-json", { request, binding }),
+    { enhancement: null, discarded: "non_json" }
+  );
+  assert.deepEqual(
+    validateEnhancement([{ composition_notes: "array is invalid" }], { request, binding }),
+    { enhancement: null, discarded: "not_object" }
+  );
+  assert.deepEqual(
+    validateEnhancement({ negative_notes: "不要暴露 compiled_prompt 或 fallback 状态" }, { request, binding }),
+    { enhancement: null, discarded: "internal_terms" }
+  );
+});
+
+test("RAGFlow internal implementation terms are discarded across enhancement fields", () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
+  const binding = { resolved_references: [] };
+  const cases = [
+    { composition_notes: "Do not mention RAGFlow retrieval state." },
+    { visual_focus: "避免暴露本地模板处理。" },
+    { missing_constraints: ["不要输出 fallback 状态。"] },
+    { nested: { note: "provider_internal_payload must stay hidden." } },
+    { nested: { note: "compiled_prompt should not be exposed." } },
+    { nested: { note: "final_prompt should not be exposed." } }
+  ];
+
+  for (const enhancement of cases) {
+    assert.deepEqual(
+      validateEnhancement(enhancement, { request, binding }),
+      { enhancement: null, discarded: "internal_terms" }
+    );
+  }
 });
 
 test("duplicate reference_id fails", async () => {
@@ -884,6 +1096,24 @@ function call(body, options = {}) {
     }),
     ...options
   });
+}
+
+function bindingFor(body) {
+  const request = normalizeRequest({
+    reference_policy: { unbound_entity: "warn" },
+    output: { count: 1, aspect_ratio: "16:9", quality: "high" },
+    ...body
+  });
+  return resolveReferences(request, extractEntityMentions(request.prompt));
+}
+
+function emptyBinding() {
+  return {
+    entity_mentions: [],
+    resolved_references: [],
+    references_used: [],
+    warnings: []
+  };
 }
 
 function characterRef(overrides = {}) {

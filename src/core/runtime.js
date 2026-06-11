@@ -38,7 +38,7 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["status", "images"]
   },
   RagflowEnhancement: {
-    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "input_analysis", "storyboard_processing"]
+    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints", "input_analysis", "storyboard_processing"]
   }
 });
 

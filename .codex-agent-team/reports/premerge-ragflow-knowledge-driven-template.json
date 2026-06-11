@@ -1,0 +1,27 @@
+{
+  "taskId": "T1-ragflow-knowledge-driven-template-premerge",
+  "status": "pre_merge_repair_pass_pending_clean_head",
+  "reviewed_at": "2026-06-11T10:10:00Z",
+  "findings": [],
+  "blocking_items": [
+    "Feature repair must be committed and pre-merge checks rerun on clean feature HEAD before main merge."
+  ],
+  "subagent_reviews": {
+    "code_reviewer": "PASS after full-tree internal term repair",
+    "contract_reviewer": "PASS after reference/url/unknown-field repair and URL-like payload repair",
+    "test_reviewer": "second review pending after new tests",
+    "browser_qa": "PASS required text_image flow; optional reference upload probe returned 404 and is not accepted evidence",
+    "security_reviewer": "PASS",
+    "final_integrator": "must rerun after clean feature HEAD"
+  },
+  "browser_evidence": {
+    "trace_id": "trace_887e122c9c2f4e2cbb",
+    "generation_id": "gen_bbea9b38bed64989b8",
+    "image_url": "http://127.0.0.1:8793/api/v1/generated-images/img_38cc4787b590474993dc837637292a60",
+    "get_http_status": 200,
+    "content_type": "image/png",
+    "cache_control": "no-store",
+    "preview_visible": true,
+    "old_api_request_count": 0
+  }
+}

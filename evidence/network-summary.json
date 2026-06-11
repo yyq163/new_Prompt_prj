@@ -1,25 +1,47 @@
 {
-  "status": "pass",
-  "endpoint": "/api/v1/image-generations",
-  "method": "POST",
-  "http_status": 200,
-  "api_status": "succeeded",
-  "browser_surface": "Codex in-app Browser",
-  "browser_submitted": true,
-  "post_result": {
+  "status": "PASS_ON_BRANCH",
+  "checked_at": "2026-06-11T09:14:02Z",
+  "accepted_run": {
+    "source": "real visible browser submission on http://127.0.0.1:8793/",
     "endpoint": "/api/v1/image-generations",
+    "method": "POST",
+    "browser_surface": "Codex in-app Browser",
+    "task_type": "character_multiview",
+    "generation_mode": "text_to_image",
+    "reference_count": 0,
     "http_status": 200,
     "ok": true,
-    "status": "succeeded",
+    "api_status": "succeeded",
+    "trace_id": "trace_5b17210c1a3a4d0587",
+    "generation_id": "gen_2741feb461b843db9b",
     "image_count": 1,
-    "reference_count": 0
+    "images": [
+      {
+        "url": "http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37",
+        "format": "png"
+      }
+    ],
+    "visible_preview": true
   },
   "generated_image_get": {
+    "url": "http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37",
     "http_status": 200,
     "content_type": "image/png",
-    "content_length": 3118845,
+    "content_length": 1999538,
     "cache_control": "no-store",
     "png_magic": true
+  },
+  "provider": {
+    "has_required_provider_config": true,
+    "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
+    "accepted_run_used_real_provider": true,
+    "mock_success": false,
+    "raw_provider_probe_used_for_accepted_run": false
+  },
+  "screenshots": {
+    "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
+    "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png",
+    "file_format": "png"
   },
   "http_invalid_body": {
     "image_generation_malformed_json": "pass",
@@ -33,15 +55,6 @@
   "public_response_privacy_scan": "pass",
   "evidence_text_scan": "pass",
   "browser_visual_e2e": "pass",
-  "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "trace_id": "trace_498493fb085144d8ac",
-  "generation_id": "gen_eb0bdb009b9842babe",
-  "generated_image_id": "img_f95359394abc49bcb5be11f025bc86ea",
-  "browser_page": "http://127.0.0.1:8792/",
-  "screenshots": {
-    "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
-    "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png"
-  },
   "contract": {
     "structured_references_required": true,
     "url_only_reference_supported": false,
@@ -50,6 +63,8 @@
     "usage_ignored": true,
     "public_images_url_only": true,
     "mock_success": false,
-    "high_concurrency_claim": false
+    "high_concurrency_claim": false,
+    "professional_templates_knowledge_driven": true,
+    "ragflow_binding_decision_discarded": true
   }
 }

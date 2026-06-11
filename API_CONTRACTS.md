@@ -148,9 +148,11 @@ include:
 - `storyboard_processing`
 
 The API discards unsafe enhancement when it leaks `final_prompt` or
-`compiled_prompt`, references unknown IDs, introduces unknown URLs, returns a
-non-object or non-JSON value, changes explicit shot-list count/order, or places
-internal implementation language in `negative_notes`.
+`compiled_prompt`, emits any `reference_id` / `reference_ids`, emits any URL,
+uses fields outside `TYPE_SCHEMAS.RagflowEnhancement`, returns a non-object or
+non-JSON value, changes explicit shot-list count/order, carries primary /
+auxiliary / weight / priority binding semantics, or places internal
+implementation language in any enhancement field.
 
 ### Legacy route
 

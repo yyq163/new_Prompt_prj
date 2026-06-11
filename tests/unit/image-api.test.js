@@ -584,7 +584,28 @@ test("RAGFlow unauthorized reference_id is discarded", () => {
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));
   const validation = validateEnhancement({ reference_id: "ref_other" }, { request, binding });
   assert.equal(validation.enhancement, null);
-  assert.equal(validation.discarded, "unauthorized_reference");
+  assert.equal(validation.discarded, "reference_emitted");
+});
+
+test("RAGFlow may not emit any reference id URL or unknown enhancement fields", () => {
+  const request = normalizeRequest({ task_type: "image_reference", prompt: "参考 @萧昭宁", references: [characterRef()] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  const knownUrl = binding.resolved_references[0].url;
+  const cases = [
+    [{ reference_id: "ref_char" }, "reference_emitted"],
+    [{ reference_ids: ["ref_char"] }, "reference_emitted"],
+    [{ composition_notes: `match ${knownUrl}` }, "url_emitted"],
+    [{ composition_notes: "inline data:image/png;base64,abc" }, "url_emitted"],
+    [{ composition_notes: "local file:///tmp/reference.png" }, "url_emitted"],
+    [{ composition_notes: "remote ftp://example.com/reference.png" }, "url_emitted"],
+    [{ template_guidance: "not allowed" }, "unknown_field"]
+  ];
+
+  for (const [enhancement, discarded] of cases) {
+    const validation = validateEnhancement(enhancement, { request, binding });
+    assert.equal(validation.enhancement, null);
+    assert.equal(validation.discarded, discarded);
+  }
 });
 
 test("RAGFlow binding decision semantics are discarded", () => {
@@ -611,7 +632,7 @@ test("RAGFlow unauthorized URL non JSON array and internal negative notes are di
 
   assert.deepEqual(
     validateEnhancement({ composition_notes: "see https://unknown.example.com/a.png" }, { request, binding }),
-    { enhancement: null, discarded: "unauthorized_url" }
+    { enhancement: null, discarded: "url_emitted" }
   );
   assert.deepEqual(
     validateEnhancement("not-json", { request, binding }),
@@ -623,8 +644,28 @@ test("RAGFlow unauthorized URL non JSON array and internal negative notes are di
   );
   assert.deepEqual(
     validateEnhancement({ negative_notes: "不要暴露 compiled_prompt 或 fallback 状态" }, { request, binding }),
-    { enhancement: null, discarded: "internal_negative_notes" }
+    { enhancement: null, discarded: "internal_terms" }
   );
+});
+
+test("RAGFlow internal implementation terms are discarded across enhancement fields", () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
+  const binding = { resolved_references: [] };
+  const cases = [
+    { composition_notes: "Do not mention RAGFlow retrieval state." },
+    { visual_focus: "避免暴露本地模板处理。" },
+    { missing_constraints: ["不要输出 fallback 状态。"] },
+    { nested: { note: "provider_internal_payload must stay hidden." } },
+    { nested: { note: "compiled_prompt should not be exposed." } },
+    { nested: { note: "final_prompt should not be exposed." } }
+  ];
+
+  for (const enhancement of cases) {
+    assert.deepEqual(
+      validateEnhancement(enhancement, { request, binding }),
+      { enhancement: null, discarded: "internal_terms" }
+    );
+  }
 });
 
 test("duplicate reference_id fails", async () => {

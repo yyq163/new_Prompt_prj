@@ -1,8 +1,9 @@
-import { walk } from "./runtime.js";
+import { TYPE_SCHEMAS, walk } from "./runtime.js";
 
 const DEFAULT_MAX_ENHANCEMENT_CHARS = 12000;
 const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|provider_internal_payload/i;
 const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
+const ALLOWED_TOP_LEVEL_FIELDS = new Set(TYPE_SCHEMAS.RagflowEnhancement.fields);
 
 export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch } = {}) {
   const endpoint = String(process.env.RAGFLOW_ENHANCEMENT_URL || "").trim();
@@ -52,16 +53,56 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   if (serialized.length > maxChars) return { enhancement: null, discarded: "too_long" };
 
   if (containsForbiddenPromptField(value)) return { enhancement: null, discarded: "prompt_leak" };
-  if (containsUnauthorizedReference(value, binding)) return { enhancement: null, discarded: "unauthorized_reference" };
-  if (containsUnauthorizedUrl(value, binding)) return { enhancement: null, discarded: "unauthorized_url" };
+  if (containsReferenceEmission(value)) return { enhancement: null, discarded: "reference_emitted" };
+  if (containsUrl(value)) return { enhancement: null, discarded: "url_emitted" };
   if (containsBindingDecision(value)) return { enhancement: null, discarded: "binding_decision" };
+  if (containsInternalTerms(value)) return { enhancement: null, discarded: "internal_terms" };
+  if (containsUnknownTopLevelField(value)) return { enhancement: null, discarded: "unknown_field" };
   if (!validStoryboardShape(value)) return { enhancement: null, discarded: "invalid_storyboard_shape" };
   if (!preservesShotList(value, request)) return { enhancement: null, discarded: "shot_plan_changed" };
-  if (typeof value.negative_notes === "string" && INTERNAL_TERMS.test(value.negative_notes)) {
-    return { enhancement: null, discarded: "internal_negative_notes" };
-  }
 
   return { enhancement: structuredCloneSafe(value), discarded: "" };
+}
+
+function containsUnknownTopLevelField(value) {
+  return Object.keys(value).some((key) => !ALLOWED_TOP_LEVEL_FIELDS.has(key));
+}
+
+function containsReferenceEmission(value) {
+  let found = false;
+  walk(value, (node) => {
+    if (found || !node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      if (/^reference_ids?$/.test(key)) {
+        found = true;
+        return;
+      }
+    }
+  });
+  return found;
+}
+
+function containsUrl(value) {
+  return /(?:https?|ftp):\/\/|file:\/\/|data:image/i.test(JSON.stringify(value));
+}
+
+function containsInternalTerms(value) {
+  let found = false;
+  walk(value, (node) => {
+    if (found || node == null) return;
+    if (typeof node === "string") {
+      if (INTERNAL_TERMS.test(node)) found = true;
+      return;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      if (INTERNAL_TERMS.test(key)) {
+        found = true;
+        return;
+      }
+    }
+  });
+  return found;
 }
 
 function containsBindingDecision(value) {
@@ -92,29 +133,6 @@ function containsForbiddenPromptField(value) {
     }
   });
   return found;
-}
-
-function containsUnauthorizedReference(value, binding) {
-  const allowed = new Set((binding?.resolved_references || []).map((item) => item.reference_id));
-  let found = false;
-  walk(value, (node) => {
-    if (!node || typeof node !== "object" || Array.isArray(node)) return;
-    for (const [key, raw] of Object.entries(node)) {
-      if (!/^reference_ids?$/.test(key)) continue;
-      const ids = Array.isArray(raw) ? raw : [raw];
-      for (const id of ids) {
-        if (typeof id === "string" && id && !allowed.has(id)) found = true;
-      }
-    }
-  });
-  return found;
-}
-
-function containsUnauthorizedUrl(value, binding) {
-  const allowed = new Set((binding?.resolved_references || []).map((item) => item.url).filter(Boolean));
-  const serialized = JSON.stringify(value);
-  const urls = serialized.match(/https?:\/\/[^"\\\s]+/gi) || [];
-  return urls.some((url) => !allowed.has(url));
 }
 
 function validStoryboardShape(value) {

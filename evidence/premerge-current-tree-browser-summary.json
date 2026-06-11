@@ -1,0 +1,63 @@
+{
+  "status": "PASS_CORE_TEXT_IMAGE_CURRENT_TREE",
+  "checked_at": "2026-06-11T10:06:00Z",
+  "browser_surface": "Playwright headed browser with system Chrome",
+  "page": "http://127.0.0.1:8793/",
+  "used_local_real_config": true,
+  "sensitive_values_written": false,
+  "text_image_flow": {
+    "endpoint": "/api/v1/image-generations",
+    "method": "POST",
+    "http_status": 200,
+    "api_status": "succeeded",
+    "task_type": "text_image",
+    "generation_mode": "text_to_image",
+    "trace_id": "trace_887e122c9c2f4e2cbb",
+    "request_id": "req_da8df564b9d5472981",
+    "generation_id": "gen_bbea9b38bed64989b8",
+    "image_count": 1,
+    "first_image": {
+      "image_id": "img_38cc4787b590474993dc837637292a60",
+      "url": "http://127.0.0.1:8793/api/v1/generated-images/img_38cc4787b590474993dc837637292a60",
+      "width": 0,
+      "height": 0,
+      "format": "png"
+    },
+    "ui_preview_visible": true,
+    "preview_natural_width": 1824,
+    "preview_natural_height": 1024,
+    "final_api_network_event": {
+      "method": "POST",
+      "endpoint": "/api/v1/image-generations",
+      "status": 200,
+      "ok": true
+    },
+    "old_api_request_count": 0,
+    "forbidden_public_fields_present": false
+  },
+  "generated_image_get": {
+    "url": "http://127.0.0.1:8793/api/v1/generated-images/img_38cc4787b590474993dc837637292a60",
+    "http": 200,
+    "contentType": "image/png",
+    "cacheControl": "no-store",
+    "contentLengthHeader": "1949856",
+    "bodyBytes": 1949856,
+    "firstBytesHex": "89504e470d0a1a0a0000000d"
+  },
+  "screenshots": {
+    "before_submit": "evidence/screenshots/premerge-current-tree-before-submit.png",
+    "after_submit_preview": "evidence/screenshots/premerge-current-tree-after-submit-preview.png"
+  },
+  "reference_upload_probe": {
+    "attempted": true,
+    "result": "BLOCKED_ENDPOINT_NOT_IMPLEMENTED_ON_ROOT_SERVICE",
+    "endpoint": "/api/reference-images",
+    "http_status": 404,
+    "note": "Local reference upload was attempted by Browser QA using an enumerated local test image; the root final service returned 404, so this optional reference-upload probe is not used as acceptance evidence for the required text_image flow."
+  },
+  "provider": {
+    "mock_success": false,
+    "run_mock_upstream": false,
+    "direct_provider_bypass": false
+  }
+}

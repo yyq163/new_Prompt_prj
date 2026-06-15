@@ -27,10 +27,18 @@ cycle.
   public status succeeded, one image, generated-image GET 200, image content
   type, and no-store cache control.
 - This file does not claim main release PASS or authorize pushing `main`.
-- Screenshots are local-only and not tracked.
+- Screenshots are retained as sanitized PNG files and tracked.
+
+## Screenshot Security
+
+Retained screenshots are sanitized PNG UI captures. They show only the browser
+interface, test prompts, and generated images. They do not contain API keys,
+Authorization headers, Cookies, raw provider request/response bodies, raw
+base64 or inline image data payloads, runtime config files, or `真实配置.json`
+content.
 
 ## Privacy
 
 No credentials, raw provider request or response body, full reference link,
-complete generated-image link, screenshot, trace, network capture, or encoded
-image payload is recorded here.
+complete generated-image link, trace, network capture, or encoded image payload
+is recorded here.

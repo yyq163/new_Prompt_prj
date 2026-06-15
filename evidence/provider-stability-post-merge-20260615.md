@@ -23,3 +23,14 @@ Current protected contracts:
   all passed.
 
 This is protection-branch evidence only; `main` is not pushed or merged.
+
+## Screenshot Policy
+
+- `screenshots_policy`: `sanitized_png_retained`
+- `screenshots_tracked`: `true`
+- `screenshots_ignored`: `false`
+
+Retained screenshots under `evidence/screenshots/` are sanitized UI captures. They
+do not contain API keys, Authorization headers, Cookies, raw provider bodies,
+raw base64 or inline image data payloads, runtime configs, or `真实配置.json`
+content.

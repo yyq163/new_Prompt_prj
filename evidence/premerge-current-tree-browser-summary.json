@@ -8,7 +8,7 @@
     "full_chain_pass_claimed_for_main": false
   },
   "privacy": {
-    "screenshots_tracked": false,
+    "screenshots_tracked": true,
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "raw_provider_bodies_recorded": false,

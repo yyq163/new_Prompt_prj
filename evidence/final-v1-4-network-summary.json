@@ -23,8 +23,8 @@
     "generated_image_get_no_store": true
   },
   "privacy": {
-    "screenshots_tracked": false,
-    "screenshots_policy": "local_only_not_tracked",
+    "screenshots_tracked": true,
+    "screenshots_policy": "sanitized_png_retained",
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "raw_provider_bodies_recorded": false,

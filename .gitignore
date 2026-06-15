@@ -9,7 +9,9 @@ runtime-config.json
 .understand-anything/
 # Codex agent team: keep reports tracked as evidence chain; ignore runtime artifacts
 .codex-agent-team/*
+!.codex-agent-team/
 !.codex-agent-team/reports/
+!.codex-agent-team/reports/**
 .codex-agent-team/reports/browser-artifacts/
 .codex-agent-team/context/
 .codex-agent-team/state/
@@ -30,7 +32,6 @@ ai-tu/runtime-config.example.json
 .server-*.log
 .visual-review*/
 evidence/visual-6task-results.json
-evidence/screenshots/
 evidence/**/*.trace
 evidence/**/*.network
 evidence/**/*.har

@@ -4,8 +4,8 @@
   "branch": "main01",
   "cycle": "evidence-security-contradiction-repair",
   "pushable_evidence_policy": {
-    "screenshots_tracked": false,
-    "screenshots_policy": "local_only_not_tracked",
+    "screenshots_tracked": true,
+    "screenshots_policy": "sanitized_png_retained",
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "complete_generated_image_links_recorded": false,
@@ -26,7 +26,7 @@
     "text_generation_status": "PASS_TEXT_IMAGE",
     "image_edit_provider_status": "PASS_IMAGE_EDIT",
     "mock_success_used": false,
-    "screenshots_saved": false,
+    "screenshots_saved": true,
     "trace_saved": false,
     "network_capture_saved": false
   }

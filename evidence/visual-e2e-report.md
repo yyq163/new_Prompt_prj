@@ -2,9 +2,9 @@
 
 Status: MAIN01_REDACTED_SUMMARY
 
-This pushable evidence file records only redacted browser status. Screenshots
-and trace or network captures are local-only artifacts and are not tracked on
-`main01`.
+This pushable evidence file records redacted browser status and retained
+screenshots. Screenshots are retained as sanitized PNG files and tracked on
+`main01`. Trace files and network captures remain local-only and are not tracked.
 
 This version was refreshed during the evidence-chain security contradiction
 repair cycle.
@@ -21,8 +21,17 @@ repair cycle.
 - This is protection-branch evidence only and does not authorize pushing or
   merging `main`.
 
+## Screenshot Security
+
+Retained screenshots under `evidence/screenshots/` are sanitized PNG UI captures.
+They contain only the browser interface, test prompts, and generated images. They
+do not contain API keys, Authorization headers, Cookies, raw provider
+request/response bodies, raw base64 or inline image data payloads, runtime
+config files, or `真实配置.json` content.
+
 ## Privacy
 
-This file intentionally omits prompts, complete generated-image links, reference
-links, request headers, response bodies, credentials, screenshots, trace files,
-network captures, and encoded image data.
+This text file intentionally omits prompts, complete generated-image links,
+reference links, request headers, response bodies, credentials, trace files,
+network captures, and encoded image data. Retained screenshot files are covered
+by the Screenshot Security section above.

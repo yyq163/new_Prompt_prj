@@ -9,8 +9,8 @@ provider stability, provider edits, and local normalizer preservation work.
 This summary was refreshed during the evidence-chain security contradiction
 repair cycle. The repair cycle:
 
-- Confirmed `screenshots_tracked=false` and `evidence/screenshots/` is ignored
-  by `.gitignore`; local screenshots stay local-only.
+- Confirmed `screenshots_tracked=true` and `evidence/screenshots/` is tracked;
+  screenshots are retained as sanitized PNG files in the repository.
 - Confirmed `.codex-agent-team/reports/` is tracked as a controlled evidence
   chain; runtime artifacts under `.codex-agent-team/` remain ignored.
 - Added dedicated poll/status URL Authorization security regression tests in

@@ -1,3 +1,5 @@
+**Status:** HISTORICAL — superseded by the screenshot-policy repair cycle.
+
 # Review: T1 RAGFlow Knowledge-Driven Template
 
 Date: 2026-06-15
@@ -20,7 +22,7 @@ PASS and does not claim current image-edit provider PASS.
 - Public Final API response still excludes internal prompt, enhancement,
   provider payload, encoded image, callback, RAGFlow, and fallback internals.
 - Pushable evidence is text-only and redacted.
-- Browser screenshot artifacts are local-only and not tracked on `main01`.
+- Browser screenshot artifacts are retained as sanitized PNG files and tracked on `main01`.
 
 ## Current Main01 Limitation
 

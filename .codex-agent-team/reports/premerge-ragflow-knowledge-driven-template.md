@@ -1,3 +1,5 @@
+**Status:** HISTORICAL — superseded by the screenshot-policy repair cycle.
+
 # Pre-Merge Review: RAGFlow Knowledge-Driven Template
 
 Date: 2026-06-11T10:10:00Z
@@ -56,7 +58,7 @@ Evidence:
 
 - `evidence/premerge-current-tree-browser-summary.json`
 - `evidence/premerge-current-tree-browser-report.md`
-- screenshot artifacts are local-only and not tracked on `main01`
+- screenshot artifacts are retained as sanitized PNG files and tracked on `main01`
 
 ## Merge Rule
 

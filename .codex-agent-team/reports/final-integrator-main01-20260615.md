@@ -13,7 +13,8 @@ This file is retained only as an audit trail.
 
 - Branch: `main01`.
 - `main` remains untouched and must not be pushed or merged.
-- Screenshot policy at the time: local-only, not tracked.
+- Screenshot policy at the time was local-only; current policy is
+  `sanitized_png_retained` with screenshots tracked.
 - Provider/model contracts preserved.
 - Normalizer accepts required encoded/binary forms server-side and keeps public
   response URL-only.

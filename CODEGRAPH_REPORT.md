@@ -61,10 +61,16 @@ instead of silently falling through to another candidate.
 
 ## Evidence Policy
 
-Pushable evidence is limited to redacted text summaries. Screenshots, trace
-files, network captures, logs, complete generated-image links, credentials, raw
-provider bodies, and encoded image data are not part of the pushable evidence
-set.
+Pushable evidence includes redacted text summaries and sanitized screenshot PNG
+files under `evidence/screenshots/`. Screenshot files are retained and tracked;
+they contain only UI captures and generated images and do not include API keys,
+Authorization headers, Cookies, raw provider request/response bodies, raw
+base64 or inline image data payloads, runtime config files, or `真实配置.json`
+content.
+
+Trace files, network captures, logs, complete generated-image links,
+credentials, raw provider bodies, and encoded image data are not part of the
+pushable evidence set.
 
 `.codex-agent-team/reports/` is tracked as a controlled evidence-chain directory.
 Other `.codex-agent-team/` runtime artifacts are ignored.

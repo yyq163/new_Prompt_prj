@@ -3,7 +3,8 @@
 Date: 2026-06-16
 Repository: /Volumes/App_Dev/new_Prompt_prj
 Branch: main01
-Scope: final owner-approved staged review for commit and push to origin/main01.
+Scope: final review of current main01 state and this report update for commit
+and push to origin/main01.
 
 ## Boundary
 
@@ -12,19 +13,20 @@ Scope: final owner-approved staged review for commit and push to origin/main01.
 - Did not touch `main`.
 - Did not commit, push, fetch, pull, merge, switch, or reset.
 - Updated this final integration report.
-- Staged this report and the newly observed final Branch Auditor report so the
-  formal report/evidence chain has no untracked report remainder.
-- This report intentionally does not record any final commit hash.
+- Staged this final integration report update only.
+- This report intentionally does not record final object identifiers.
 
 ## Hard State
 
 Overall hard state: PASS_GIT_HYGIENE
 
-Reason: owner decision has completed. The current trackable evidence/report
-changes are staged as the intended evidence-chain candidate. A staged diff is
-therefore not a failure condition for this final review. The only final question
-for this report is whether the staged candidate can be committed and pushed to
-origin/main01 without touching `main`.
+Reason: owner decision has completed, and the owner-approved evidence/report
+chain is already reflected in the current `main01` state observed locally and
+at `origin/main01`. The only remaining staged candidate in this review is this
+final integration report update. A staged diff for an owner-approved final
+report is not a failure condition. The final question for this report is whether
+the current state can be committed and pushed to origin/main01 without touching
+`main`.
 
 ## Integrated Findings
 
@@ -34,11 +36,11 @@ origin/main01 without touching `main`.
 | `main01` versus `origin/main01` | PASS_GIT_HYGIENE | `git rev-list --left-right --count main01...origin/main01` returned `0 0`. |
 | Push target scope | PASS_GIT_HYGIENE | Review scope is commit current staged candidate on `main01` and push only to `origin/main01`; local `main` is not part of this approval. |
 | `main01` base relation | PASS_GIT_HYGIENE | `git rev-list --left-right --count main01...origin/main` returned `7 0`; `git merge-base --is-ancestor origin/main main01` exited `0`. |
-| Owner-approved staged closure | PASS_GIT_HYGIENE | All current trackable evidence/report changes are staged. `git ls-files --others --exclude-standard -- .codex-agent-team/reports evidence/screenshots` returned no paths. |
+| Owner-approved evidence closure | PASS_GIT_HYGIENE | Owner-approved evidence/report changes are present in current `main01` / `origin/main01`. The remaining staged delta is this final integration report update. `git ls-files --others --exclude-standard -- .codex-agent-team/reports evidence/screenshots` returned no paths after staging it. |
 | Runtime artifact exception | PASS_GIT_HYGIENE | `.codex-agent-team/reports/browser-artifacts/` is intentionally ignored as user-approved runtime artifact storage, not formal report evidence. `git check-ignore -v .codex-agent-team/reports/browser-artifacts/server-8793.log` matched that ignore rule. |
 | Business-code unstaged diff | PASS_EVIDENCE | `git diff --name-only -- src final-api ai-tu package.json package-lock.json tests` returned no paths before this report update. |
 | Screenshot format | PASS_EVIDENCE | `sips -g format` and `file` both report all four files under `evidence/screenshots/*.png` as PNG files. |
-| Screenshot retention | PASS_EVIDENCE | `evidence/screenshots/*.png` are tracked/staged evidence files and are not ignored. |
+| Screenshot retention | PASS_EVIDENCE | `evidence/screenshots/*.png` are tracked evidence files and are not ignored. |
 | Screenshot visible redaction | PASS_EVIDENCE | Manual image review found visible `SANITIZED EVIDENCE` overlays covering prompt/reference areas in all four screenshots. |
 | Evidence static scan | PASS_EVIDENCE | `node tests/integration/final-v1-4-evidence.test.js` printed `FINAL_V1_4_EVIDENCE_SCAN_PASS`. |
 | Staged whitespace check | PASS_EVIDENCE | `git diff --cached --check` exited `0`. |
@@ -46,7 +48,7 @@ origin/main01 without touching `main`.
 | Staged value leak scan | PASS_EVIDENCE | Node staged-blob scan skipped `真实配置.json` and image binaries, then reported `STAGED_VALUE_LEAK_SCAN_PASS` for key/token/header/raw payload/data URI/long-base64 value patterns. |
 | Runtime and raw artifact ignores | PASS_GIT_HYGIENE | `.codex-agent-team/reports/browser-artifacts/`, `evidence/trace/`, `evidence/har/`, `evidence/network/`, `evidence/log/`, and `真实配置.json` are ignored by `.gitignore`. |
 | Hard contradiction search | PASS_EVIDENCE | The current final report no longer treats owner-approved staged evidence/report changes as a failure reason. Historical reports are audit inputs, not current hard-state sources. |
-| Final Branch Auditor report | PASS_GIT_HYGIENE | `.codex-agent-team/reports/branch-auditor-main01-evidence-contradiction-repair-final-20260616.md` was reviewed as report evidence and staged with the evidence chain. |
+| Final Branch Auditor report | PASS_GIT_HYGIENE | `.codex-agent-team/reports/branch-auditor-main01-evidence-contradiction-repair-final-20260616.md` exists in the current tracked report chain and was reviewed as report evidence. |
 
 ## Historical Report Handling
 
@@ -63,8 +65,8 @@ origin/main01 without touching `main`.
 git branch --show-current
 git status --short --branch --untracked-files=all
 git status --porcelain=v2 --branch --untracked-files=all
-git diff --cached --name-only
-git diff --name-only
+git diff --cached --name-status
+git diff --name-status
 git ls-files --others --exclude-standard -- .codex-agent-team/reports evidence/screenshots
 sed -n '1,260p' .codex-agent-team/reports/branch-auditor-main01-evidence-contradiction-repair-final-20260616.md
 git rev-list --left-right --count main01...origin/main01
@@ -85,6 +87,7 @@ Observed command outcomes:
 - `main01...origin/main01`: `0 0`.
 - `main01...origin/main`: `7 0`.
 - `origin/main` is an ancestor of `main01`.
+- The current staged delta is this final integration report update.
 - `git ls-files --others --exclude-standard -- .codex-agent-team/reports evidence/screenshots` returned no paths.
 - `node tests/integration/final-v1-4-evidence.test.js` printed `FINAL_V1_4_EVIDENCE_SCAN_PASS`.
 - `git diff --cached --check` exited `0`.
@@ -99,7 +102,7 @@ Hard state: PASS_GIT_HYGIENE
 
 Evidence contradiction repair status: PASS_EVIDENCE.
 
-Git hygiene status for committing the staged candidate and pushing to
+Git hygiene status for committing this final report update and pushing to
 origin/main01 only: PASS_GIT_HYGIENE.
 
 No approval is given here to push or merge `main`.

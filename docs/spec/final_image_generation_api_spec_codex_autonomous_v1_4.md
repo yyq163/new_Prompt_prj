@@ -12,8 +12,15 @@ The service receives downstream JSON requests, validates structured references, 
 
 - `POST /api/v1/image-generations`
 - `GET /api/v1/generated-images/:image_id`
+- `POST /api/reference-images` for local browser helper uploads only
 
 The ai-tu frontend at `/` is the visible test page. The legacy `/api/image-jobs` route is not the final API acceptance route.
+
+`POST /api/reference-images` accepts one multipart `image` file from the local
+browser test page, stores it in the in-memory Generated Image Store, and returns
+a service-generated URL for structured `references[].url`. It is not the Final
+image generation endpoint and must not be used to bypass the JSON-only
+`references[]` contract of `POST /api/v1/image-generations`.
 
 ## Request
 
@@ -163,6 +170,30 @@ Discard enhancement when it is unavailable, invalid, unsafe, oversized, leaks in
 
 ## Provider Result Normalization
 
+## Provider Routing and Model
+
+The provider model is fixed to `gpt-image-2` for every Final API image
+generation request. Runtime configuration may provide endpoint host/base and
+keys, but must not select or fall back to any other model.
+
+Route selection is derived from `generation_mode`:
+
+- `text_to_image` / no references: POST the provider `/v1/images/generations`
+  endpoint with `model: "gpt-image-2"`.
+- `image_to_image` / one or more references: POST the provider
+  `/v1/images/edits` endpoint with `model: "gpt-image-2"` and the structured
+  reference URLs in the provider `image` array.
+
+Forbidden provider routing/model behavior:
+
+- `gpt-image-2-all`
+- `gpt-image-1`
+- `dall-e-*`
+- fallback model selection
+- text-to-image requests using `/v1/images/edits`
+- reference-backed requests using `/v1/images/generations`
+- mock success after provider failure
+
 Provider result forms supported:
 
 - external image URL
@@ -175,6 +206,11 @@ Provider result forms supported:
 The final API always returns `images[].url`.
 
 If the provider returns external URLs, they are returned as public image URLs. If the provider returns real image bytes, the bytes are stored in Generated Image Store and exposed through `/api/v1/generated-images/:image_id`.
+
+Provider-returned external URLs must pass public URL safety validation before
+entering `images[].url`. Localhost, loopback, link-local, private network, and
+non-HTTP(S) provider URLs are rejected as provider failures instead of being
+returned as success.
 
 The public base for service-generated image URLs comes from `PUBLIC_BASE_URL` when set. It must be HTTP(S), is normalized by removing trailing slashes, and is required in production. Local development may fall back to the current local host and port.
 
@@ -196,8 +232,8 @@ Generated Image Store requirements:
 - mock provider success
 - fake image URL
 - placeholder image as success
-- reference image upload
-- multipart upload
+- file upload to `POST /api/v1/image-generations`
+- URL-only reference bypass
 - image hosting upload
 - runtime import of `ai-tu/gateway/server.js`
 - public internal prompt fields

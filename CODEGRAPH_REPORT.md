@@ -2,6 +2,8 @@
 
 Date: 2026-06-11
 
+Post-merge provider stability refresh: 2026-06-15
+
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
 Baseline commit before the original RAGFlow knowledge-driven template correction:
@@ -139,6 +141,33 @@ The final image generation flow is:
 Public responses remain sanitized: no backend-only prompt text, optional
 enhancement state, upstream request details, raw image bytes, callback delivery
 state, or credential material is returned.
+
+## Provider Stability Update
+
+The post-merge provider policy is now fixed by contract rather than provider
+model config:
+
+- `generateWithAiTuProvider` always sends `model: "gpt-image-2"`.
+- `text_to_image` / no references posts only to a provider endpoint ending in
+  `/v1/images/generations`.
+- `image_to_image` / one or more references posts only to a provider endpoint
+  ending in `/v1/images/edits` and submits reference image parts to the
+  provider edit endpoint.
+- `task_type` does not select models.
+- `gpt-image-2-all`, `gpt-image-1`, `dall-e-*`, and other fallback models are
+  not allowed in Final API provider payloads.
+- Provider failure remains a failure path; no mock success branch is present in
+  the Final API adapter.
+- Provider-returned external image URLs are public-URL validated before entering
+  public `images[].url`.
+- `/api/reference-images` exists only as a browser helper upload endpoint. It
+  stores the uploaded image bytes in Generated Image Store and returns a local
+  generated-image URL for structured `references[].url`; the Final API image
+  generation endpoint remains JSON-only.
+
+`ai-tu/gateway/server.js` remains indexed as historical migration source only
+and can still contain legacy/mock/provider variants that are not Final API
+runtime behavior.
 
 ## Prompt Compiler and RAGFlow Knowledge Status
 
@@ -293,6 +322,29 @@ from `evidence/screenshots/` so the final evidence directory no longer mixes old
 and current acceptance artifacts.
 
 ## Current Browser Evidence
+
+Current post-merge provider stability run at `2026-06-15 12:10 CST`:
+
+- Runtime config: local `真实配置.json` used without logging sensitive values.
+- Model fixed: `gpt-image-2`.
+- Text endpoint: `/v1/images/generations`.
+- Image endpoint: `/v1/images/edits`.
+- Browser text-to-image: in-app Browser opened `http://127.0.0.1:8793/`,
+  submitted the page form, received HTTP `200`, status `succeeded`, previewed
+  a Generated Image Store URL, and verified generated image GET HTTP `200`,
+  `Content-Type=image/png`, `Cache-Control=no-store`.
+- Browser image-to-image: Playwright real browser opened the same page,
+  uploaded `/Volumes/App_Dev/test-image/image_20260108131455.jpeg` through the
+  page file input, observed `POST /api/reference-images => 200`, submitted the
+  page form, received `POST /api/v1/image-generations => 200`, previewed a
+  Generated Image Store URL, and verified generated image GET HTTP `200`,
+  `Content-Type=image/png`, `Cache-Control=no-store`.
+- Screenshot files:
+  `evidence/screenshots/browser-text-generation-20260615.png` and
+  `evidence/screenshots/browser-image-generation-20260615.png`.
+- Request summary:
+  `.codex-agent-team/reports/browser-artifacts/playwright-requests-20260615.txt`.
+- Provider success was not mocked.
 
 Current accepted browser run:
 

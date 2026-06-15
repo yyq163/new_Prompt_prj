@@ -7,7 +7,7 @@ import { assertNoForbiddenPublicFields, makeId, normalizeRequest } from "../core
 import { taskTypeLabel } from "../core/labels.js";
 import { generateWithAiTuProvider } from "../providers/ai-tu-provider-adapter.js";
 import { appendTrace } from "../storage/trace-store.js";
-import { normalizePublicBaseUrl } from "../core/url-security.js";
+import { normalizePublicBaseUrl, normalizePublicHttpUrl } from "../core/url-security.js";
 
 export async function handleImageGeneration(body, { provider = generateWithAiTuProvider, fetchImpl = globalThis.fetch } = {}) {
   let requestId = "";
@@ -103,8 +103,23 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
   }
 }
 
-function publicImageUrl(url) {
-  if (!url || /^https?:\/\//i.test(url)) return url;
+export function publicImageUrl(url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) {
+    return normalizePublicHttpUrl(url, "provider image url", {
+      allowLocal: false,
+      statusCode: 502,
+      errorCode: "PROVIDER_IMAGE_URL_UNSAFE"
+    });
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || !url.startsWith("/api/v1/generated-images/")) {
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "PROVIDER_IMAGE_URL_UNSAFE",
+      message: "provider image url 必须是安全公网 HTTP(S) URL 或服务生成图片 URL。"
+    });
+  }
   const base = resolveGeneratedImagePublicBaseUrl();
   return `${base}${url.startsWith("/") ? url : `/${url}`}`;
 }

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { clarification, fail } from "./errors.js";
-import { normalizePublicHttpUrl } from "./url-security.js";
+import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "./url-security.js";
 import {
   ENTITY_TYPE_ALIASES,
   ROLE_ALIASES,
@@ -129,9 +129,37 @@ export function normalizeRequest(body) {
 }
 
 export function assertReferenceUrlAllowed(value, field = "reference.url") {
+  if (isLocalGeneratedImageStoreReferenceUrl(value)) {
+    return normalizePublicHttpUrl(value, field, { allowLocal: true });
+  }
   return normalizePublicHttpUrl(value, field, {
     allowLocal: process.env.ALLOW_LOCAL_REFERENCE_URLS === "true"
   });
+}
+
+function isLocalGeneratedImageStoreReferenceUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(parsed.pathname)) return false;
+  if (!isUnsafeNetworkHost(parsed.hostname)) return false;
+  const expectedPort = String(process.env.PORT || 8787);
+  if ((parsed.port || defaultPort(parsed.protocol)) !== expectedPort) return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const configuredHost = stringValue(process.env.HOST || "127.0.0.1").toLowerCase();
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (configuredHost && configuredHost !== "0.0.0.0" && configuredHost !== "::") allowedHosts.add(configuredHost);
+  return allowedHosts.has(host);
+}
+
+function defaultPort(protocol) {
+  if (protocol === "http:") return "80";
+  if (protocol === "https:") return "443";
+  return "";
 }
 
 function normalizeReference(item, index) {

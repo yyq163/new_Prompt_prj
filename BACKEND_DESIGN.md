@@ -46,7 +46,29 @@
 
 ## Provider
 
-The adapter reads environment/runtime config, validates endpoints, rotates keys, constructs bearer-auth JSON requests, sends text-to-image or image-to-image URL payloads, handles timeout/retry/polling, and maps provider failures to public error codes.
+The adapter reads environment/runtime config for endpoint/key/timing settings,
+validates endpoints, rotates keys, constructs bearer-auth JSON requests, sends
+text-to-image or image-to-image URL payloads, handles timeout/retry/polling, and
+maps provider failures to public error codes.
+
+Provider model and route selection are fixed by Final API contract:
+
+- Provider payload `model` is always `gpt-image-2`.
+- `text_to_image` / no references uses `/v1/images/generations`.
+- `image_to_image` / one or more references uses `/v1/images/edits`.
+- `task_type` never changes the model.
+- Runtime `model` / `imageModel` config values are ignored for Final API image
+  generation and cannot fall back to `gpt-image-2-all`, `gpt-image-1`, or
+  `dall-e-*`.
+- Browser-selected reference files may first be uploaded to
+  `/api/reference-images`, which stores bytes in Generated Image Store and
+  returns a service local URL for structured `references[].url`.
+- Reference-backed provider calls fetch those structured reference URLs and
+  submit them to `/v1/images/edits` as multipart image parts. The public Final
+  API endpoint itself remains JSON-only.
+- Provider-returned external URLs are public-URL validated before entering
+  `images[].url`; unsafe local/private/provider URLs fail instead of becoming
+  public success output.
 
 Provider results are normalized by `src/providers/provider-result-normalizer.js`.
 
@@ -66,6 +88,10 @@ The public API always returns `images[].url`. Real provider bytes are stored in 
 ## Generated Image Store
 
 The in-memory default store is only for real provider generated-image bytes. It is not a reference upload store.
+
+The browser helper upload route also uses the same in-memory store for short
+local acceptance flows. This does not make the store a durable reference asset
+service or a production image-hosting layer.
 
 - random image IDs
 - TTL

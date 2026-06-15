@@ -118,6 +118,37 @@ Generated Image Store URLs are built from `PUBLIC_BASE_URL` when configured. The
 
 In production, `PUBLIC_BASE_URL` is required for service-generated image URLs. Local development may fall back to the current local host and port.
 
+### Provider routing and model
+
+The Final API provider model is fixed to `gpt-image-2`. Runtime configuration
+must not change the model and must not fall back to `gpt-image-2-all`,
+`gpt-image-1`, `dall-e-*`, or any other model.
+
+Provider route selection is derived only from reference presence:
+
+- No references / `text_to_image`: `POST /v1/images/generations`, `model: "gpt-image-2"`
+- With references / `image_to_image`: `POST /v1/images/edits`, `model: "gpt-image-2"`
+
+`task_type` must not change the model. Text generation must not use the edits
+endpoint, and reference-backed generation must not use the generations endpoint.
+Provider failure is returned as failure; this API must not mock success.
+
+## POST /api/reference-images
+
+Browser helper endpoint for local UI acceptance. It accepts one multipart
+`image` file, stores the bytes in the in-memory Generated Image Store, and
+returns a structured local image URL that the page can place into
+`references[].url`.
+
+This endpoint is not the Final image generation API and does not allow
+URL-only generation requests. `POST /api/v1/image-generations` remains JSON
+only and still requires structured `references[]`.
+
+Only service-generated local image URLs under
+`/api/v1/generated-images/img_*` are allowed back into `references[].url` for
+this browser upload flow. Other localhost, loopback, link-local, or private
+reference URLs remain rejected unless an explicit development override is set.
+
 ### RAGFlow knowledge enhancement
 
 RAGFlow is optional and may provide only a validated JSON enhancement object for

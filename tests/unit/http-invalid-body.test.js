@@ -77,6 +77,34 @@ test("HTTP final route still accepts legal V1.4 JSON into the normal provider-ga
   assertNoForbiddenFields(response.body);
 });
 
+test("HTTP reference image upload returns structured local image URL for browser flow", async (t) => {
+  const app = await startTestServer({ maxBodySize: "1mb" });
+  t.after(async () => {
+    await app.stop();
+  });
+
+  const form = new FormData();
+  form.append("image", new Blob([samplePngBytes()], { type: "image/png" }), "reference.png");
+  form.append("name", "reference.png");
+  const upload = await fetch(`${app.baseUrl}/api/reference-images`, {
+    method: "POST",
+    body: form
+  });
+  const payload = await upload.json();
+  assert.equal(upload.status, 200);
+  assert.equal(payload.status, "succeeded");
+  assert.match(payload.referenceId, /^ref_upload_/);
+  assert.match(payload.image_url, /^http:\/\/127\.0\.0\.1:\d+\/api\/v1\/generated-images\/img_/);
+  assert.equal(payload.type, "image/png");
+  assert.equal(payload.name, "reference.png");
+  assertNoForbiddenFields(payload);
+
+  const image = await fetch(payload.image_url, { cache: "no-store" });
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.equal(image.headers.get("cache-control"), "no-store");
+});
+
 async function assertInvalidBody({ url, body, expectedMessage }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 400);
@@ -110,7 +138,7 @@ function assertNoForbiddenFields(payload) {
   }
 }
 
-async function startTestServer() {
+async function startTestServer({ maxBodySize = "512b" } = {}) {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), "http-invalid-body-"));
   const configFile = join(dir, "runtime-config.json");
@@ -121,7 +149,7 @@ async function startTestServer() {
       ...process.env,
       PORT: String(port),
       HOST: "127.0.0.1",
-      MAX_BODY_SIZE: "512b",
+      MAX_BODY_SIZE: maxBodySize,
       AI_TU_RUNTIME_CONFIG_FILE: configFile,
       IMAGE_API_BASE: "",
       IMAGE_MODEL: "",
@@ -154,6 +182,16 @@ async function startTestServer() {
       rmSync(dir, { recursive: true, force: true });
     }
   };
+}
+
+function samplePngBytes() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89
+  ]);
 }
 
 async function waitForHealth(url) {

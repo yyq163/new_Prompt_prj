@@ -1,5 +1,11 @@
 import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
+import {
+  DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+  GENERATED_IMAGE_ALLOWED_MIME_TYPES,
+  detectImageMime,
+  normalizeImageBytes
+} from "../core/generated-image-store.js";
 import { normalizeProviderImages } from "./provider-result-normalizer.js";
 export { normalizeProviderImageObject } from "./provider-result-normalizer.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -8,7 +14,10 @@ import { resolve } from "node:path";
 const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
 const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
+const AI_TU_DEFAULT_EDITS_URL = "https://memefast.top/v1/images/edits";
+const FIXED_IMAGE_MODEL = "gpt-image-2";
 const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 420;
+const DEFAULT_REFERENCE_FETCH_TIMEOUT_SECONDS = 30;
 let upstreamKeyCursor = 0;
 
 export async function generateWithAiTuProvider({ request, compiledPrompt, fetchImpl = globalThis.fetch } = {}) {
@@ -16,7 +25,7 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
   if (!hasRequiredProviderConfig(config)) providerConfigMissing();
 
   const providerRequest = {
-    model: request.generation_mode === "image_to_image" ? config.imageModel : config.model,
+    model: FIXED_IMAGE_MODEL,
     prompt: compiledPrompt,
     n: request.output.count,
     size: parseAspectSize(request.output.aspect_ratio),
@@ -27,7 +36,7 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
   };
 
   const images = request.generation_mode === "image_to_image"
-    ? await postLiveImageUrlJson(providerRequest, config, fetchImpl)
+    ? await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
     : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
 
   if (!images.length) {
@@ -78,11 +87,8 @@ export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch, 
   return normalizeProviderResult(json, payload.format, fetchImpl, config);
 }
 
-export async function postLiveImageUrlJson(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
-  const referenceUrls = request.images
-    .map((image) => image.image_url || image.url)
-    .filter(Boolean);
-  if (!referenceUrls.length) {
+export async function postLiveImageEditMultipart(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
+  if (!Array.isArray(request.images) || !request.images.length) {
     throw new ImageApiError({
       statusCode: 400,
       status: "failed",
@@ -91,33 +97,142 @@ export async function postLiveImageUrlJson(request, config = defaultProviderConf
     });
   }
   const count = Math.max(1, Math.min(request.n || 1, 16));
-  const slots = Array.from({ length: count });
-  const batches = await mapWithConcurrency(slots, Math.min(2, count), () => (
-    postSingleLiveImageUrlJson(request, referenceUrls, config, 1, fetchImpl)
-  ));
-  return batches.flat().slice(0, count);
+  const images = [];
+  for (let index = 0; index < count; index += 1) {
+    images.push(...await postSingleLiveImageEditMultipart(request, config, fetchImpl));
+  }
+  return images.slice(0, count);
 }
 
-export async function postSingleLiveImageUrlJson(request, referenceUrls, config, count, fetchImpl = globalThis.fetch) {
-  const payload = {
-    ...baseUpstreamPayload({
-      ...request,
-      n: Math.max(1, Math.min(count || 1, 16)),
-      model: config.imageModel || "gpt-image-2-all"
-    }),
-    image: referenceUrls
-  };
-  const body = JSON.stringify(payload);
+export async function postSingleLiveImageEditMultipart(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
+  const form = new FormData();
+  form.append("model", FIXED_IMAGE_MODEL);
+  form.append("prompt", request.prompt);
+  form.append("n", "1");
+  if (request.size && request.size !== "auto") form.append("size", request.size);
+  if (request.quality && request.quality !== "auto") form.append("quality", request.quality);
+  for (const image of request.images) {
+    const referenceUrl = stringValue(image.image_url || image.url).trim();
+    if (!referenceUrl) continue;
+    const blob = await fetchReferenceImageBlob(referenceUrl, fetchImpl);
+    form.append("image", blob, safeReferenceFilename(referenceUrl));
+  }
   const submitConfig = longRunningSubmitConfig(config);
-  const json = await fetchUpstream(config.baseUrl, (credential) => ({
+  const json = await fetchUpstream(config.imageEditUrl, (credential) => ({
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${credential.key}`,
-      "Content-Type": "application/json"
+      "Authorization": `Bearer ${credential.key}`
     },
-    body
+    body: form
   }), fetchImpl, submitConfig);
   return normalizeProviderResult(json, request.output_format, fetchImpl, config);
+}
+
+async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), referenceFetchTimeoutMs());
+  try {
+    const response = await fetchImpl(url, { signal: controller.signal });
+    if (!response || !response.ok) referenceImageNotAccessible();
+
+    const maxBytes = referenceImageMaxBytes();
+    const contentLength = Number(response.headers?.get?.("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) referenceImageTooLarge(maxBytes);
+
+    const bytes = await readReferenceResponseBytes(response, maxBytes);
+    const detectedMime = detectImageMime(bytes);
+    if (!detectedMime || !GENERATED_IMAGE_ALLOWED_MIME_TYPES.includes(detectedMime)) {
+      referenceImageUnsupported("参考图字节不是支持的 png、jpeg 或 webp 图片。");
+    }
+    const declaredMime = normalizeReferenceMime(response.headers?.get?.("content-type"));
+    if (declaredMime && declaredMime !== detectedMime) {
+      referenceImageUnsupported("参考图 MIME 类型与图片字节不匹配。");
+    }
+    return new Blob([bytes], { type: detectedMime });
+  } catch (error) {
+    if (error instanceof ImageApiError) throw error;
+    referenceImageNotAccessible();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readReferenceResponseBytes(response, maxBytes) {
+  if (response.body && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = normalizeImageBytes(value);
+        total += chunk.length;
+        if (total > maxBytes) referenceImageTooLarge(maxBytes);
+        chunks.push(chunk);
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks, total);
+  }
+  const bytes = normalizeImageBytes(await response.arrayBuffer());
+  if (bytes.length > maxBytes) referenceImageTooLarge(maxBytes);
+  return bytes;
+}
+
+function normalizeReferenceMime(contentType) {
+  const value = stringValue(contentType).split(";")[0].trim().toLowerCase().replace("image/jpg", "image/jpeg");
+  if (!value) return "";
+  if (!GENERATED_IMAGE_ALLOWED_MIME_TYPES.includes(value)) {
+    referenceImageUnsupported("参考图 Content-Type 不是支持的图片格式。");
+  }
+  return value;
+}
+
+function referenceFetchTimeoutMs() {
+  return intRange(process.env.REFERENCE_IMAGE_FETCH_TIMEOUT_SECONDS, 1, 120, DEFAULT_REFERENCE_FETCH_TIMEOUT_SECONDS) * 1000;
+}
+
+function referenceImageMaxBytes() {
+  return intRange(process.env.REFERENCE_IMAGE_MAX_BYTES, 1, 200 * 1024 * 1024, DEFAULT_GENERATED_IMAGE_MAX_BYTES);
+}
+
+function referenceImageNotAccessible() {
+  throw new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: "REFERENCE_IMAGE_NOT_ACCESSIBLE",
+    message: "参考图地址无法被生图服务访问。"
+  });
+}
+
+function referenceImageTooLarge(maxBytes) {
+  throw new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: "REFERENCE_IMAGE_TOO_LARGE",
+    message: `参考图超过 ${maxBytes} 字节大小限制。`
+  });
+}
+
+function referenceImageUnsupported(message) {
+  throw new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: "REFERENCE_IMAGE_UNSUPPORTED",
+    message
+  });
+}
+
+function safeReferenceFilename(url) {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop() || "reference.png";
+    return name.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "reference.png";
+  } catch {
+    return "reference.png";
+  }
 }
 
 export function longRunningSubmitConfig(config = defaultProviderConfig()) {
@@ -285,13 +400,15 @@ export function defaultProviderConfig() {
   const envKeys = parseApiKeys(process.env.IMAGE_API_KEYS, process.env.IMAGE_API_KEY);
   const fileKeys = parseApiKeys(fileConfig.apiKeys, fileConfig.apiKey);
   const keys = envKeys.length ? envKeys : fileKeys;
-  const baseUrl = stringValue(process.env.IMAGE_API_BASE).trim() || stringValue(fileConfig.baseUrl).trim() || AI_TU_DEFAULT_GENERATIONS_URL;
-  const fileImageModel = stringValue(fileConfig.imageModel).trim();
-  const model = stringValue(process.env.IMAGE_MODEL).trim() || stringValue(fileConfig.model).trim() || fileImageModel;
+  const baseUrl = generationsEndpointFor(
+    stringValue(process.env.IMAGE_API_BASE).trim()
+    || stringValue(fileConfig.baseUrl).trim()
+    || AI_TU_DEFAULT_GENERATIONS_URL
+  );
+  const imageEditUrl = stringValue(process.env.IMAGE_EDIT_BASE).trim() || stringValue(fileConfig.imageEditUrl).trim() || editsEndpointFor(baseUrl);
   return sanitizeProviderConfig({
     baseUrl,
-    model,
-    imageModel: stringValue(process.env.IMAGE_MODEL_IMAGE || process.env.IMAGE_MODEL_FOR_IMAGE).trim() || stringValue(fileConfig.imageModel).trim() || model,
+    imageEditUrl,
     keyMode: keys.length > 1 || fileConfig.keyMode === "multi" ? "multi" : "single",
     apiKey: keys[0] || "",
     apiKeys: keys,
@@ -323,15 +440,17 @@ export function loadAiTuRuntimeConfig() {
 
 export function sanitizeProviderConfig(source) {
   const value = source && typeof source === "object" ? source : {};
-  const baseUrl = value.baseUrl ? normalizeEndpoint(value.baseUrl) : "";
+  const baseUrl = normalizeGenerationsEndpoint(value.baseUrl || AI_TU_DEFAULT_GENERATIONS_URL);
+  const imageEditUrl = normalizeEditsEndpoint(value.imageEditUrl || editsEndpointFor(baseUrl));
   const keyMode = value.keyMode === "multi" ? "multi" : "single";
   const apiKeys = parseApiKeys(value.apiKeys, value.apiKey);
   const singleKey = stringValue(value.apiKey).trim() || apiKeys[0] || "";
   const pollBaseUrl = value.pollBaseUrl ? normalizeEndpoint(value.pollBaseUrl) : "";
   return {
     baseUrl,
-    model: stringValue(value.model).trim(),
-    imageModel: stringValue(value.imageModel).trim() || stringValue(value.model).trim(),
+    imageEditUrl,
+    model: FIXED_IMAGE_MODEL,
+    imageModel: FIXED_IMAGE_MODEL,
     keyMode,
     apiKey: keyMode === "single" ? singleKey : "",
     apiKeys: keyMode === "multi" ? apiKeys : singleKey ? [singleKey] : [],
@@ -356,13 +475,57 @@ export function normalizeEndpoint(value) {
   return endpoint.replace(/\/+$/, "");
 }
 
+export function normalizeGenerationsEndpoint(value) {
+  const endpoint = normalizeEndpoint(value);
+  if (!/\/v1\/images\/generations$/i.test(endpoint)) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "INVALID_REQUEST_SCHEMA",
+      message: "Provider text-to-image endpoint 必须以 /v1/images/generations 结尾。"
+    });
+  }
+  return endpoint;
+}
+
+export function normalizeEditsEndpoint(value) {
+  const endpoint = normalizeEndpoint(value);
+  if (!/\/v1\/images\/edits$/i.test(endpoint)) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "INVALID_REQUEST_SCHEMA",
+      message: "Provider image-to-image endpoint 必须以 /v1/images/edits 结尾。"
+    });
+  }
+  return endpoint;
+}
+
+function editsEndpointFor(baseUrl) {
+  const endpoint = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (/\/v1\/images\/generations$/i.test(endpoint)) {
+    return endpoint.replace(/\/v1\/images\/generations$/i, "/v1/images/edits");
+  }
+  return AI_TU_DEFAULT_EDITS_URL;
+}
+
+function generationsEndpointFor(baseUrl) {
+  const endpoint = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!endpoint) return AI_TU_DEFAULT_GENERATIONS_URL;
+  if (/\/v1\/images\/generations$/i.test(endpoint)) return endpoint;
+  if (/\/v1\/images\/edits$/i.test(endpoint)) {
+    return endpoint.replace(/\/v1\/images\/edits$/i, "/v1/images/generations");
+  }
+  return normalizeEndpoint(endpoint) + "/v1/images/generations";
+}
+
 export function activeKeys(config = defaultProviderConfig()) {
   if (config.keyMode === "multi") return parseApiKeys(config.apiKeys, "");
   return config.apiKey ? [config.apiKey] : [];
 }
 
 export function hasRequiredProviderConfig(config = defaultProviderConfig()) {
-  return Boolean(config.baseUrl && config.model && activeKeys(config).length);
+  return Boolean(config.baseUrl && config.imageEditUrl && config.model === FIXED_IMAGE_MODEL && config.imageModel === FIXED_IMAGE_MODEL && activeKeys(config).length);
 }
 
 export function nextImageApiCredential(config = defaultProviderConfig()) {

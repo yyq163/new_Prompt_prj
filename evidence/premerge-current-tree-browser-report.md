@@ -1,12 +1,15 @@
-# Pre-Merge Current Tree Browser QA
+# Premerge Browser Evidence
 
-Status: REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE
+Status: SUPERSEDED_BY_MAIN01_REPAIR
 
-This legacy final-api artifact is superseded by the ai-tu V3.6 redacted browser and network summary. Current evidence lives in:
+This historical premerge browser artifact is retained only as a redacted text
+summary. It does not point to removed external evidence paths and it does not
+claim current image-edit PASS.
 
-- `ai-tu/evidence/network-summary.json`
-- `ai-tu/evidence/visual-e2e-report.md`
+Current `main01` browser acceptance must be read from the latest main01 browser
+summary and final report. The latest rerun verified text generation after one
+transient provider failure and verified image edit success with generated-image
+GET no-store.
 
-Privacy summary: no complete payloads, credentials, user text, reference links, internal identifiers, encoded image data, or unfiltered upstream bodies are recorded here.
-
-Provider boundary retained for V3.6: real provider encoded image may be consumed only server-side and converted to a generated image URL; public responses remain URL-only; binary/direct image provider responses are not accepted.
+No screenshots, trace captures, network captures, complete image links,
+credentials, raw provider payloads, or encoded image data are recorded here.

@@ -18,7 +18,7 @@ PASS
 | `data[0].image`、`data[0].result`、`base64`、`image_base64`、`data_url` 裸/URL base64 -> Generated Image Store URL | PASS | `tests/unit/image-api.test.js` |
 | data URL、binary response -> Generated Image Store URL | PASS | `tests/unit/image-api.test.js` |
 | invalid base64/wrong magic bytes 拒绝 | PASS | `tests/unit/image-api.test.js` |
-| invalid base64/wrong magic bytes 不泄露 raw | PARTIAL | 拒绝已覆盖；公开 API envelope 的专门泄露断言可增强 |
+| invalid base64/wrong magic bytes 不泄露 raw | PASS | public API envelope no-leak tests cover invalid encoded payloads |
 | RAGFlow knowledge-driven template | PASS | `tests/unit/image-api.test.js` |
 | RAGFlow binding decision 丢弃 | PASS | `tests/unit/image-api.test.js` |
 | invalid body 回归 | PASS | `tests/unit/http-invalid-body.test.js` |

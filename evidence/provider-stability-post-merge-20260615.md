@@ -1,12 +1,19 @@
-# Provider Stability Post-Merge Evidence
+# Provider Stability Evidence
 
-Status: REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE
+Status: SUPERSEDED_BY_MAIN01_REPAIR
 
-This legacy final-api artifact is superseded by the ai-tu V3.6 redacted browser and network summary. Current evidence lives in:
+Older provider-stability evidence is superseded by the `main01` protection
+branch repair. Any earlier visual success wording must not be used to claim
+current edits-chain PASS.
 
-- `ai-tu/evidence/network-summary.json`
-- `ai-tu/evidence/visual-e2e-report.md`
+Current protected contracts:
 
-Privacy summary: no complete payloads, credentials, user text, reference links, internal identifiers, encoded image data, or unfiltered upstream bodies are recorded here.
-
-Provider boundary retained for V3.6: real provider encoded image may be consumed only server-side and converted to a generated image URL; public responses remain URL-only; binary/direct image provider responses are not accepted.
+- `gpt-image-2` only.
+- Text generation uses `/v1/images/generations`.
+- Reference-backed image generation uses `/v1/images/edits`.
+- Provider encoded and binary image forms are accepted only server-side and are
+  converted into Generated Image Store URLs.
+- Public API returns URL-only images and no raw provider material.
+- Real image edit upstream status is superseded by the latest `main01` browser
+  rerun: upload, edits request, public success, and generated-image GET no-store
+  all passed.

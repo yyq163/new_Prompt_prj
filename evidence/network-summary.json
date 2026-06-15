@@ -1,23 +1,31 @@
 {
-  "status": "REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE",
-  "checked_at": "2026-06-15T06:41:04.144Z",
-  "note": "Legacy final-api evidence is superseded by the ai-tu V3.6 redacted browser and network summary.",
-  "current_evidence": {
-    "ai_tu_network_summary": "ai-tu/evidence/network-summary.json",
-    "ai_tu_visual_report": "ai-tu/evidence/visual-e2e-report.md"
-  },
-  "privacy": {
-    "internal_identifiers_recorded": false,
-    "complete_image_links_recorded": false,
-    "user_text_recorded": false,
-    "ref_link_recorded": false,
+  "status": "MAIN01_REDACTED_NETWORK_SUMMARY",
+  "checked_at": "2026-06-15",
+  "branch": "main01",
+  "pushable_evidence_policy": {
+    "screenshots_tracked": false,
+    "trace_files_tracked": false,
+    "network_captures_tracked": false,
+    "complete_generated_image_links_recorded": false,
+    "complete_reference_links_recorded": false,
     "credential_values_recorded": false,
     "encoded_image_payloads_recorded": false,
-    "unfiltered_upstream_bodies_recorded": false
+    "raw_provider_bodies_recorded": false
   },
   "provider_boundary": {
-    "real_provider_encoded_image_consumed_server_side_only": true,
+    "provider_encoded_image_consumed_server_side_only": true,
+    "provider_binary_or_direct_image_consumed_server_side_only": true,
+    "generated_image_store_url_created": true,
     "public_response_url_only": true,
-    "binary_or_direct_image_provider_response_accepted": false
+    "invalid_encoded_or_wrong_magic_rejected": true
+  },
+  "browser": {
+    "text_generation_status": "PASS_TEXT_IMAGE_AFTER_RETRY",
+    "text_generation_transient_failure_observed": true,
+    "image_edit_provider_status": "PASS_IMAGE_EDIT",
+    "mock_success_used": false,
+    "screenshots_saved": false,
+    "trace_saved": false,
+    "network_capture_saved": false
   }
 }

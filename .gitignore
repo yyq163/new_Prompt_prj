@@ -20,3 +20,8 @@ ai-tu/runtime-config.example.json
 .server-*.log
 .visual-review*/
 evidence/visual-6task-results.json
+evidence/screenshots/
+evidence/**/*.trace
+evidence/**/*.network
+evidence/**/*.har
+evidence/**/*.log

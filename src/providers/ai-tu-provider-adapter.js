@@ -1,6 +1,6 @@
 import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
-import { isUnsafeNetworkHost } from "../core/url-security.js";
+import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "../core/url-security.js";
 import {
   DEFAULT_GENERATED_IMAGE_MAX_BYTES,
   GENERATED_IMAGE_ALLOWED_MIME_TYPES,
@@ -144,10 +144,11 @@ function hasFormImageFiles(form) {
 }
 
 async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
+  const safeUrl = assertProviderReferenceUrlAllowed(url);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), referenceFetchTimeoutMs());
   try {
-    const response = await fetchImpl(url, { signal: controller.signal });
+    const response = await fetchImpl(safeUrl, { redirect: "manual", signal: controller.signal });
     if (!response || !response.ok) referenceImageNotAccessible();
 
     const maxBytes = referenceImageMaxBytes();
@@ -170,6 +171,41 @@ async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function assertProviderReferenceUrlAllowed(value) {
+  if (isLocalGeneratedImageStoreReferenceUrl(value)) {
+    return normalizePublicHttpUrl(value, "reference.url", {
+      allowLocal: true,
+      statusCode: 400,
+      errorCode: "REFERENCE_URL_INVALID"
+    });
+  }
+  return normalizePublicHttpUrl(value, "reference.url", {
+    allowLocal: process.env.ALLOW_LOCAL_REFERENCE_URLS === "true",
+    statusCode: 400,
+    errorCode: "REFERENCE_URL_INVALID"
+  });
+}
+
+function isLocalGeneratedImageStoreReferenceUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(parsed.pathname)) return false;
+  if (!isUnsafeNetworkHost(parsed.hostname)) return false;
+  const expectedPort = String(process.env.PORT || 8787);
+  const parsedPort = parsed.port || (parsed.protocol === "http:" ? "80" : "443");
+  if (parsedPort !== expectedPort) return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const configuredHost = stringValue(process.env.HOST || "127.0.0.1").toLowerCase();
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (configuredHost && configuredHost !== "0.0.0.0" && configuredHost !== "::") allowedHosts.add(configuredHost);
+  return allowedHosts.has(host);
 }
 
 async function readReferenceResponseBytes(response, maxBytes) {
@@ -262,13 +298,14 @@ export function longRunningSubmitConfig(config = defaultProviderConfig()) {
 }
 
 export async function fetchUpstream(kind, initFactory, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
+  const url = resolveAuthorizedFetchUrl(kind, config);
   let lastError = null;
   for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
-    const credential = nextImageApiCredential(config);
     try {
+      const credential = nextImageApiCredential(config);
       if (!credential) providerConfigMissing();
       const init = typeof initFactory === "function" ? initFactory(credential) : initFactory;
-      return await fetchUpstreamOnce(kind, init, fetchImpl, config);
+      return await fetchUpstreamOnce(url, init, fetchImpl, config);
     } catch (error) {
       lastError = error;
       if (!isRetryableUpstreamError(error) || attempt === config.retryAttempts) break;

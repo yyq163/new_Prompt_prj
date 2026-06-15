@@ -1,9 +1,14 @@
 # Final Integrator: main01 Protection
 
-Verdict before push: PUSH_PRECHECK_READY_NOT_PUSHED
+Verdict before final push: READY_AFTER_FINAL_VERIFICATION
 
-- All effective code, docs, tests, contracts, and sanitized reports are staged on the safe rebuild.
-- Local normalizer/test changes are included.
-- `main` has not been pushed.
-- Image edit provider status remains `IMAGE_EDIT_BLOCKED`; no full-chain PASS is claimed.
-- Final status can become `PASS_MAIN01_PROTECTION_BRANCH_PUSHED` only after commit, explicit push to `origin/main01`, and final ref checks.
+- Current branch is `main01`.
+- `main` remains untouched and must not be pushed.
+- Local screenshot artifacts were removed from Git tracking and ignored.
+- Provider/model contracts are preserved.
+- Normalizer accepts required encoded/binary forms server-side and keeps public
+  response URL-only.
+- Latest real browser rerun: text generation passed after one transient provider
+  failure; image edit passed with generated-image GET no-store.
+- This can become `PASS_MAIN01_PROTECTION_BRANCH_PUSHED` only after final command
+  rerun, commit, explicit push to `origin/main01`, and ref checks.

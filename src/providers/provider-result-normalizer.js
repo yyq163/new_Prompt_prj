@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { ImageApiError } from "../core/errors.js";
 import {
   DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+  detectImageMime,
   formatToMime,
   mimeToFormat,
   putGeneratedImage
@@ -12,10 +13,11 @@ export function normalizeProviderImages(json, format = "png") {
   const found = [];
   const seen = new Set();
 
+  assertNoForbiddenProviderPayload(json);
   pushImage(json);
 
   if (Array.isArray(json && json.data)) {
-    json.data.forEach((item) => pushImage(item));
+    json.data.forEach((item) => pushImage(item, { explicitImageFields: true }));
   }
 
   if (Array.isArray(json && json.output)) {
@@ -30,7 +32,7 @@ export function normalizeProviderImages(json, format = "png") {
   walk(json, (node) => {
     if (!node || typeof node !== "object" || Buffer.isBuffer(node) || ArrayBuffer.isView(node) || node instanceof ArrayBuffer) return;
     if (isProviderImageCandidate(node)) pushImage(node);
-    if (Array.isArray(node.images)) node.images.forEach(pushImage);
+    if (Array.isArray(node.images)) node.images.forEach((item) => pushImage(item, { explicitImageFields: true }));
   });
 
   if (!found.length) {
@@ -44,15 +46,18 @@ export function normalizeProviderImages(json, format = "png") {
   }
   return found;
 
-  function pushImage(item) {
+  function pushImage(item, { explicitImageFields = false } = {}) {
     const candidateKey = providerImageCandidateKey(item);
     if (candidateKey && seen.has(candidateKey)) return;
+    const strictCandidate = Boolean(candidateKey || isProviderImageCandidate(item) || hasEncodedImagePayloadField(item, { explicitImageFields }));
     let image = null;
     try {
       image = normalizeProviderImageObject(item, format);
     } catch (error) {
+      if (strictCandidate && error instanceof ImageApiError) throw error;
       return;
     }
+    if (!image && strictCandidate) unsupportedProviderImage("上游返回的 base64 图片格式非法。");
     if (!image) return;
     const key = candidateKey || image.url || `${image.image_id || ""}:${image.size || ""}`;
     if (!key || seen.has(key)) return;
@@ -187,7 +192,19 @@ function isForbiddenProviderPayloadField(key, value) {
   const normalized = String(key || "").toLowerCase();
   if (normalized === "data") return false;
   if (/^(?:bytes|buffer|binary)$/i.test(normalized)) return false;
-  return /^(?:final_prompt|compiled_prompt|provider_raw|provider_raw_payload|provider_raw_response|raw|raw_provider_payload|raw_provider_response|raw_response|raw_payload)$/i.test(normalized);
+  return /^(?:final_prompt|compiled_prompt|provider_internal_payload|provider_payload|provider_raw|provider_raw_payload|provider_raw_response|raw|raw_provider_payload|raw_provider_response|raw_response|raw_payload)$/i.test(normalized);
+}
+
+function hasEncodedImagePayloadField(item, { explicitImageFields = false } = {}) {
+  if (!item || typeof item !== "object" || Buffer.isBuffer(item) || item instanceof ArrayBuffer || ArrayBuffer.isView(item)) return false;
+  for (const key of ["b64_json", "base64", "image_base64", "data_url"]) {
+    if (typeof item[key] === "string" && item[key].trim()) return true;
+  }
+  for (const key of ["image", "result"]) {
+    const value = stringValue(item[key]).trim();
+    if (value && (explicitImageFields || isDataImageUrl(value) || looksLikeStrictBase64(value))) return true;
+  }
+  return false;
 }
 
 function binaryImageValue(item) {
@@ -204,8 +221,10 @@ function encodedImageValue(item) {
     if (typeof value === "string" && value.trim()) return value;
   }
   for (const key of ["image", "result"]) {
-    const value = item[key];
-    if (typeof value === "string" && (isDataImageUrl(value) || looksLikeBase64(value.replace(/\s+/g, "")))) return value;
+    const value = stringValue(item[key]).trim();
+    if (!value) continue;
+    if (isDataImageUrl(value)) return value;
+    if (looksLikeStrictBase64(value.replace(/\s+/g, ""))) return value;
   }
   return "";
 }
@@ -315,6 +334,12 @@ function parseBase64Image(value, { mime = "", format = "" } = {}) {
 
 function looksLikeBase64(value) {
   return Boolean(normalizeBase64Text(value));
+}
+
+function looksLikeStrictBase64(value) {
+  const compact = String(value || "").replace(/\s+/g, "");
+  const normalized = normalizeBase64Text(compact);
+  return compact.length >= 24 && Boolean(normalized) && Boolean(detectImageMime(Buffer.from(normalized, "base64")));
 }
 
 function normalizeBase64Text(value) {

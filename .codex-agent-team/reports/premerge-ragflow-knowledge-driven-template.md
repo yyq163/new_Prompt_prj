@@ -56,8 +56,7 @@ Evidence:
 
 - `evidence/premerge-current-tree-browser-summary.json`
 - `evidence/premerge-current-tree-browser-report.md`
-- `evidence/screenshots/premerge-current-tree-before-submit.png`
-- `evidence/screenshots/premerge-current-tree-after-submit-preview.png`
+- screenshot artifacts are local-only and not tracked on `main01`
 
 ## Merge Rule
 

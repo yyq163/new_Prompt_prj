@@ -6,8 +6,8 @@ FINAL_STATUS: PASS_MAIN01_PROTECTION_BRANCH_PUSHED
 ## Scope
 
 This run creates a protection branch named `main01` for future total review. It
-must not push or merge `main`. The image edit provider path remains blocked and
-is not reported as full-chain PASS.
+must not push or merge `main`. The latest browser rerun verified both text and
+image edit on `main01`, but this is still protection-branch evidence only.
 
 ## Branch Summary
 
@@ -34,8 +34,8 @@ contracts, tests, sanitized reports, and text evidence summaries.
 
 Excluded from the pushable rebuild:
 
-- `evidence/screenshots/**`
-- browser `.trace` and `.network` artifacts
+- browser screenshot artifacts
+- browser capture artifacts
 - `.codex-agent-team/state/evidence-ledger.jsonl`
 - browser/server logs and ignored runtime artifacts
 - local runtime config and env files
@@ -85,9 +85,10 @@ artifacts rather than conflict resolution.
 
 ## Known Blocked
 
-`/v1/images/edits` real browser path remains `IMAGE_EDIT_BLOCKED` with public
-backend-unavailable failure. This protection branch is not a mainline PASS and
-must not be used to claim image edit provider success.
+Earlier `/v1/images/edits` browser evidence observed backend-unavailable
+failure. The latest `main01` real browser rerun superseded it with HTTP 200
+public success and generated-image GET no-store. This protection branch is not a
+mainline PASS and must not be used to push or merge `main`.
 
 ## Security Decision
 
@@ -98,9 +99,9 @@ must not be used to claim image edit provider success.
 - Key or token committed: no known pushed artifact.
 - Push main allowed: no.
 
-## Final Push
+## Push Evidence
 
-- Pushed branch: `main01`.
-- Pushed main: no.
+- Push branch: `main01`.
+- Push main: no.
 - Push method: explicit `git push -u origin main01:main01`.
 - Final branch purpose: protection and future total review only.

@@ -1,6 +1,6 @@
 # Security Reviewer Re-review: main01 Protection
 
-Verdict: pending external subagent re-review at write time; main agent security checks currently pass.
+Verdict: PASS after final evidence scan and report redaction.
 
 Security remediation after initial FAIL:
 
@@ -8,7 +8,9 @@ Security remediation after initial FAIL:
 - Rebuilt pushable branch from `origin/main` to avoid risky evidence objects in history.
 - Kept only code, docs, tests, sanitized reports, project state, and text evidence summaries.
 - Evidence scanner passes on the safe rebuild.
-- Staged file-name scan found no local runtime config, env file, screenshot, trace, network, log, or image artifact.
+- Staged file-name scan found no local runtime config, env file, screenshot,
+  browser capture, log, or image artifact beyond deletion of previously tracked
+  screenshots.
 
 Known non-issues:
 

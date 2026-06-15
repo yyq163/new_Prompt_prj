@@ -1,12 +1,23 @@
-# Visual E2E Report
+# Visual E2E Evidence
 
-Status: REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE
+Status: MAIN01_REDACTED_SUMMARY
 
-This legacy final-api artifact is superseded by the ai-tu V3.6 redacted browser and network summary. Current evidence lives in:
+This pushable evidence file records only redacted browser status. Screenshots
+and trace or network captures are local-only artifacts and are not tracked on
+`main01`.
 
-- `ai-tu/evidence/network-summary.json`
-- `ai-tu/evidence/visual-e2e-report.md`
+## Current Acceptance Meaning
 
-Privacy summary: no complete payloads, credentials, user text, reference links, internal identifiers, encoded image data, or unfiltered upstream bodies are recorded here.
+- Text generation: latest real browser rerun returned HTTP 200, public status
+  succeeded, one image, generated-image GET 200, image content type, and no-store
+  cache control.
+- Image edit: latest real browser upload and edits request returned HTTP 200,
+  public status succeeded, one image, generated-image GET 200, image content
+  type, and no-store cache control.
+- No mock success is accepted.
 
-Provider boundary retained for V3.6: real provider encoded image may be consumed only server-side and converted to a generated image URL; public responses remain URL-only; binary/direct image provider responses are not accepted.
+## Privacy
+
+This file intentionally omits prompts, complete generated-image links, reference
+links, request headers, response bodies, credentials, screenshots, trace files,
+network captures, and encoded image data.

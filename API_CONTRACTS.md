@@ -196,31 +196,11 @@ implementation language in any enhancement field.
 
 Public success fields:
 
-- `request_id`
-- `generation_id`
 - `status`
-- `task_type`
-- `task_type_label`
-- `generation_mode`
-- `input`
 - `images`
-- `normalized`
 - `warnings`
-- `trace_id`
 
-`images[]` always returns URLs. Provider URL results are returned directly. Provider base64, data URL, or binary image results are stored as temporary generated-image URLs under `/api/v1/generated-images/:image_id`.
-
-`normalized.references_used[]` returns:
-
-- `reference_id`
-- `entity_name`
-- `entity_type`
-- `role`
-- `role_label`
-- `display_name`
-- `order`
-
-It does not return `url` or `usage`.
+`images[]` always returns URLs. Provider URL results are validated before being returned. Provider base64, data URL, or binary/direct image results are stored as temporary generated-image URLs under `/api/v1/generated-images/:image_id`.
 
 Forbidden public fields:
 

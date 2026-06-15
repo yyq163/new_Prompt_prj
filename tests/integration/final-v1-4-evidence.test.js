@@ -151,6 +151,7 @@ for (const filePath of scanTextFiles(EVIDENCE_ROOT)) {
 for (const filePath of scanTextFiles(REPORTS_ROOT)) {
   scanText(relative(ROOT, filePath), readFileSync(filePath, "utf8"), { artifact: true });
 }
+scanText("CODEGRAPH_REPORT.md", readFileSync(resolve(ROOT, "CODEGRAPH_REPORT.md"), "utf8"), { artifact: true });
 
 console.log("FINAL_V1_4_EVIDENCE_SCAN_PASS");
 

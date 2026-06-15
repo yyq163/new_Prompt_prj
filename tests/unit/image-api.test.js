@@ -23,6 +23,7 @@ import {
   fetchUpstreamOnce,
   postLiveJson,
   postLiveImageEditMultipart,
+  assertProviderReferenceUrlAllowed,
   resolveAuthorizedFetchUrl,
   resolveAuthorizedUpstreamUrl,
   sanitizeProviderConfig
@@ -900,33 +901,18 @@ test("provider URL response mapper accepts url, image_url, and output_url", () =
   ]);
 });
 
-test("provider URL response is extracted while forbidden raw or encoded fields stay private", async () => {
+test("provider URL response with forbidden raw or encoded fields is rejected", async () => {
   const payloads = [
     { data: [{ url: "https://provider.example.com/a.png", b64_json: samplePngBase64() }] },
     { images: [{ url: "https://provider.example.com/a.png", final_prompt: "must not be accepted" }] },
+    { images: [{ url: "https://provider.example.com/a.png", provider_internal_payload: { id: "raw" } }] },
+    { images: [{ url: "https://provider.example.com/a.png", provider_payload: { id: "raw" } }] },
     { images: [{ url: "https://provider.example.com/a.png", provider_raw_response: { id: "raw" } }] },
     { images: [{ url: "https://provider.example.com/a.png", data: { url: "https://provider.example.com/raw.png" } }] }
   ];
 
   for (const payload of payloads) {
-    const images = extractImageUrls(payload);
-    assert.ok(images.length >= 1);
-    assert.ok(images.some((image) => image.url === "https://provider.example.com/a.png"));
-    const result = await handleImageGeneration({
-      task_type: "text_image",
-      prompt: "生成一张山间晨雾图。",
-      references: []
-    }, {
-      provider: async () => ({
-        status: "succeeded",
-        images
-      })
-    });
-    assertV36Success(result, images.length);
-    const publicText = JSON.stringify(result.payload);
-    assert.equal(publicText.includes(samplePngBase64()), false);
-    assert.equal(publicText.includes("final_prompt"), false);
-    assert.equal(publicText.includes("provider_raw_response"), false);
+    assert.throws(() => extractImageUrls(payload), /不允许透传/);
   }
 });
 
@@ -939,11 +925,10 @@ test("provider image extraction tolerates metadata-heavy encoded image variants"
   const images = extractImageUrls({
     created: 123,
     usage: { total_tokens: 1 },
-    final_prompt: "must not leak",
     data: [{
       b64_json: `\n${urlSafeNoPadding}\n`,
       mime_type: "image/jpeg",
-      raw: { ignored: true }
+      revised_prompt: "safe metadata"
     }]
   });
 
@@ -1018,6 +1003,18 @@ test("provider data URL response is converted to generated image URL", () => {
 
 test("provider binary buffer response is converted to generated image URL", () => {
   clearGeneratedImagesForTest();
+  const dataUrlImages = extractImageUrls(`data:image/png;base64,${samplePngBase64()}`);
+  assert.equal(dataUrlImages.length, 1);
+  assert.match(dataUrlImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+
+  const directBufferImages = extractImageUrls(samplePngBytes(), "png");
+  assert.equal(directBufferImages.length, 1);
+  assert.match(directBufferImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+
+  const directTypedImages = extractImageUrls(new Uint8Array(samplePngBytes()), "png");
+  assert.equal(directTypedImages.length, 1);
+  assert.match(directTypedImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+
   const wrapped = normalizeProviderImageObject({
     binary: samplePngBytes(),
     mime_type: "image/png",
@@ -1123,11 +1120,29 @@ test("generated image route response metadata returns correct content headers an
 });
 
 test("provider encoded image payloads return PROVIDER_RESPONSE_UNSUPPORTED", () => {
-  assert.throws(() => extractImageUrls({ data: [{ b64_json: "not-valid-base64***" }] }), /没有找到可访问的图片/);
+  assert.throws(() => extractImageUrls({ data: [{ b64_json: "not-valid-base64***" }] }), /base64 图片格式非法/);
   assert.throws(() => normalizeProviderImageObject({
     b64_json: Buffer.from("not-an-image").toString("base64"),
     mime_type: "image/gif"
   }, "gif"), /不是支持的图片格式/);
+  assert.throws(() => extractImageUrls({
+    data: [
+      { b64_json: "not-valid-base64***" },
+      { url: "https://provider.example.com/valid.png" }
+    ]
+  }), /base64 图片格式非法/);
+  assert.throws(() => extractImageUrls({
+    data: [
+      { image: "not-valid-base64***" },
+      { url: "https://provider.example.com/valid.png" }
+    ]
+  }), /base64 图片格式非法/);
+  assert.throws(() => extractImageUrls({
+    data: [
+      { result: "not-valid-base64***" },
+      { url: "https://provider.example.com/valid.png" }
+    ]
+  }), /base64 图片格式非法/);
   assert.throws(() => putGeneratedImage({
     bytes: sampleGifBytes(),
     mime: "image/gif"
@@ -1607,6 +1622,31 @@ test("real provider adapter fixes text generation endpoint and model regardless 
   assertNoForbiddenModel(calls[0].body);
 });
 
+test("real provider adapter ignores forbidden configured model names in payload", async () => {
+  for (const forbiddenModel of ["gpt-image-2-all", "gpt-image-1", "dall-e-3"]) {
+    const calls = [];
+    const result = await withTempProviderConfig({
+      baseUrl: "https://provider.example.com/v1/images/generations",
+      imageEditUrl: "https://provider.example.com/v1/images/edits",
+      model: forbiddenModel,
+      imageModel: forbiddenModel,
+      apiKey: "test-key"
+    }, () => generateWithAiTuProvider({
+      request: normalizeRequest({
+        task_type: "text_image",
+        prompt: "生成山间晨雾。",
+        references: []
+      }),
+      compiledPrompt: "compiled prompt",
+      fetchImpl: providerFetchRecorder(calls)
+    }));
+
+    assert.equal(result.status, "succeeded");
+    assert.equal(calls[0].body.model, "gpt-image-2");
+    assertNoForbiddenModel(calls[0].body);
+  }
+});
+
 test("real provider adapter fixes reference-backed tasks to edits endpoint and gpt-image-2", async () => {
   const cases = [
     ["image_reference", "参考 @萧昭宁 生成新图。", [characterRef()]],
@@ -1642,6 +1682,61 @@ test("real provider adapter fixes reference-backed tasks to edits endpoint and g
     assert.equal(submit.headers["Content-Type"], undefined);
     assertNoForbiddenModel(submit.body);
   }
+});
+
+test("provider adapter reference fetch rejects private urls even when called outside route normalization", async () => {
+  assert.throws(() => assertProviderReferenceUrlAllowed("http://127.0.0.1/private.png"), /默认不允许/);
+  assert.throws(() => assertProviderReferenceUrlAllowed("http://10.0.0.5/private.png"), /默认不允许/);
+  assert.equal(assertProviderReferenceUrlAllowed("https://provider.example.com/reference.png"), "https://provider.example.com/reference.png");
+
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, async () => {
+    let fetched = false;
+    await assert.rejects(() => postLiveImageEditMultipart({
+      model: "gpt-image-2",
+      prompt: "compiled prompt",
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
+      images: [{ url: "http://127.0.0.1/private.png" }]
+    }, defaultProviderConfig(), async () => {
+      fetched = true;
+      throw new Error("fetch should not run");
+    }), /默认不允许/);
+    assert.equal(fetched, false);
+  });
+
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, async () => {
+    const calls = [];
+    await assert.rejects(() => postLiveImageEditMultipart({
+      model: "gpt-image-2",
+      prompt: "compiled prompt",
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
+      images: [{ url: "https://provider.example.com/redirect.png" }]
+    }, defaultProviderConfig(), async (url, init) => {
+      calls.push({ url, redirect: init?.redirect || "", method: init?.method || "" });
+      return {
+        ok: false,
+        status: 302,
+        headers: { get: (name) => name.toLowerCase() === "location" ? "http://127.0.0.1/private.png" : null },
+        arrayBuffer: async () => Buffer.alloc(0)
+      };
+    }), /参考图地址无法被生图服务访问/);
+    assert.deepEqual(calls, [{
+      url: "https://provider.example.com/redirect.png",
+      redirect: "manual",
+      method: ""
+    }]);
+  });
 });
 
 test("real provider adapter keeps storyboard without references on generations endpoint", async () => {

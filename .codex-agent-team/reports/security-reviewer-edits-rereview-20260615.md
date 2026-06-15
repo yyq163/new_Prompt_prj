@@ -19,4 +19,4 @@
 
 ## 剩余风险
 
-- 后续真实浏览器采集 `.trace/.network` 后，仍需在落盘后执行同一 evidence scan；若新增 artifact 含完整 generated image URL 或 inline data URI，必须脱敏后再收口。
+- 后续真实浏览器若产生本地捕获文件，仍需执行同一 evidence scan；若新增 artifact 含完整 generated image URL 或 inline data URI，必须脱敏或保持未跟踪后再收口。

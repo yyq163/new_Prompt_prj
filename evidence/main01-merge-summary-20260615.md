@@ -11,6 +11,6 @@ browser trace/network artifacts and screenshot evidence. The pushable rebuild
 excludes screenshots, trace/network files, logs, and the append-only evidence
 ledger while preserving the functional changes and redacted summary evidence.
 
-Image edit provider status remains `IMAGE_EDIT_BLOCKED`. Text generation browser
-evidence remains represented by sanitized summaries; image edit success is not
-claimed.
+Latest redacted browser evidence on `main01` verified text generation after one
+transient provider failure and verified image edit success. This branch remains
+a protection branch only; `main` is not pushed or merged.

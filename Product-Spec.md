@@ -19,7 +19,7 @@ If this document conflicts with the SPEC, the SPEC wins except for the explicit 
 
 - API clients call `POST /api/v1/image-generations` with `prompt`, `task_type`, `references[]`, `reference_policy`, `output`, and `options`.
 - Users can exercise the same flow from a browser test console.
-- Successful responses return standardized `images[]`, `request_id`, `generation_id`, `trace_id`, normalized public binding data, and warnings.
+- Successful responses return `status`, URL-only `images[]`, and warnings. Backend trace identifiers, compiled prompts, raw provider material, and RAGFlow state are not public response fields.
 - Responses never expose internal prompt text, RAGFlow raw output, fallback state, provider payloads, keys, cookies, or authorization headers.
 
 ## Supported Task Types
@@ -36,7 +36,8 @@ Task type is selected by requested deliverable, not inferred from whether a char
 ## Non Goals
 
 - No callback implementation.
-- No file upload, multipart parsing, image hosting, binary image storage, base64-to-URL conversion, or temporary file transfer.
+- No public file upload contract and no client-visible raw image payload transfer.
+- Provider-returned base64, data URL, or binary/direct image bytes may be accepted only inside the server-side provider normalizer and must be converted into temporary Generated Image Store URLs before any public response is returned.
 - No runtime import or require of `ai-tu/gateway/server.js`.
 - No mock provider success for business acceptance.
 - No modification under `ai-tu/**`.

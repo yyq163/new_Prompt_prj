@@ -41,9 +41,10 @@ Optional:
 
 Malformed JSON and request bodies over `MAX_BODY_SIZE` are rejected at the HTTP
 layer with HTTP 400, `status: "failed"`, and
-`error_code: "INVALID_REQUEST_SCHEMA"`. The same handling applies to
-`POST /api/v1/prompt-optimizations`. These failures do not enter request
-normalization or provider execution.
+the V3.6 error envelope carrying `error.code:
+"INVALID_REQUEST_SCHEMA"`. The same 400 code applies to
+`POST /api/v1/prompt-optimizations`, using that legacy route's public error
+shape. These failures do not enter request normalization or provider execution.
 
 ## task_type
 

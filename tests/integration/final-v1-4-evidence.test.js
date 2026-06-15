@@ -8,22 +8,28 @@ import { extractImageUrls } from "../../src/providers/ai-tu-provider-adapter.js"
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const EVIDENCE_ROOT = resolve(ROOT, "evidence");
+const REPORTS_ROOT = resolve(ROOT, ".codex-agent-team/reports");
 
 const forbiddenPatterns = [
-  /\bfinal_prompt\b/i,
-  /\bfinal_prompt_preview\b/i,
-  /\bcompiled_prompt\b/i,
-  /\binternal_prompt\b/i,
-  /\bragflow[_ -]?state\b/i,
-  /\bfallback[_ -]?state\b/i,
-  /\bprovider[_ -]?payload\b/i,
-  /\bprovider_internal_payload\b/i,
-  /\braw[_ -]?provider[_ -]?payload\b/i,
-  /\bb64_json\b/i,
+  /\bfinal_prompt\b\s*[:=]/i,
+  /\bfinal_prompt_preview\b\s*[:=]/i,
+  /\bcompiled_prompt\b\s*[:=]/i,
+  /\binternal_prompt\b\s*[:=]/i,
+  /\bragflow[_ -]?state\b\s*[:=]/i,
+  /\bfallback[_ -]?state\b\s*[:=]/i,
+  /\bprovider[_ -]?payload\b\s*[:=]/i,
+  /\bprovider_internal_payload\b\s*[:=]/i,
+  /\braw[_ -]?provider[_ -]?payload\b\s*[:=]/i,
+  /\bb64_json\b\s*[:=]/i,
   /\bdata:image\b/i,
-  /\bsecret\b/i,
-  /\bapi[_ -]?key\b/i,
-  /\btoken\b/i
+  /\bAuthorization\b\s*[:=]\s*(?!\[REDACTED\])/i,
+  /\bCookie\b\s*[:=]\s*(?!\[REDACTED\])/i,
+  /\b(?:api[_ -]?key|token|secret)\b\s*[:=]\s*(?!\[REDACTED|\[REDACTED_SECRET\])/i,
+  /[A-Za-z0-9+/]{256,}={0,2}/
+];
+
+const artifactOnlyForbiddenPatterns = [
+  /https?:\/\/[^\s"')\]}]+\/api\/v1\/generated-images\/img_[a-f0-9]{32}/i
 ];
 
 const samplePng = Buffer.from([
@@ -75,8 +81,9 @@ const bytesResult = await withEnv({
     images: extractImageUrls({ data: [{ b64_json: samplePng.toString("base64"), mime_type: "image/png" }] })
   })
 }));
-assert.equal(bytesResult.payload.images[0].url.includes("data:"), false);
-assert.match(bytesResult.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_/);
+assert.equal(bytesResult.statusCode, 200);
+assert.equal(bytesResult.payload.status, "succeeded");
+assert.match(bytesResult.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
 scanText("public-byte-response", JSON.stringify(bytesResult.payload));
 
 let callbackFetches = 0;
@@ -124,7 +131,10 @@ for (const callback_url of [
     }
   });
   assert.equal(rejected.payload.status, "failed");
-  assert.equal(rejected.payload.error_code, "INVALID_REQUEST_SCHEMA");
+  assert.deepEqual(Object.keys(rejected.payload).sort(), ["error", "images", "status", "warnings"]);
+  assert.equal(rejected.payload.error.code, "INVALID_REQUEST_SCHEMA");
+  assert.deepEqual(rejected.payload.images, []);
+  assert.deepEqual(rejected.payload.warnings, []);
 }
 
 const stored = await import("../../src/core/generated-image-store.js");
@@ -135,26 +145,34 @@ assert.equal(getResult.headers["Content-Type"], "image/png");
 assert.equal(getResult.headers["Cache-Control"], "no-store");
 assert.equal(getResult.headers["Content-Length"], String(samplePng.length));
 
-for (const filePath of evidenceTextFiles(EVIDENCE_ROOT)) {
-  scanText(relative(ROOT, filePath), readFileSync(filePath, "utf8"));
+for (const filePath of scanTextFiles(EVIDENCE_ROOT)) {
+  scanText(relative(ROOT, filePath), readFileSync(filePath, "utf8"), { artifact: true });
+}
+for (const filePath of scanTextFiles(REPORTS_ROOT)) {
+  scanText(relative(ROOT, filePath), readFileSync(filePath, "utf8"), { artifact: true });
 }
 
 console.log("FINAL_V1_4_EVIDENCE_SCAN_PASS");
 
-function scanText(label, text) {
+function scanText(label, text, { artifact = false } = {}) {
   for (const pattern of forbiddenPatterns) {
     assert.doesNotMatch(text, pattern, `${label} contains forbidden pattern ${pattern}`);
   }
+  if (artifact) {
+    for (const pattern of artifactOnlyForbiddenPatterns) {
+      assert.doesNotMatch(text, pattern, `${label} contains forbidden artifact pattern ${pattern}`);
+    }
+  }
 }
 
-function evidenceTextFiles(dir) {
+function scanTextFiles(dir) {
   const files = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const stat = statSync(path);
     if (stat.isDirectory()) {
-      if (name !== "screenshots") files.push(...evidenceTextFiles(path));
-    } else if (/\.(json|md|txt)$/i.test(name)) {
+      files.push(...scanTextFiles(path));
+    } else if (/\.(json|md|txt|network|trace|log|har)$/i.test(name)) {
       files.push(path);
     }
   }

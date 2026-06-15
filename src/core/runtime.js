@@ -17,7 +17,7 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["request_id", "task_type", "prompt", "references", "reference_policy", "output", "options", "callback_url", "callback"]
   },
   ImageGenerationResponse: {
-    fields: ["request_id", "generation_id", "status", "task_type", "task_type_label", "generation_mode", "input", "images", "normalized", "warnings", "trace_id"]
+    fields: ["status", "images", "warnings"]
   },
   ReferenceInput: {
     fields: ["reference_id", "entity_name", "entity_type", "role", "url", "mime_type", "display_name", "description", "order"]
@@ -32,7 +32,7 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["unbound_entity"]
   },
   GenerationImage: {
-    fields: ["image_id", "url", "width", "height", "format"]
+    fields: ["url"]
   },
   ProviderAdapterResult: {
     fields: ["status", "images"]

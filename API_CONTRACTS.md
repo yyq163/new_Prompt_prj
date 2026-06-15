@@ -5,8 +5,11 @@
 Final image generation API. The request body is JSON only.
 
 Malformed JSON and request bodies over `MAX_BODY_SIZE` return HTTP 400 with
-`status: "failed"` and `error_code: "INVALID_REQUEST_SCHEMA"` before request
-normalization or provider execution.
+the V3.6 failure envelope (`status: "failed"`, `error.code:
+"INVALID_REQUEST_SCHEMA"`) before request normalization or provider execution.
+Client validation and clarification errors retain their original public
+`error.code` and 4xx status; only provider/upstream failures are mapped to
+generic prompt image backend error codes.
 
 ### Request Fields
 

@@ -2708,7 +2708,7 @@
         controls.mainPreviewImage.removeAttribute("src");
         resetPreviewZoom();
         controls.previewPlaceholder.hidden = false;
-        controls.previewPlaceholder.innerHTML = `<div><strong>${escapeHtml(statusLabel(job && job.status))}</strong><span>${escapeHtml(job && job.error ? job.error : job ? job.prompt : "任务状态更新中")}</span></div>`;
+        controls.previewPlaceholder.innerHTML = `<div><strong>${escapeHtml(statusLabel(job && job.status))}</strong><span>${escapeHtml(job && job.error ? jobErrorMessage(job) : job ? job.prompt : "任务状态更新中")}</span></div>`;
         controls.previewCaption.textContent = `${statusLabel(job && job.status)} · ${job ? shortJob(job.jobId) : "任务"}`;
         controls.downloadPreviewBtn.disabled = true;
       } else {
@@ -2759,7 +2759,7 @@
         upsertJob(job);
         renderJobs();
         previewJob(job.jobId);
-        setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${job.error || "未知错误"}`, job.status === "succeeded" ? "good" : "bad");
+        setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${jobErrorMessage(job)}`, job.status === "succeeded" ? "good" : "bad");
       } catch (error) {
         const message = errorToMessage(error);
         if (pendingJob) {
@@ -2908,7 +2908,7 @@
           if (job.status === "succeeded" || job.status === "failed") {
             removePendingJob(jobId);
             pollers.delete(jobId);
-            setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${job.error || "未知错误"}`, job.status === "succeeded" ? "good" : "bad");
+            setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${jobErrorMessage(job)}`, job.status === "succeeded" ? "good" : "bad");
             return;
           }
 
@@ -2961,7 +2961,7 @@
     function normalizeJob(payload, request = {}) {
       const fill = payload.fill || payload.request || (request.prompt ? buildJobFillSnapshot(request) : null);
       const jobId = payload.jobId || payload.generation_id || payload.request_id || `job_${Date.now()}`;
-      const errorMessage = payload.error || payload.message || payload.error_code || null;
+      const errorMessage = normalizeErrorMessage(payload.error || payload.message || payload.error_code || null);
       return {
         jobId,
         prompt: payload.prompt || payload.input?.prompt || request.prompt || "",
@@ -3023,7 +3023,7 @@
           : `<span>${escapeHtml(statusLabel(job.status))}</span>`;
         const action = image
           ? `<button type="button" data-download-job="${escapeHtml(job.jobId)}" data-download-image="0">下载</button>`
-          : `<span>${escapeHtml(job.error || "等待返图")}</span>`;
+          : `<span>${escapeHtml(job && job.error ? jobErrorMessage(job) : "等待返图")}</span>`;
         const variants = images.length > 1
           ? `<div class="history-variants" aria-label="${escapeHtml(shortJob(job.jobId))} 的全部返图">
               ${images.map((item, index) => `
@@ -3794,15 +3794,28 @@
       return String(jobId || "").slice(0, 8);
     }
 
-    function errorToMessage(error) {
-      if (!error) return "未知错误。";
-      if (error.message) return error.message;
+    function jobErrorMessage(job) {
+      return normalizeErrorMessage(job && job.error) || "未知错误";
+    }
+
+    function normalizeErrorMessage(error) {
+      if (!error) return "";
       if (typeof error === "string") return error;
-      try {
-        return JSON.stringify(error);
-      } catch {
-        return String(error);
+      if (typeof error === "object") {
+        if (typeof error.message === "string" && error.message.trim()) return error.message;
+        if (typeof error.code === "string" && error.code.trim()) return error.code;
+        if (error.error) return normalizeErrorMessage(error.error);
       }
+      try {
+        const message = JSON.stringify(error);
+        return message && message !== "{}" ? message : "";
+      } catch {
+        return String(error || "");
+      }
+    }
+
+    function errorToMessage(error) {
+      return normalizeErrorMessage(error) || "未知错误。";
     }
 
     function setStatus(message, type = "") {

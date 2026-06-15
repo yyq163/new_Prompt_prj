@@ -34,6 +34,7 @@ export function normalizeProviderImages(json, format = "png") {
   });
 
   if (!found.length) {
+    assertNoProviderError(json);
     throw new ImageApiError({
       statusCode: 502,
       status: "failed",
@@ -58,7 +59,12 @@ export function normalizeProviderImages(json, format = "png") {
 export function normalizeProviderImageObject(item, fallbackFormat = "png") {
   if (!item) return null;
   if (Buffer.isBuffer(item) || item instanceof ArrayBuffer || ArrayBuffer.isView(item)) {
-    return generatedImageFromBytes(item, { format: fallbackFormat });
+    return generatedImageFromBinary(item, {
+      mime: formatToMime(fallbackFormat),
+      format: fallbackFormat,
+      width: null,
+      height: null
+    });
   }
   if (typeof item === "string") {
     return normalizeProviderImageString(item, { fallbackFormat });
@@ -77,23 +83,23 @@ export function normalizeProviderImageObject(item, fallbackFormat = "png") {
     };
   }
 
-  const binary = binaryImageValue(item);
-  if (binary) {
-    return generatedImageFromBytes(binary, {
-      mime: imageMime(item, fallbackFormat),
-      format: stringValue(item.format).trim() || fallbackFormat,
-      width: item.width,
-      height: item.height
-    });
-  }
-
   const encoded = encodedImageValue(item);
   if (encoded) {
     return generatedImageFromEncoded(encoded, {
       mime: imageMime(item, fallbackFormat),
-      format: stringValue(item.format).trim() || fallbackFormat,
-      width: item.width,
-      height: item.height
+      format: stringValue(item.format || fallbackFormat).trim() || fallbackFormat,
+      width: finiteNumber(item.width),
+      height: finiteNumber(item.height)
+    });
+  }
+
+  const binary = binaryImageValue(item);
+  if (binary) {
+    return generatedImageFromBinary(binary, {
+      mime: imageMime(item, fallbackFormat),
+      format: stringValue(item.format || fallbackFormat).trim() || fallbackFormat,
+      width: finiteNumber(item.width),
+      height: finiteNumber(item.height)
     });
   }
 
@@ -114,53 +120,14 @@ function normalizeProviderImageString(value, { fallbackFormat = "png" } = {}) {
     };
   }
   if (isDataImageUrl(text)) {
-    return generatedImageFromEncoded(text, { format: fallbackFormat });
+    return generatedImageFromEncoded(text, {
+      mime: formatToMime(fallbackFormat),
+      format: fallbackFormat,
+      width: null,
+      height: null
+    });
   }
   return null;
-}
-
-function generatedImageFromEncoded(value, { mime = "", format = "png", width = null, height = null } = {}) {
-  const parsed = parseBase64Image(value);
-  if (!parsed) unsupportedProviderImage("上游返回的 base64 图片格式非法。");
-  return generatedImageFromBytes(parsed.bytes, {
-    mime: parsed.mime || mime || formatToMime(format),
-    format,
-    width,
-    height
-  });
-}
-
-function generatedImageFromBytes(bytes, { mime = "", format = "png", width = null, height = null } = {}) {
-  const stored = putGeneratedImage({
-    bytes,
-    mime: mime || formatToMime(format),
-    format,
-    maxBytes: DEFAULT_GENERATED_IMAGE_MAX_BYTES,
-    source: "real_provider_response"
-  });
-  return {
-    image_id: stored.id,
-    url: stored.path,
-    width: finiteNumber(width),
-    height: finiteNumber(height),
-    format: stored.format || normalizeImageFormat(format),
-    mime: stored.mime,
-    size: stored.size,
-    url_kind: "service_generated_image_url_from_real_provider_bytes"
-  };
-}
-
-function parseBase64Image(value) {
-  const text = stringValue(value).trim();
-  if (!text) return null;
-  const dataUrl = text.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
-  const mime = dataUrl ? dataUrl[1].toLowerCase() : "";
-  const payload = dataUrl ? dataUrl[2] : text;
-  const base64 = payload.replace(/\s+/g, "");
-  if (!looksLikeBase64(base64)) return null;
-  const bytes = Buffer.from(base64, "base64");
-  if (!bytes.length) return null;
-  return { bytes, mime };
 }
 
 function isProviderImageCandidate(node) {
@@ -170,6 +137,52 @@ function isProviderImageCandidate(node) {
 function providerUrlValue(item) {
   return [item.url, item.image_url, item.output_url, item.download_url]
     .find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
+}
+
+function assertNoProviderError(value) {
+  let hasProviderError = false;
+  walk(value, (node) => {
+    if (hasProviderError || !node || typeof node !== "object") return;
+    if (Buffer.isBuffer(node) || ArrayBuffer.isView(node) || node instanceof ArrayBuffer) return;
+    if (Object.prototype.hasOwnProperty.call(node, "error") && node.error) {
+      hasProviderError = true;
+    }
+  });
+  if (hasProviderError) {
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "IMAGE_PROVIDER_CALL_FAILED",
+      message: "provider 返回错误。"
+    });
+  }
+}
+
+function assertNoForbiddenProviderPayload(value) {
+  let forbidden = false;
+  walk(value, (node) => {
+    if (forbidden || node == null) return;
+    if (Buffer.isBuffer(node) || node instanceof ArrayBuffer || ArrayBuffer.isView(node)) return;
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    if (providerUrlValue(node) && (encodedImageValue(node) || binaryImageValue(node) || hasNonArrayDataPayload(node))) {
+      forbidden = true;
+      return;
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (isForbiddenProviderPayloadField(key, child)) {
+        forbidden = true;
+        return;
+      }
+    }
+  });
+  if (forbidden) unsupportedProviderImage("上游返回的图片结果包含不允许透传的字段。");
+}
+
+function isForbiddenProviderPayloadField(key, value) {
+  const normalized = String(key || "").toLowerCase();
+  if (normalized === "data") return false;
+  if (/^(?:bytes|buffer|binary)$/i.test(normalized)) return false;
+  return /^(?:final_prompt|compiled_prompt|provider_raw|provider_raw_payload|provider_raw_response|raw|raw_provider_payload|raw_provider_response|raw_response|raw_payload)$/i.test(normalized);
 }
 
 function binaryImageValue(item) {
@@ -187,34 +200,27 @@ function encodedImageValue(item) {
   }
   for (const key of ["image", "result"]) {
     const value = item[key];
-    if (typeof value === "string" && isDataImageUrl(value)) return value;
+    if (typeof value === "string" && (isDataImageUrl(value) || looksLikeBase64(value.replace(/\s+/g, "")))) return value;
   }
   return "";
 }
 
 function providerImageCandidateKey(item) {
   if (!item) return "";
-  if (Buffer.isBuffer(item) || item instanceof ArrayBuffer || ArrayBuffer.isView(item)) {
-    return `bytes:${hashBytes(Buffer.from(item))}`;
+  if (Buffer.isBuffer(item) || item instanceof ArrayBuffer || ArrayBuffer.isView(item)) return `binary:${hashBytes(item)}`;
+  if (typeof item === "string") {
+    if (/^https?:\/\//i.test(item)) return `text:${item}`;
+    if (isDataImageUrl(item)) return `encoded:${hashText(item)}`;
+    return "";
   }
-  if (typeof item === "string") return `text:${hashText(item)}`;
   if (typeof item !== "object") return "";
   const url = providerUrlValue(item);
   if (url) return `url:${url}`;
   const binary = binaryImageValue(item);
-  if (binary) return `bytes:${hashBytes(Buffer.from(binary))}`;
+  if (binary) return `binary:${hashBytes(binary)}`;
   const encoded = encodedImageValue(item);
-  if (encoded) return `encoded:${hashText(encoded.replace(/\s+/g, ""))}`;
+  if (encoded) return `encoded:${hashText(encoded)}`;
   return "";
-}
-
-function imageMime(item, fallbackFormat = "png") {
-  const explicit = stringValue(item.mime || item.mimetype || item.mime_type || item.content_type || item.type).trim();
-  if (/^image\//i.test(explicit)) return explicit;
-  const format = stringValue(item.format || fallbackFormat || "png").trim().toLowerCase();
-  if (format === "jpg" || format === "jpeg") return "image/jpeg";
-  if (format === "webp") return "image/webp";
-  return "image/png";
 }
 
 function finiteNumber(value) {
@@ -234,11 +240,6 @@ function isDataImageUrl(value) {
   return /^data:image\/[a-z0-9.+-]+;base64,/i.test(stringValue(value).trim());
 }
 
-function looksLikeBase64(value) {
-  if (!value || value.length < 8 || value.length % 4 === 1) return false;
-  return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
-}
-
 function normalizeImageFormat(format) {
   const value = stringValue(format).trim().toLowerCase();
   if (value === "jpg") return "jpeg";
@@ -247,12 +248,97 @@ function normalizeImageFormat(format) {
   return mimeFormat || "png";
 }
 
+function generatedImageFromEncoded(value, { mime = "", format = "", width = null, height = null } = {}) {
+  const parsed = parseBase64Image(value, { mime, format });
+  const stored = putGeneratedImage({
+    bytes: parsed.bytes,
+    mime: parsed.mime,
+    format: parsed.format,
+    maxBytes: DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+    source: "real_provider_response_base64"
+  });
+  return {
+    image_id: stored.id,
+    url: stored.path,
+    width,
+    height,
+    format: stored.format,
+    mime: stored.mime,
+    size: stored.size,
+    url_kind: "service_generated_image_url_from_real_provider_base64"
+  };
+}
+
+function generatedImageFromBinary(value, { mime = "", format = "", width = null, height = null } = {}) {
+  const stored = putGeneratedImage({
+    bytes: value,
+    mime,
+    format,
+    maxBytes: DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+    source: "real_provider_response_binary"
+  });
+  return {
+    image_id: stored.id,
+    url: stored.path,
+    width,
+    height,
+    format: stored.format,
+    mime: stored.mime,
+    size: stored.size,
+    url_kind: "service_generated_image_url_from_real_provider_binary"
+  };
+}
+
+function parseBase64Image(value, { mime = "", format = "" } = {}) {
+  const text = stringValue(value).trim();
+  let encoded = text;
+  let detectedMime = stringValue(mime).split(";")[0].trim().toLowerCase();
+  if (isDataImageUrl(text)) {
+    const match = text.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+    if (!match) unsupportedProviderImage("上游返回的 base64 图片格式非法。");
+    detectedMime = match[1].toLowerCase();
+    encoded = match[2];
+  }
+  const compact = normalizeBase64Text(encoded);
+  if (!compact) unsupportedProviderImage("上游返回的 base64 图片格式非法。");
+  return {
+    bytes: Buffer.from(compact, "base64"),
+    mime: detectedMime || formatToMime(format),
+    format
+  };
+}
+
+function looksLikeBase64(value) {
+  return Boolean(normalizeBase64Text(value));
+}
+
+function normalizeBase64Text(value) {
+  let text = stringValue(value).replace(/\s+/g, "");
+  if (!text) return "";
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(text)) return "";
+  const firstPadding = text.indexOf("=");
+  if (firstPadding >= 0 && !/^=*$/.test(text.slice(firstPadding))) return "";
+  text = text.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  const remainder = text.length % 4;
+  if (remainder === 1) return "";
+  if (remainder) text += "=".repeat(4 - remainder);
+  return text;
+}
+
+function imageMime(item, fallbackFormat = "png") {
+  return stringValue(item.mime_type || item.mime || item.content_type).trim() || formatToMime(item.format || fallbackFormat);
+}
+
+function hasNonArrayDataPayload(item) {
+  return Object.prototype.hasOwnProperty.call(item, "data") && !Array.isArray(item.data);
+}
+
 function hashText(value) {
   return createHash("sha256").update(stringValue(value)).digest("hex");
 }
 
 function hashBytes(value) {
-  return createHash("sha256").update(value).digest("hex");
+  return createHash("sha256").update(Buffer.from(value instanceof ArrayBuffer ? value : ArrayBuffer.isView(value) ? value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) : value)).digest("hex");
 }
 
 function unsupportedProviderImage(message) {

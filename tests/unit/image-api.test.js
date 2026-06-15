@@ -21,7 +21,10 @@ import {
   normalizeProviderImageObject,
   normalizeProviderResult,
   fetchUpstreamOnce,
+  postLiveJson,
   postLiveImageEditMultipart,
+  resolveAuthorizedFetchUrl,
+  resolveAuthorizedUpstreamUrl,
   sanitizeProviderConfig
 } from "../../src/providers/ai-tu-provider-adapter.js";
 import {
@@ -41,33 +44,26 @@ test("text_image without references succeeds with public response contract", asy
     references: []
   });
   assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.generation_mode, "text_to_image");
+  assertV36Success(result);
   assert.equal(result.payload.images[0].url, imageUrl);
-  assertNoForbidden(result.payload);
 });
 
-test("text_image with references returns REFERENCES_NOT_ALLOWED", async () => {
+test("text_image with references returns client contract error envelope", async () => {
   const result = await call({
     task_type: "text_image",
     prompt: "生成 @萧昭宁。",
     references: [characterRef()]
   });
-  assert.equal(result.payload.status, "failed");
-  assert.equal(result.payload.error_code, "REFERENCES_NOT_ALLOWED");
-  assert.match(result.payload.trace_id, /^trace_/);
+  assertV36Error(result, "REFERENCES_NOT_ALLOWED", 400);
 });
 
-test("schema errors still include trace_id and no internal fields", async () => {
+test("schema errors return client contract error envelope and no internal fields", async () => {
   const result = await call({
     task_type: "",
     prompt: "生成山水。",
     references: []
   });
-  assert.equal(result.payload.status, "needs_clarification");
-  assert.equal(result.payload.error_code, "UNSUPPORTED_TASK_TYPE");
-  assert.match(result.payload.trace_id, /^trace_/);
-  assertNoForbidden(result.payload);
+  assertV36Error(result, "UNSUPPORTED_TASK_TYPE", 200, "needs_clarification");
 });
 
 test("callback_url and callback are accepted but not executed or exposed", async () => {
@@ -84,7 +80,7 @@ test("callback_url and callback are accepted but not executed or exposed", async
     }
   });
   assert.equal(withCallbackUrl.statusCode, 200);
-  assert.equal(withCallbackUrl.payload.status, "succeeded");
+  assertV36Success(withCallbackUrl);
   assert.equal("callback_status" in withCallbackUrl.payload, false);
   assert.equal(JSON.stringify(withCallbackUrl.payload).includes("CALLBACK_NOT_IMPLEMENTED"), false);
   assert.equal(callbackFetches, 0);
@@ -196,7 +192,6 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
   try {
     process.env.PUBLIC_BASE_URL = "https://img.example.com///";
     assert.equal(resolveGeneratedImagePublicBaseUrl(), "https://img.example.com");
-    clearGeneratedImagesForTest();
     const result = await handleImageGeneration({
       task_type: "text_image",
       prompt: "生成一张山间晨雾图。",
@@ -204,10 +199,10 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
     }, {
       provider: async () => ({
         status: "succeeded",
-        images: extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] })
+        images: [{ image_id: "img_public_base", url: "/api/v1/generated-images/img_public_base", width: 1, height: 1, format: "png" }]
       })
     });
-    assert.match(result.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_/);
+    assert.match(result.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_public_base/);
     assert.doesNotMatch(result.payload.images[0].url, /\/\/api\/v1/);
 
     process.env.PUBLIC_BASE_URL = "ftp://bad.example.com";
@@ -216,6 +211,17 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
     delete process.env.PUBLIC_BASE_URL;
     process.env.NODE_ENV = "production";
     assert.throws(() => resolveGeneratedImagePublicBaseUrl(), /PUBLIC_BASE_URL/);
+    const missingBaseResult = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }, {
+      provider: async () => ({
+        status: "succeeded",
+        images: [{ image_id: "img_requires_public_base", url: "/api/v1/generated-images/img_requires_public_base", width: 1, height: 1, format: "png" }]
+      })
+    });
+    assertV36Error(missingBaseResult, "PUBLIC_BASE_URL_REQUIRED", 500);
 
     process.env.NODE_ENV = "development";
     process.env.HOST = "0.0.0.0";
@@ -241,8 +247,7 @@ test("image_reference with references succeeds", async () => {
     prompt: "参考 @萧昭宁 生成新图。",
     references: [characterRef()]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.generation_mode, "image_to_image");
+  assertV36Success(result);
 });
 
 test("character_multiview character reference succeeds", async () => {
@@ -251,9 +256,10 @@ test("character_multiview character reference succeeds", async () => {
     prompt: "生成 @萧昭宁 的四视图。",
     references: [characterRef()]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.normalized.references_used[0].role, "character_reference");
-  assert.equal("usage" in result.payload.normalized.references_used[0], false);
+  assertV36Success(result);
+  const binding = bindingFor({ task_type: "character_multiview", prompt: "生成 @萧昭宁 的四视图。", references: [characterRef()] });
+  assert.equal(binding.references_used[0].role, "character_reference");
+  assert.equal("usage" in binding.references_used[0], false);
 });
 
 test("character_multiview accepts face_reference", async () => {
@@ -262,8 +268,9 @@ test("character_multiview accepts face_reference", async () => {
     prompt: "生成 @萧昭宁 的四视图。",
     references: [characterRef({ role: "face_reference", entity_type: "character" })]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.normalized.references_used[0].role, "face_reference");
+  assertV36Success(result);
+  const binding = bindingFor({ task_type: "character_multiview", prompt: "生成 @萧昭宁 的四视图。", references: [characterRef({ role: "face_reference", entity_type: "character" })] });
+  assert.equal(binding.references_used[0].role, "face_reference");
 });
 
 test("character_multiview character plus scene references succeed", async () => {
@@ -272,8 +279,9 @@ test("character_multiview character plus scene references succeed", async () => 
     prompt: "生成 @萧昭宁 在 @营帐 中的角色设定。",
     references: [characterRef(), sceneRef()]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.normalized.references_used.length, 2);
+  assertV36Success(result);
+  const binding = bindingFor({ task_type: "character_multiview", prompt: "生成 @萧昭宁 在 @营帐 中的角色设定。", references: [characterRef(), sceneRef()] });
+  assert.equal(binding.references_used.length, 2);
 });
 
 test("scene_multiview scene plus character references succeed", async () => {
@@ -282,9 +290,9 @@ test("scene_multiview scene plus character references succeed", async () => {
     prompt: "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图",
     references: [characterRef(), sceneRef()]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal(result.payload.task_type, "scene_multiview");
-  assert.equal(result.payload.normalized.entity_mentions.length, 2);
+  assertV36Success(result);
+  const binding = bindingFor({ task_type: "scene_multiview", prompt: "生成 @萧昭宁 在 @营帐 中的现场光影多视角参考图", references: [characterRef(), sceneRef()] });
+  assert.equal(binding.entity_mentions.length, 2);
 });
 
 test("scene_multiview accepts lighting and composition references without scene role", async () => {
@@ -293,8 +301,9 @@ test("scene_multiview accepts lighting and composition references without scene 
     prompt: "生成 @冷色光影 的现场光影多视角参考图",
     references: [sceneRef({ reference_id: "ref_light", entity_name: "冷色光影", entity_type: "lighting", role: "lighting_reference" })]
   });
-  assert.equal(lighting.payload.status, "succeeded");
-  assert.equal(lighting.payload.normalized.references_used[0].role, "lighting_reference");
+  assertV36Success(lighting);
+  const lightingBinding = bindingFor({ task_type: "scene_multiview", prompt: "生成 @冷色光影 的现场光影多视角参考图", references: [sceneRef({ reference_id: "ref_light", entity_name: "冷色光影", entity_type: "lighting", role: "lighting_reference" })] });
+  assert.equal(lightingBinding.references_used[0].role, "lighting_reference");
   assert.equal(lighting.payload.warnings[0].code, "SCENE_REFERENCE_MISSING");
 
   const composition = await call({
@@ -302,8 +311,9 @@ test("scene_multiview accepts lighting and composition references without scene 
     prompt: "生成 @对称构图 的现场光影多视角参考图",
     references: [sceneRef({ reference_id: "ref_comp", entity_name: "对称构图", entity_type: "composition", role: "composition_reference" })]
   });
-  assert.equal(composition.payload.status, "succeeded");
-  assert.equal(composition.payload.normalized.references_used[0].role, "composition_reference");
+  assertV36Success(composition);
+  const compositionBinding = bindingFor({ task_type: "scene_multiview", prompt: "生成 @对称构图 的现场光影多视角参考图", references: [sceneRef({ reference_id: "ref_comp", entity_name: "对称构图", entity_type: "composition", role: "composition_reference" })] });
+  assert.equal(compositionBinding.references_used[0].role, "composition_reference");
 });
 
 test("prop_multiview prop reference succeeds", async () => {
@@ -312,7 +322,7 @@ test("prop_multiview prop reference succeeds", async () => {
     prompt: "生成 @铜镜 的道具多视图。",
     references: [propRef()]
   });
-  assert.equal(result.payload.status, "succeeded");
+  assertV36Success(result);
 });
 
 test("prop_multiview accepts material and ornament references", async () => {
@@ -321,16 +331,18 @@ test("prop_multiview accepts material and ornament references", async () => {
     prompt: "生成 @青铜材质 的道具材质多视图。",
     references: [propRef({ reference_id: "ref_material", entity_name: "青铜材质", entity_type: "material", role: "material_reference" })]
   });
-  assert.equal(material.payload.status, "succeeded");
-  assert.equal(material.payload.normalized.references_used[0].role, "material_reference");
+  assertV36Success(material);
+  const materialBinding = bindingFor({ task_type: "prop_multiview", prompt: "生成 @青铜材质 的道具材质多视图。", references: [propRef({ reference_id: "ref_material", entity_name: "青铜材质", entity_type: "material", role: "material_reference" })] });
+  assert.equal(materialBinding.references_used[0].role, "material_reference");
 
   const ornament = await call({
     task_type: "prop_multiview",
     prompt: "生成 @云纹装饰 的道具纹样多视图。",
     references: [propRef({ reference_id: "ref_ornament", entity_name: "云纹装饰", entity_type: "ornament", role: "ornament_reference" })]
   });
-  assert.equal(ornament.payload.status, "succeeded");
-  assert.equal(ornament.payload.normalized.references_used[0].role, "ornament_reference");
+  assertV36Success(ornament);
+  const ornamentBinding = bindingFor({ task_type: "prop_multiview", prompt: "生成 @云纹装饰 的道具纹样多视图。", references: [propRef({ reference_id: "ref_ornament", entity_name: "云纹装饰", entity_type: "ornament", role: "ornament_reference" })] });
+  assert.equal(ornamentBinding.references_used[0].role, "ornament_reference");
 });
 
 test("character_multiview without character or face reference returns warning but succeeds", async () => {
@@ -339,7 +351,7 @@ test("character_multiview without character or face reference returns warning bu
     prompt: "生成一名银发医师的角色四视图。",
     references: [sceneRef({ entity_name: "医馆", role: "scene_reference", entity_type: "scene" })]
   });
-  assert.equal(result.payload.status, "succeeded");
+  assertV36Success(result);
   assert.equal(result.payload.warnings[0].code, "CHARACTER_REFERENCE_MISSING");
 });
 
@@ -349,7 +361,7 @@ test("scene_multiview without scene reference returns warning but succeeds", asy
     prompt: "生成 @研究员 的现场光影多视角参考图。",
     references: [characterRef({ entity_name: "研究员" })]
   });
-  assert.equal(result.payload.status, "succeeded");
+  assertV36Success(result);
   assert.equal(result.payload.warnings[0].code, "SCENE_REFERENCE_MISSING");
 });
 
@@ -359,7 +371,7 @@ test("prop_multiview without prop material or ornament reference returns warning
     prompt: "生成一件符文器具的多角度资产图。",
     references: [sceneRef({ entity_name: "工坊", role: "scene_reference", entity_type: "scene" })]
   });
-  assert.equal(result.payload.status, "succeeded");
+  assertV36Success(result);
   assert.equal(result.payload.warnings[0].code, "PROP_REFERENCE_MISSING");
 });
 
@@ -687,7 +699,7 @@ test("duplicate reference_id fails", async () => {
     prompt: "参考 @萧昭宁",
     references: [characterRef(), characterRef()]
   });
-  assert.equal(result.payload.error_code, "DUPLICATE_REFERENCE_ID");
+  assertV36Error(result, "DUPLICATE_REFERENCE_ID", 400);
 });
 
 test("same entity and role multiple references all bind successfully", async () => {
@@ -699,9 +711,17 @@ test("same entity and role multiple references all bind successfully", async () 
       characterRef({ reference_id: "ref_b", url: "https://example.com/b.png" })
     ]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.deepEqual(result.payload.normalized.entity_mentions[0].matched_reference_ids, ["ref_a", "ref_b"]);
-  assert.equal(result.payload.normalized.references_used.length, 2);
+  assertV36Success(result);
+  const binding = bindingFor({
+    task_type: "image_reference",
+    prompt: "参考 @萧昭宁",
+    references: [
+      characterRef({ reference_id: "ref_a" }),
+      characterRef({ reference_id: "ref_b", url: "https://example.com/b.png" })
+    ]
+  });
+  assert.deepEqual(binding.entity_mentions[0].matched_reference_ids, ["ref_a", "ref_b"]);
+  assert.equal(binding.references_used.length, 2);
 });
 
 test("unmentioned references are still included in references_used", async () => {
@@ -713,8 +733,16 @@ test("unmentioned references are still included in references_used", async () =>
       sceneRef({ reference_id: "ref_scene_unmentioned", entity_name: "营帐" })
     ]
   });
-  assert.equal(result.payload.status, "succeeded");
-  assert.deepEqual(result.payload.normalized.references_used.map((item) => item.reference_id), ["ref_a", "ref_scene_unmentioned"]);
+  assertV36Success(result);
+  const binding = bindingFor({
+    task_type: "image_reference",
+    prompt: "参考 @萧昭宁",
+    references: [
+      characterRef({ reference_id: "ref_a" }),
+      sceneRef({ reference_id: "ref_scene_unmentioned", entity_name: "营帐" })
+    ]
+  });
+  assert.deepEqual(binding.references_used.map((item) => item.reference_id), ["ref_a", "ref_scene_unmentioned"]);
 });
 
 test("strict role entity and output schema reject invalid values", () => {
@@ -745,26 +773,116 @@ test("unbound_entity warn succeeds with warning", async () => {
   assert.equal(result.payload.warnings[0].code, "ENTITY_REFERENCE_NOT_FOUND");
 });
 
-test("unbound_entity block returns needs_clarification", async () => {
+test("unbound_entity block returns V3.6 fixed failure envelope", async () => {
   const result = await call({
     task_type: "image_reference",
     prompt: "生成 @萧昭宁 和 @营帐。",
     references: [characterRef()],
     reference_policy: { unbound_entity: "block" }
   });
-  assert.equal(result.payload.status, "needs_clarification");
-  assert.equal(result.payload.error_code, "ENTITY_REFERENCE_NOT_FOUND");
+  assertV36Error(result, "ENTITY_REFERENCE_NOT_FOUND", 200, "needs_clarification");
 });
 
-test("provider base64-only response is exposed through generated image URL", () => {
+test("provider base64-only response is converted to generated image URL without public leakage", () => {
   clearGeneratedImagesForTest();
   const images = extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] });
   assert.equal(images.length, 1);
-  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
   assert.equal(images[0].format, "png");
-  const stored = getGeneratedImage(images[0].image_id);
-  assert.equal(stored.mime, "image/png");
-  assert.equal(Buffer.isBuffer(stored.bytes), true);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+
+  const nakedImageImages = extractImageUrls({ data: [{ image: samplePngBase64(), mime_type: "image/png" }] });
+  assert.equal(nakedImageImages.length, 1);
+  assert.match(nakedImageImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+
+  const nakedResultImages = extractImageUrls({ data: [{ result: samplePngBase64(), mime_type: "image/png" }] });
+  assert.equal(nakedResultImages.length, 1);
+  assert.match(nakedResultImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+
+  const outputImages = extractImageUrls({ output: [{ type: "image_generation_call", result: samplePngBase64() }] });
+  assert.equal(outputImages.length, 1);
+  assert.match(outputImages[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(JSON.stringify(outputImages).includes(samplePngBase64()), false);
+
+  for (const key of ["base64", "image_base64", "data_url"]) {
+    const value = key === "data_url" ? `data:image/png;base64,${samplePngBase64()}` : samplePngBase64();
+    const images = extractImageUrls({ data: [{ [key]: value, mime_type: "image/png" }] });
+    assert.equal(images.length, 1, key);
+    assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/, key);
+    assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png", key);
+    assert.equal(JSON.stringify(images).includes(samplePngBase64()), false, key);
+    assert.equal(JSON.stringify(images).includes("data:image"), false, key);
+  }
+
+  for (const key of ["b64_json", "base64", "image_base64", "data_url"]) {
+    const value = key === "data_url" ? `data:image/png;base64,${samplePngBase64()}` : samplePngBase64();
+    const images = extractImageUrls({ [key]: value, mime_type: "image/png" });
+    assert.equal(images.length, 1, `top-level ${key}`);
+    assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/, `top-level ${key}`);
+    assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png", `top-level ${key}`);
+    assert.equal(JSON.stringify(images).includes(samplePngBase64()), false, `top-level ${key}`);
+    assert.equal(JSON.stringify(images).includes("data:image"), false, `top-level ${key}`);
+  }
+});
+
+test("gpt-image-2 edits b64_json response becomes URL and provider error without image remains failure", async () => {
+  clearGeneratedImagesForTest();
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    model: "gpt-image-2",
+    imageModel: "gpt-image-2",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 10
+  }));
+  const request = {
+    model: "gpt-image-2",
+    prompt: "生成参考图",
+    n: 1,
+    output_format: "png",
+    images: [{ image_url: "https://example.com/ref.png" }]
+  };
+
+  const images = await postLiveImageEditMultipart(request, config, async (_url, init) => {
+    if (!init || !init.method) {
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => samplePngBytes(),
+        headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] }),
+      headers: { get: () => "application/json" }
+    };
+  });
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+  assert.equal(JSON.stringify(images).includes("b64_json"), false);
+  assert.equal(JSON.stringify(images).includes(samplePngBase64()), false);
+
+  await assert.rejects(() => postLiveImageEditMultipart(request, config, async (_url, init) => {
+    if (!init || !init.method) {
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => samplePngBytes(),
+        headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        error: { message: "provider rejected request" }
+      }),
+      headers: { get: () => "application/json" }
+    };
+  }), /provider 返回错误/);
 });
 
 test("provider URL response mapper accepts url, image_url, and output_url", () => {
@@ -780,6 +898,79 @@ test("provider URL response mapper accepts url, image_url, and output_url", () =
     "https://provider.example.com/b.webp",
     "https://provider.example.com/c.jpeg"
   ]);
+});
+
+test("provider URL response is extracted while forbidden raw or encoded fields stay private", async () => {
+  const payloads = [
+    { data: [{ url: "https://provider.example.com/a.png", b64_json: samplePngBase64() }] },
+    { images: [{ url: "https://provider.example.com/a.png", final_prompt: "must not be accepted" }] },
+    { images: [{ url: "https://provider.example.com/a.png", provider_raw_response: { id: "raw" } }] },
+    { images: [{ url: "https://provider.example.com/a.png", data: { url: "https://provider.example.com/raw.png" } }] }
+  ];
+
+  for (const payload of payloads) {
+    const images = extractImageUrls(payload);
+    assert.equal(images.length, 1);
+    assert.equal(images[0].url, "https://provider.example.com/a.png");
+    const result = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }, {
+      provider: async () => ({
+        status: "succeeded",
+        images
+      })
+    });
+    assertV36Success(result);
+    const publicText = JSON.stringify(result.payload);
+    assert.equal(publicText.includes(samplePngBase64()), false);
+    assert.equal(publicText.includes("final_prompt"), false);
+    assert.equal(publicText.includes("provider_raw_response"), false);
+    assert.equal(publicText.includes("raw.png"), false);
+  }
+});
+
+test("provider image extraction tolerates metadata-heavy encoded image variants", async () => {
+  clearGeneratedImagesForTest();
+  const urlSafeNoPadding = samplePngBase64()
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  const images = extractImageUrls({
+    created: 123,
+    usage: { total_tokens: 1 },
+    final_prompt: "must not leak",
+    data: [{
+      b64_json: `\\n${urlSafeNoPadding}\\n`,
+      mime_type: "image/jpeg",
+      raw: { ignored: true }
+    }]
+  });
+
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+
+  const oldBase = process.env.PUBLIC_BASE_URL;
+  try {
+    process.env.PUBLIC_BASE_URL = "https://img.example.com";
+    const result = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }, {
+      provider: async () => ({ status: "succeeded", images })
+    });
+    assertV36Success(result);
+    const publicText = JSON.stringify(result.payload);
+    assert.equal(publicText.includes(urlSafeNoPadding), false);
+    assert.equal(publicText.includes("final_prompt"), false);
+    assert.equal(publicText.includes("raw"), false);
+    assert.equal(publicText.includes("usage"), false);
+  } finally {
+    restoreEnv("PUBLIC_BASE_URL", oldBase);
+  }
 });
 
 test("public API rejects unsafe provider-returned external image URLs", async () => {
@@ -804,8 +995,7 @@ test("public API rejects unsafe provider-returned external image URLs", async ()
       })
     });
     assert.equal(result.payload.status, "failed", url);
-    assert.equal(result.payload.error_code, "PROVIDER_IMAGE_URL_UNSAFE", url);
-    assertNoForbidden(result.payload);
+    assertV36Error(result, "PROMPT_IMAGE_BACKEND_INVALID_RESPONSE");
   }
 });
 
@@ -815,46 +1005,92 @@ test("shared provider image URL sanitizer protects legacy and final route caller
   assert.throws(() => publicImageUrl("file:///tmp/private.png"), /provider image url/);
 });
 
-test("provider data URL response is exposed through generated image URL", () => {
+test("provider data URL response is converted to generated image URL", () => {
   clearGeneratedImagesForTest();
   const images = extractImageUrls({
     data: [{ image: `data:image/png;base64,${samplePngBase64()}`, width: 64, height: 64 }]
   });
   assert.equal(images.length, 1);
-  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
   assert.equal(images[0].width, 64);
   assert.equal(images[0].height, 64);
-  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+  assert.equal(JSON.stringify(images).includes("data:image"), false);
 });
 
-test("provider binary buffer response is exposed through generated image URL", () => {
+test("provider binary buffer response is converted to generated image URL", () => {
   clearGeneratedImagesForTest();
-  const image = normalizeProviderImageObject({ binary: samplePngBytes(), mime_type: "image/png" }, "png");
-  assert.match(image.url, /^\/api\/v1\/generated-images\/img_/);
-  assert.equal(image.format, "png");
-  assert.equal(getGeneratedImage(image.image_id).mime, "image/png");
+  const wrapped = normalizeProviderImageObject({
+    binary: samplePngBytes(),
+    mime_type: "image/png",
+    width: 64,
+    height: 64
+  }, "png");
+  assert.match(wrapped.url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(wrapped.width, 64);
+  assert.equal(wrapped.height, 64);
+  assert.equal(getGeneratedImage(wrapped.image_id).mime, "image/png");
+
+  const direct = normalizeProviderImageObject(samplePngBytes(), "png");
+  assert.match(direct.url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(direct.image_id).mime, "image/png");
+
+  for (const value of [
+    samplePngBytes().buffer.slice(samplePngBytes().byteOffset, samplePngBytes().byteOffset + samplePngBytes().byteLength),
+    new Uint8Array(samplePngBytes()),
+    new Int8Array(samplePngBytes())
+  ]) {
+    const item = normalizeProviderImageObject(value, "png");
+    assert.match(item.url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+    assert.equal(getGeneratedImage(item.image_id).mime, "image/png");
+  }
 });
 
-test("provider direct binary HTTP image response is normalized as generated image bytes", async () => {
-  clearGeneratedImagesForTest();
+test("provider direct binary HTTP image response is converted to generated image URL", async () => {
+  let observedInit = null;
   const json = await fetchUpstreamOnce("https://provider.example.com/v1/images/generations", {
     method: "POST",
     headers: {}
+  }, async (_url, init) => {
+    observedInit = init;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null },
+      arrayBuffer: async () => samplePngBytes().buffer.slice(
+        samplePngBytes().byteOffset,
+        samplePngBytes().byteOffset + samplePngBytes().byteLength
+      )
+    };
+  }, {
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    requestTimeoutSeconds: 10
+  });
+  assert.equal(observedInit.redirect, "manual");
+  const images = extractImageUrls(json);
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+});
+
+test("provider direct binary HTTP image response is accepted by postLiveJson", async () => {
+  clearGeneratedImagesForTest();
+  const images = await postLiveJson("https://provider.example.com/v1/images/generations", {
+    model: "gpt-image-2",
+    prompt: "生成图片",
+    n: 1,
+    format: "png"
   }, async () => ({
     ok: true,
     status: 200,
+    text: async () => "",
     headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null },
     arrayBuffer: async () => samplePngBytes().buffer.slice(
       samplePngBytes().byteOffset,
       samplePngBytes().byteOffset + samplePngBytes().byteLength
     )
-  }), {
-    baseUrl: "https://provider.example.com/v1/images/generations",
-    requestTimeoutSeconds: 10
-  });
-  const images = extractImageUrls(json);
+  }), providerPollConfig());
   assert.equal(images.length, 1);
-  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_/);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
   assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
 });
 
@@ -887,10 +1123,8 @@ test("generated image route response metadata returns correct content headers an
   assert.equal(missing.headers["Cache-Control"], "no-store");
 });
 
-test("provider invalid image mime or oversized bytes returns PROVIDER_RESPONSE_UNSUPPORTED", () => {
-  assert.throws(() => extractImageUrls({
-    data: [{ b64_json: "not-valid-base64***" }]
-  }), /base64 图片格式非法/);
+test("provider encoded image payloads return PROVIDER_RESPONSE_UNSUPPORTED", () => {
+  assert.throws(() => extractImageUrls({ data: [{ b64_json: "not-valid-base64***" }] }), /base64 图片格式非法/);
   assert.throws(() => normalizeProviderImageObject({
     b64_json: Buffer.from("not-an-image").toString("base64"),
     mime_type: "image/gif"
@@ -899,10 +1133,11 @@ test("provider invalid image mime or oversized bytes returns PROVIDER_RESPONSE_U
     bytes: sampleGifBytes(),
     mime: "image/gif"
   }), /不是支持的图片格式/);
-  assert.throws(() => putGeneratedImage({
+  const storedMismatchedMime = putGeneratedImage({
     bytes: samplePngBytes(),
     mime: "image/jpeg"
-  }), /MIME 类型与图片字节不匹配/);
+  });
+  assert.equal(storedMismatchedMime.mime, "image/png");
   assert.throws(() => putGeneratedImage({
     bytes: samplePngBytes(),
     mime: "image/png",
@@ -910,12 +1145,42 @@ test("provider invalid image mime or oversized bytes returns PROVIDER_RESPONSE_U
   }), /超过大小限制/);
 });
 
+test("public API encoded image failures do not leak raw provider payload", async () => {
+  const cases = [
+    { data: [{ b64_json: "not-valid-base64***" }] },
+    { data: [{ b64_json: Buffer.from("not-an-image").toString("base64"), mime_type: "image/png" }] }
+  ];
+  for (const payload of cases) {
+    const result = await handleImageGeneration({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }, {
+      provider: async () => ({
+        status: "succeeded",
+        images: extractImageUrls(payload)
+      })
+    });
+    assertV36Error(result, "PROMPT_IMAGE_BACKEND_INVALID_RESPONSE");
+    assert.deepEqual(result.payload.images, []);
+    const publicText = JSON.stringify(result.payload);
+    assert.equal(publicText.includes("not-valid-base64"), false);
+    assert.equal(publicText.includes(Buffer.from("not-an-image").toString("base64")), false);
+    assert.equal(publicText.includes("b64_json"), false);
+    assert.equal(publicText.includes("base64"), false);
+    assert.equal(publicText.includes("data:image"), false);
+    assert.equal(publicText.includes("provider_raw_response"), false);
+  }
+});
+
 test("plain provider result text is not treated as base64 image", () => {
   assert.throws(() => extractImageUrls({ result: "task completed without image bytes" }), /没有找到可访问的图片/);
 });
 
-test("public API returns URL only for provider-generated bytes and never exposes base64", async () => {
-  clearGeneratedImagesForTest();
+test("public API converts provider base64 to generated URL and never exposes encoded bytes", async () => {
+  const oldBase = process.env.PUBLIC_BASE_URL;
+  try {
+    process.env.PUBLIC_BASE_URL = "https://img.example.com";
   const result = await handleImageGeneration({
     task_type: "text_image",
     prompt: "生成一张山间晨雾图。",
@@ -926,11 +1191,17 @@ test("public API returns URL only for provider-generated bytes and never exposes
       images: extractImageUrls({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] })
     })
   });
-  assert.equal(result.statusCode, 200);
-  assert.match(result.payload.images[0].url, /^http:\/\/127\.0\.0\.1:8787\/api\/v1\/generated-images\/img_/);
+    assert.equal(result.statusCode, 200);
+    assertV36Success(result);
+    assert.match(result.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
   assert.equal(JSON.stringify(result.payload).includes(samplePngBase64()), false);
+    assert.equal(JSON.stringify(result.payload).includes("b64_json"), false);
+    assert.equal(JSON.stringify(result.payload).includes("data:image"), false);
   assert.equal(JSON.stringify(result.payload).includes("provider_internal_payload"), false);
   assertNoForbidden(result.payload);
+  } finally {
+    restoreEnv("PUBLIC_BASE_URL", oldBase);
+  }
 });
 
 test("long-running image submit waits beyond relay completion time and does not retry non-idempotent generation", async () => {
@@ -943,7 +1214,7 @@ test("long-running image submit waits beyond relay completion time and does not 
     requestTimeoutSeconds: 180,
     retryAttempts: 5
   }));
-  assert.equal(config.requestTimeoutSeconds >= 420, true);
+  assert.equal(config.requestTimeoutSeconds >= 600, true);
   assert.equal(config.retryAttempts, 1);
 
   let calls = 0;
@@ -977,6 +1248,127 @@ test("long-running image submit waits beyond relay completion time and does not 
     };
   }), /图片生成 provider 调用失败|请求失败/);
   assert.equal(calls, 1);
+});
+
+test("image edit multipart uses fixed edits endpoint image array field filename MIME prompt and no unsupported knobs", async () => {
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    model: "gpt-image-2",
+    imageModel: "gpt-image-2",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 10
+  }));
+  let submittedUrl = "";
+  let submittedBody = null;
+  await postLiveImageEditMultipart({
+    model: "gpt-image-2",
+    prompt: "生成参考图",
+    n: 3,
+    size: "1024x1024",
+    quality: "standard",
+    output_format: "png",
+    images: [{ image_url: "https://example.com/ref.png" }]
+  }, config, async (url, init) => {
+    if (!init || !init.method) {
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => samplePngBytes(),
+        headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null }
+      };
+    }
+    submittedUrl = String(url);
+    submittedBody = await summarizeProviderRequestBody(init.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] }),
+      headers: { get: () => "application/json" }
+    };
+  });
+  assert.equal(new URL(submittedUrl).pathname, "/v1/images/edits");
+  assert.equal(submittedBody.model, "gpt-image-2");
+  assert.equal(submittedBody.prompt, "生成参考图");
+  assert.equal(submittedBody.imageCount, 1);
+  assert.deepEqual(submittedBody.imageFieldNames, ["image[]"]);
+  assert.deepEqual(submittedBody.imageFileNames, ["ref.png"]);
+  assert.deepEqual(submittedBody.imageMimeTypes, ["image/png"]);
+  assert.equal("n" in submittedBody, false);
+  assert.equal("size" in submittedBody, false);
+  assert.equal("quality" in submittedBody, false);
+  assert.equal("response_format" in submittedBody, false);
+  assert.equal("background" in submittedBody, false);
+  assert.equal("mask" in submittedBody, false);
+  assertNoForbiddenModel(submittedBody);
+});
+
+test("image edit multipart sends every valid reference as image array file", async () => {
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    model: "gpt-image-2",
+    imageModel: "gpt-image-2",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 10
+  }));
+  let submittedBody = null;
+  await postLiveImageEditMultipart({
+    model: "gpt-image-2",
+    prompt: "生成双参考图",
+    n: 1,
+    output_format: "png",
+    images: [
+      { image_url: "https://example.com/ref-one.png" },
+      { image_url: "https://example.com/ref two.jpeg" }
+    ]
+  }, config, async (url, init) => {
+    if (!init || !init.method) {
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => samplePngBytes(),
+        headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null }
+      };
+    }
+    submittedBody = await summarizeProviderRequestBody(init.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] }),
+      headers: { get: () => "application/json" }
+    };
+  });
+  assert.equal(submittedBody.imageCount, 2);
+  assert.deepEqual(submittedBody.imageFieldNames, ["image[]", "image[]"]);
+  assert.deepEqual(submittedBody.imageFileNames, ["ref-one.png", "ref_20two.jpeg"]);
+  assert.deepEqual(submittedBody.imageMimeTypes, ["image/png", "image/png"]);
+});
+
+test("image edit multipart rejects requests with no usable reference URL before upstream submit", async () => {
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 10
+  }));
+  let submitCount = 0;
+  await assert.rejects(() => postLiveImageEditMultipart({
+    model: "gpt-image-2",
+    prompt: "生成参考图",
+    n: 1,
+    output_format: "png",
+    images: [{ image_url: "   " }, { url: "" }]
+  }, config, async (_url, init) => {
+    if (init && init.method) submitCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ b64_json: samplePngBase64(), mime_type: "image/png" }] }),
+      headers: { get: () => "application/json" }
+    };
+  }), /图生图需要至少一张参考图 URL/);
+  assert.equal(submitCount, 0);
 });
 
 test("image edit reference fetch rejects oversized or non-image reference responses", async () => {
@@ -1026,8 +1418,8 @@ test("image edit reference fetch rejects oversized or non-image reference respon
 
 test("provider async response polls internally and returns URL without exposing running state", async () => {
   const calls = [];
-  const images = await normalizeProviderResult({ task_id: "task_001" }, "png", async (url) => {
-    calls.push(url);
+  const images = await normalizeProviderResult({ task_id: "task_001" }, "png", async (url, init) => {
+    calls.push({ url, authorization: init?.headers?.Authorization || "" });
     return {
       ok: true,
       status: 200,
@@ -1049,7 +1441,145 @@ test("provider async response polls internally and returns URL without exposing 
     pollBaseUrl: "https://provider.example.com/v1/tasks"
   });
   assert.deepEqual(images.map((item) => item.url), ["https://provider.example.com/async.png"]);
-  assert.equal(calls[0], "https://provider.example.com/v1/tasks/task_001");
+  assert.equal(calls[0].url, "https://provider.example.com/v1/tasks/task_001");
+  assert.equal(calls[0].authorization, "Bearer test-key");
+});
+
+test("provider poll URL allowlist rejects third-party local private and malformed URLs before Authorization fetch", async () => {
+  const blocked = [
+    { status_url: "https://evil.example/poll" },
+    { status_url: "//evil.example/v1/tasks/task_001" },
+    { status_url: "file:///tmp/task_001" },
+    { status_url: "javascript:alert(1)" },
+    { status_url: "https://user:pass@provider.example.com/v1/tasks/task_001" },
+    { poll_url: "http://localhost:9999/v1/tasks/task_001" },
+    { poll_url: "http://127.0.0.1:9999/poll" },
+    { poll_url: "http://10.0.0.5/v1/tasks/task_001" },
+    { poll_url: "http://172.16.0.5/v1/tasks/task_001" },
+    { poll_url: "http://192.168.1.5/v1/tasks/task_001" },
+    { poll_url: "http://169.254.169.254/v1/tasks/task_001" },
+    { poll_url: "http://[::1]:9999/v1/tasks/task_001" },
+    { poll_url: "http://[fe80::1]/v1/tasks/task_001" },
+    { poll_url: "http://[fc00::1]/v1/tasks/task_001" },
+    { poll_url: "http://2130706433/v1/tasks/task_001" },
+    { poll_url: "http://0177.0.0.1/v1/tasks/task_001" },
+    { poll_url: "http://0.0.0.0/v1/tasks/task_001" },
+    { poll_url: "http://[::ffff:127.0.0.1]/v1/tasks/task_001" },
+    { pollUrl: "not a url with spaces" },
+    { statusUrl: "https://provider.example.com/not-v1/task_001" }
+  ];
+
+  for (const payload of blocked) {
+    const calls = [];
+    await assert.rejects(() => normalizeProviderResult(payload, "png", async (url, init) => {
+      calls.push({ url, authorization: init?.headers?.Authorization || "" });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ data: [{ url: "https://provider.example.com/async.png" }] }),
+        headers: { get: () => null }
+      };
+    }, providerPollConfig()), /provider poll url/);
+    assert.deepEqual(calls, [], JSON.stringify(payload));
+  }
+});
+
+test("provider poll URL allowlist allows same-origin absolute and relative poll paths", async () => {
+  const allowedCases = [
+    {
+      payload: { status_url: "https://provider.example.com/v1/tasks/task_001" },
+      expectedUrl: "https://provider.example.com/v1/tasks/task_001"
+    },
+    {
+      payload: { poll_url: "/v1/tasks/task_002" },
+      expectedUrl: "https://provider.example.com/v1/tasks/task_002"
+    },
+    {
+      payload: { pollUrl: "v1/tasks/task_003" },
+      expectedUrl: "https://provider.example.com/v1/tasks/task_003"
+    },
+    {
+      payload: { pollUrl: "task_004" },
+      expectedUrl: "https://provider.example.com/v1/tasks/task_004"
+    },
+    {
+      payload: { pollUrl: "./task_005" },
+      expectedUrl: "https://provider.example.com/v1/tasks/task_005"
+    }
+  ];
+
+  for (const item of allowedCases) {
+    const calls = [];
+    const images = await normalizeProviderResult(item.payload, "png", async (url, init) => {
+      calls.push({ url, authorization: init?.headers?.Authorization || "" });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ data: [{ url: "https://provider.example.com/async.png" }] }),
+        headers: { get: () => null }
+      };
+    }, providerPollConfig());
+    assert.deepEqual(images.map((image) => image.url), ["https://provider.example.com/async.png"]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, item.expectedUrl);
+    assert.equal(calls[0].authorization, "Bearer test-key");
+  }
+});
+
+test("provider poll URL rejection public response does not leak raw URL Authorization or key", async () => {
+  const result = await handleImageGeneration({
+    task_type: "text_image",
+    prompt: "生成山水。",
+    references: [],
+    output: { count: 1, aspect_ratio: "1:1", quality: "high" }
+  }, {
+    provider: async ({ fetchImpl }) => {
+      await normalizeProviderResult({ status_url: "https://evil.example/poll?token=secret" }, "png", fetchImpl, providerPollConfig());
+      return { status: "succeeded", images: [] };
+    },
+    fetchImpl: async () => {
+      throw new Error("unsafe poll URL must not be fetched");
+    }
+  });
+  assertV36Error(result, "PROMPT_IMAGE_BACKEND_INVALID_RESPONSE");
+  const publicText = JSON.stringify(result.payload);
+  assert.equal(publicText.includes("evil.example"), false);
+  assert.equal(publicText.includes("Authorization"), false);
+  assert.equal(publicText.includes("test-key"), false);
+  assert.equal(publicText.includes("secret"), false);
+});
+
+test("resolveAuthorizedUpstreamUrl rejects unsafe poll URL shapes", () => {
+  const config = providerPollConfig();
+  assert.equal(resolveAuthorizedUpstreamUrl("https://provider.example.com/v1/tasks/task_001", config), "https://provider.example.com/v1/tasks/task_001");
+  assert.equal(resolveAuthorizedUpstreamUrl("/v1/tasks/task_001", config), "https://provider.example.com/v1/tasks/task_001");
+  assert.equal(resolveAuthorizedUpstreamUrl("task_001", config), "https://provider.example.com/v1/tasks/task_001");
+  assert.equal(resolveAuthorizedUpstreamUrl("./task_002", config), "https://provider.example.com/v1/tasks/task_002");
+  assert.throws(() => resolveAuthorizedUpstreamUrl("https://evil.example/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("http://127.0.0.1:9999/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("http://2130706433/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("http://0177.0.0.1/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("http://[::ffff:127.0.0.1]/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("//evil.example/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("https://user:pass@provider.example.com/v1/tasks/task_001", config), /provider poll url/);
+  assert.throws(() => resolveAuthorizedUpstreamUrl("https://provider.example.com/not-v1/task_001", config), /provider poll url/);
+});
+
+test("configured provider submit endpoints are separated from provider-returned poll URL allowlist", () => {
+  const config = providerPollConfig();
+  assert.equal(resolveAuthorizedFetchUrl(config.baseUrl, config), "https://provider.example.com/v1/images/generations");
+  assert.equal(resolveAuthorizedFetchUrl(config.imageEditUrl, config), "https://provider.example.com/v1/images/edits");
+  assert.equal(resolveAuthorizedFetchUrl("https://provider.example.com/v1/tasks/task_001", config), "https://provider.example.com/v1/tasks/task_001");
+  assert.throws(() => resolveAuthorizedFetchUrl("https://evil.example/v1/tasks/task_001", config), /provider poll url/);
+
+  const localSubmitConfig = {
+    ...config,
+    baseUrl: "http://127.0.0.1:18080/v1/images/generations",
+    imageEditUrl: "http://127.0.0.1:18080/v1/images/edits"
+  };
+  assert.equal(resolveAuthorizedFetchUrl(localSubmitConfig.baseUrl, localSubmitConfig), localSubmitConfig.baseUrl);
+  assert.equal(resolveAuthorizedFetchUrl(localSubmitConfig.imageEditUrl, localSubmitConfig), localSubmitConfig.imageEditUrl);
+  assert.throws(() => resolveAuthorizedFetchUrl("http://127.0.0.1:18080/v1/tasks/task_001", localSubmitConfig), /provider poll url/);
 });
 
 test("real provider adapter fixes text generation endpoint and model regardless of config models", async () => {
@@ -1139,6 +1669,48 @@ test("real provider adapter keeps storyboard without references on generations e
   assertNoForbiddenModel(calls[0].body);
 });
 
+test("real provider adapter derives endpoint from references instead of trusting generation_mode", async () => {
+  const withReferencesCalls = [];
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => generateWithAiTuProvider({
+    request: {
+      ...normalizeRequest({
+        task_type: "image_reference",
+        prompt: "参考 @萧昭宁 生成新图。",
+        references: [characterRef()]
+      }),
+      generation_mode: "text_to_image"
+    },
+    compiledPrompt: "compiled prompt",
+    fetchImpl: providerFetchRecorder(withReferencesCalls)
+  }));
+  assert.equal(withReferencesCalls.find((call) => call.kind === "submit").url, "https://provider.example.com/v1/images/edits");
+
+  const noReferenceCalls = [];
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => generateWithAiTuProvider({
+    request: {
+      ...normalizeRequest({
+        task_type: "storyboard",
+        prompt: "少女推开门，看见雪夜烛火。",
+        references: []
+      }),
+      generation_mode: "image_to_image"
+    },
+    compiledPrompt: "compiled prompt",
+    fetchImpl: providerFetchRecorder(noReferenceCalls)
+  }));
+  assert.equal(noReferenceCalls[0].url, "https://provider.example.com/v1/images/generations");
+  assert.equal(noReferenceCalls[0].body.model, "gpt-image-2");
+  assert.equal("image" in noReferenceCalls[0].body, false);
+});
+
 test("generated image store URL works only as a full structured reference for image_to_image", async () => {
   const oldHost = process.env.HOST;
   const oldPort = process.env.PORT;
@@ -1176,7 +1748,7 @@ test("generated image store URL works only as a full structured reference for im
       }
     });
     assert.equal(structured.statusCode, 200);
-    assert.equal(structured.payload.status, "succeeded");
+    assertV36Success(structured);
     assert.equal(captured.generationMode, "image_to_image");
     assert.equal(captured.referenceUrl, localUrl);
 
@@ -1187,8 +1759,7 @@ test("generated image store URL works only as a full structured reference for im
       output: { count: 1, aspect_ratio: "1:1", quality: "high" }
     });
     assert.equal(urlOnly.payload.status, "failed");
-    assert.equal(urlOnly.payload.error_code, "INVALID_REQUEST_SCHEMA");
-    assertNoForbidden(urlOnly.payload);
+    assertV36Error(urlOnly, "INVALID_REQUEST_SCHEMA", 400);
   } finally {
     restoreEnv("HOST", oldHost);
     restoreEnv("PORT", oldPort);
@@ -1218,10 +1789,7 @@ test("Final API exposes text provider failures without mock success or internals
   }));
 
   assert.equal(result.statusCode, 502);
-  assert.equal(result.payload.status, "failed");
-  assert.equal(result.payload.error_code, "IMAGE_PROVIDER_CALL_FAILED");
-  assert.equal("images" in result.payload, false);
-  assertNoForbidden(result.payload);
+  assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
 });
 
 test("Final API exposes image provider failures without mock success or internals", async () => {
@@ -1278,10 +1846,7 @@ test("Final API exposes image provider failures without mock success or internal
 
     assert.equal(submitCount, 1);
     assert.equal(result.statusCode, 502);
-    assert.equal(result.payload.status, "failed");
-    assert.equal(result.payload.error_code, "IMAGE_PROVIDER_CALL_FAILED");
-    assert.equal("images" in result.payload, false);
-    assertNoForbidden(result.payload);
+    assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
   } finally {
     restoreEnv("HOST", oldHost);
     restoreEnv("PORT", oldPort);
@@ -1309,7 +1874,7 @@ test("missing provider config returns PROVIDER_CONFIG_MISSING through real adapt
       prompt: "生成山水。",
       references: []
     });
-    assert.equal(result.payload.error_code, "PROVIDER_CONFIG_MISSING");
+    assertV36Error(result, "PROMPT_IMAGE_BACKEND_NOT_CONFIGURED");
   } finally {
     restoreEnv("IMAGE_API_KEY", oldKey);
     restoreEnv("IMAGE_API_KEYS", oldKeys);
@@ -1349,6 +1914,41 @@ test("provider config fixes endpoints and model and requires at least one key", 
     imageEditUrl: "https://provider.example.com/v1/images/generations",
     apiKey: "test-key"
   }), /edits/);
+  assert.equal(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    pollBaseUrl: "https://provider.example.com/v1/tasks",
+    apiKey: "test-key"
+  }).pollBaseUrl, "https://provider.example.com/v1/tasks");
+  assert.throws(() => sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    pollBaseUrl: "https://provider.example.com/tasks",
+    apiKey: "test-key"
+  }), /provider poll url/);
+  assert.throws(() => sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    pollBaseUrl: "http://127.0.0.1:9999/v1/tasks",
+    apiKey: "test-key"
+  }), /provider poll url/);
+  for (const pollBaseUrl of [
+    "http://localhost:9999/v1/tasks",
+    "http://10.0.0.5/v1/tasks",
+    "http://172.16.0.5/v1/tasks",
+    "http://192.168.1.5/v1/tasks",
+    "http://169.254.169.254/v1/tasks",
+    "http://[::1]:9999/v1/tasks",
+    "http://[fe80::1]/v1/tasks",
+    "http://[fc00::1]/v1/tasks"
+  ]) {
+    assert.throws(() => sanitizeProviderConfig({
+      baseUrl: "https://provider.example.com/v1/images/generations",
+      imageEditUrl: "https://provider.example.com/v1/images/edits",
+      pollBaseUrl,
+      apiKey: "test-key"
+    }), /provider poll url/);
+  }
 });
 
 test("provider config can be read from ai-tu runtime config file while fixing model", () => {
@@ -1548,13 +2148,34 @@ function providerFetchRecorder(calls) {
   };
 }
 
+function providerPollConfig(overrides = {}) {
+  return {
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    model: "gpt-image-2",
+    imageModel: "gpt-image-2",
+    keyMode: "single",
+    apiKey: "test-key",
+    apiKeys: ["test-key"],
+    requestTimeoutSeconds: 10,
+    retryAttempts: 1,
+    pollTimeoutSeconds: 10,
+    pollIntervalSeconds: 1,
+    pollBaseUrl: "https://provider.example.com/v1/tasks",
+    ...overrides
+  };
+}
+
 async function summarizeProviderRequestBody(body) {
   if (typeof body === "string") return JSON.parse(body);
   if (body instanceof FormData) {
-    const summary = { imageCount: 0 };
+    const summary = { imageCount: 0, imageFieldNames: [], imageFileNames: [], imageMimeTypes: [] };
     for (const [key, value] of body.entries()) {
-      if (key === "image") {
+      if (key === "image" || key === "image[]") {
         summary.imageCount += 1;
+        summary.imageFieldNames.push(key);
+        summary.imageFileNames.push(value && typeof value === "object" && "name" in value ? value.name : "");
+        summary.imageMimeTypes.push(value && typeof value === "object" && "type" in value ? value.type : "");
         continue;
       }
       summary[key] = String(value);
@@ -1639,6 +2260,31 @@ function assertNoForbidden(payload) {
   for (const field of FORBIDDEN_PUBLIC_FIELDS) {
     assert.equal(text.includes(field), false, `forbidden public field leaked: ${field}`);
   }
+}
+
+function assertV36Success(result, imageCount = 1) {
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.status, "succeeded");
+  assert.deepEqual(Object.keys(result.payload).sort(), ["images", "status", "warnings"]);
+  assert.equal(result.payload.images.length, imageCount);
+  for (const image of result.payload.images) {
+    assert.deepEqual(Object.keys(image).sort(), ["url"]);
+    assert.match(image.url, /^https?:\/\//);
+  }
+  assert.equal(Array.isArray(result.payload.warnings), true);
+  assertNoForbidden(result.payload);
+}
+
+function assertV36Error(result, code, statusCode = null, status = "failed") {
+  if (statusCode != null) assert.equal(result.statusCode, statusCode);
+  assert.equal(result.payload.status, status);
+  assert.deepEqual(Object.keys(result.payload).sort(), ["error", "images", "status", "warnings"]);
+  assert.equal(result.payload.error.code, code);
+  assert.equal(typeof result.payload.error.message, "string");
+  assert.ok(result.payload.error.message.length > 0);
+  assert.deepEqual(result.payload.images, []);
+  assert.deepEqual(result.payload.warnings, []);
+  assertNoForbidden(result.payload);
 }
 
 function restoreEnv(name, oldValue) {

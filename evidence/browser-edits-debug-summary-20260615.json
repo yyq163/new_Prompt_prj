@@ -1,0 +1,53 @@
+{
+  "baseUrl": "http://127.0.0.1:8795",
+  "model": "gpt-image-2",
+  "text": {
+    "post": {
+      "status": 200,
+      "ok": true,
+      "elapsedMs": 128754,
+      "publicStatus": "succeeded",
+      "imageCount": 1,
+      "errorCode": null,
+      "textLength": 174
+    },
+    "imageGet": {
+      "status": 200,
+      "ok": true,
+      "contentType": "image/png",
+      "cacheControl": "no-store",
+      "size": 2637796
+    },
+    "imageVisible": true,
+    "screenshot": "/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/browser-text-generation-edits-debug-20260615.png"
+  },
+  "image": {
+    "upload": {
+      "status": 200,
+      "ok": true,
+      "publicStatus": "succeeded",
+      "type": "image/jpeg",
+      "size": 382395,
+      "host": "generated-image-store",
+      "hasUrl": true
+    },
+    "post": {
+      "status": 502,
+      "ok": false,
+      "elapsedMs": 10697,
+      "publicStatus": "failed",
+      "imageCount": 0,
+      "errorCode": "PROMPT_IMAGE_BACKEND_UNAVAILABLE",
+      "textLength": 158
+    },
+    "imageGet": null,
+    "imageVisible": false,
+    "screenshot": "/Volumes/App_Dev/new_Prompt_prj/evidence/screenshots/browser-image-generation-edits-debug-20260615.png",
+    "referenceImage": {
+      "source": "/Volumes/App_Dev/test-image/image_20260108131455.jpeg",
+      "mime": "image/jpeg",
+      "size": 382395
+    }
+  },
+  "errors": []
+}

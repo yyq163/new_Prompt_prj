@@ -1,5 +1,6 @@
 import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
+import { isUnsafeNetworkHost } from "../core/url-security.js";
 import {
   DEFAULT_GENERATED_IMAGE_MAX_BYTES,
   GENERATED_IMAGE_ALLOWED_MIME_TYPES,
@@ -16,7 +17,7 @@ const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
 const AI_TU_DEFAULT_EDITS_URL = "https://memefast.top/v1/images/edits";
 const FIXED_IMAGE_MODEL = "gpt-image-2";
-const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 420;
+const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 600;
 const DEFAULT_REFERENCE_FETCH_TIMEOUT_SECONDS = 30;
 let upstreamKeyCursor = 0;
 
@@ -24,6 +25,8 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
   const config = defaultProviderConfig();
   if (!hasRequiredProviderConfig(config)) providerConfigMissing();
 
+  const references = request.references || [];
+  const hasReferenceImages = references.length > 0;
   const providerRequest = {
     model: FIXED_IMAGE_MODEL,
     prompt: compiledPrompt,
@@ -31,11 +34,11 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
     size: parseAspectSize(request.output.aspect_ratio),
     quality: request.output.quality,
     output_format: "png",
-    mode: request.generation_mode === "image_to_image" ? "image" : "text",
-    images: (request.references || []).map((item) => ({ image_url: item.url, url: item.url }))
+    mode: hasReferenceImages ? "image" : "text",
+    images: references.map((item) => ({ image_url: item.url, url: item.url }))
   };
 
-  const images = request.generation_mode === "image_to_image"
+  const images = hasReferenceImages
     ? await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
     : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
 
@@ -108,14 +111,19 @@ export async function postSingleLiveImageEditMultipart(request, config = default
   const form = new FormData();
   form.append("model", FIXED_IMAGE_MODEL);
   form.append("prompt", request.prompt);
-  form.append("n", "1");
-  if (request.size && request.size !== "auto") form.append("size", request.size);
-  if (request.quality && request.quality !== "auto") form.append("quality", request.quality);
   for (const image of request.images) {
     const referenceUrl = stringValue(image.image_url || image.url).trim();
     if (!referenceUrl) continue;
     const blob = await fetchReferenceImageBlob(referenceUrl, fetchImpl);
-    form.append("image", blob, safeReferenceFilename(referenceUrl));
+    form.append("image[]", blob, safeReferenceFilename(referenceUrl));
+  }
+  if (!hasFormImageFiles(form)) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "REFERENCE_REQUIRED",
+      message: "图生图需要至少一张参考图 URL。"
+    });
   }
   const submitConfig = longRunningSubmitConfig(config);
   const json = await fetchUpstream(config.imageEditUrl, (credential) => ({
@@ -126,6 +134,13 @@ export async function postSingleLiveImageEditMultipart(request, config = default
     body: form
   }), fetchImpl, submitConfig);
   return normalizeProviderResult(json, request.output_format, fetchImpl, config);
+}
+
+function hasFormImageFiles(form) {
+  for (const [key, value] of form.entries()) {
+    if ((key === "image[]" || key === "image") && value && typeof value.arrayBuffer === "function") return true;
+  }
+  return false;
 }
 
 async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
@@ -251,8 +266,8 @@ export async function fetchUpstream(kind, initFactory, fetchImpl = globalThis.fe
   for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
     const credential = nextImageApiCredential(config);
     try {
-      const init = typeof initFactory === "function" ? initFactory(credential) : initFactory;
       if (!credential) providerConfigMissing();
+      const init = typeof initFactory === "function" ? initFactory(credential) : initFactory;
       return await fetchUpstreamOnce(kind, init, fetchImpl, config);
     } catch (error) {
       lastError = error;
@@ -267,16 +282,18 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutSeconds * 1000);
   try {
-    const response = await fetchImpl(resolveUpstreamUrl(kind, config), {
+    const url = resolveAuthorizedFetchUrl(kind, config);
+    const response = await fetchImpl(url, {
       ...init,
+      redirect: "manual",
       signal: controller.signal
     });
     const contentType = stringValue(response.headers?.get?.("content-type")).trim().toLowerCase();
     if (/^image\/(png|jpeg|jpg|webp)(?:;|$)/i.test(contentType)) {
-      const bytes = Buffer.from(await response.arrayBuffer());
       if (!response.ok) {
         throw upstreamHttpError(response, {}, "", kind);
       }
+      const bytes = normalizeImageBytes(await response.arrayBuffer());
       return {
         data: [{
           binary: bytes,
@@ -333,8 +350,61 @@ export function parseRetryAfterMs(value) {
 }
 
 export function resolveUpstreamUrl(kind, config = defaultProviderConfig()) {
-  if (/^https?:\/\//i.test(kind)) return kind;
-  return config.baseUrl;
+  return resolveConfiguredUpstreamUrl(kind, config);
+}
+
+export function resolveAuthorizedFetchUrl(kind, config = defaultProviderConfig()) {
+  const value = stringValue(kind).trim() || config.baseUrl;
+  try {
+    return resolveConfiguredUpstreamUrl(value, config);
+  } catch (error) {
+    if (isConfiguredEndpointCandidate(value, config)) throw error;
+    return resolveAuthorizedUpstreamUrl(value, config);
+  }
+}
+
+export function resolveConfiguredUpstreamUrl(kind, config = defaultProviderConfig()) {
+  const value = stringValue(kind).trim() || config.baseUrl;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw unsafeProviderEndpointUrl();
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw unsafeProviderEndpointUrl();
+  if (parsed.username || parsed.password) throw unsafeProviderEndpointUrl();
+  parsed.hash = "";
+
+  const normalized = parsed.toString();
+  const approved = new Set([config.baseUrl, config.imageEditUrl].map((item) => stripUrlHash(item)).filter(Boolean));
+  if (!approved.has(normalized)) throw unsafeProviderEndpointUrl();
+  return normalized;
+}
+
+function isConfiguredEndpointCandidate(value, config = defaultProviderConfig()) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim() || config.baseUrl);
+  } catch {
+    return false;
+  }
+  parsed.hash = "";
+  const normalized = parsed.toString();
+  return normalized === stripUrlHash(config.baseUrl) || normalized === stripUrlHash(config.imageEditUrl);
+}
+
+export function resolveAuthorizedUpstreamUrl(kind, config = defaultProviderConfig()) {
+  const value = stringValue(kind).trim();
+  if (!value) return config.baseUrl;
+  if (/\s/.test(value)) throw unsafeProviderPollUrl();
+  if (/^\/\//.test(value)) throw unsafeProviderPollUrl();
+  if (/^https?:\/\//i.test(value)) return normalizeAuthorizedProviderUrl(value, config);
+  try {
+    return normalizeAuthorizedProviderUrl(new URL(value, providerRelativeBase(value, config)).toString(), config);
+  } catch (error) {
+    if (error instanceof ImageApiError) throw error;
+    throw unsafeProviderPollUrl();
+  }
 }
 
 export function extractImageUrls(json, format = "png") {
@@ -365,7 +435,7 @@ function findAsyncHandle(json) {
   if (!json || typeof json !== "object") return null;
   const statusUrl = stringValue(json.status_url || json.statusUrl || json.poll_url || json.pollUrl).trim();
   const id = stringValue(json.job_id || json.task_id || json.request_id || json.id).trim();
-  if (statusUrl && /^https?:\/\//i.test(statusUrl)) return { statusUrl, id };
+  if (statusUrl) return { statusUrl, id };
   if (id) return { id };
   return null;
 }
@@ -374,9 +444,9 @@ async function pollProviderResult(handle, format, fetchImpl, config = defaultPro
   const deadline = Date.now() + config.pollTimeoutSeconds * 1000;
   const intervalMs = Math.max(1000, config.pollIntervalSeconds * 1000);
   while (Date.now() < deadline) {
-    await sleep(intervalMs);
-    const endpoint = handle.statusUrl || buildPollUrl(config, handle.id);
+    const endpoint = resolveProviderPollEndpoint(handle, config);
     if (!endpoint) break;
+    await sleep(intervalMs);
     const json = await fetchUpstream(endpoint, (credential) => ({
       method: "GET",
       headers: {
@@ -390,9 +460,72 @@ async function pollProviderResult(handle, format, fetchImpl, config = defaultPro
   providerTimeout();
 }
 
+function resolveProviderPollEndpoint(handle, config) {
+  const candidate = handle.statusUrl || buildPollUrl(config, handle.id);
+  if (!candidate) return "";
+  return resolveAuthorizedUpstreamUrl(candidate, config);
+}
+
 function buildPollUrl(config, id) {
   if (!id || !config.pollBaseUrl) return "";
   return `${config.pollBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(id)}`;
+}
+
+function providerRelativeBase(value, config = defaultProviderConfig()) {
+  if (value.startsWith("/") || /^v1\//i.test(value)) return `${providerOrigin(config.baseUrl)}/`;
+  const preferred = stringValue(config.pollBaseUrl).trim();
+  if (preferred) return preferred.endsWith("/") ? preferred : `${preferred}/`;
+  return `${providerOrigin(config.baseUrl)}/`;
+}
+
+export function normalizeAuthorizedProviderUrl(value, config = defaultProviderConfig()) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    throw unsafeProviderPollUrl();
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw unsafeProviderPollUrl();
+  if (parsed.username || parsed.password) throw unsafeProviderPollUrl();
+  if (isUnsafeNetworkHost(parsed.hostname)) throw unsafeProviderPollUrl();
+  if (!isApprovedProviderUrl(parsed, config)) throw unsafeProviderPollUrl();
+  if (!parsed.pathname.startsWith("/v1/")) throw unsafeProviderPollUrl();
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function isApprovedProviderUrl(parsed, config) {
+  const approvedOrigins = approvedProviderOrigins(config);
+  return approvedOrigins.has(providerOrigin(parsed.toString()));
+}
+
+function approvedProviderOrigins(config = defaultProviderConfig()) {
+  const origins = new Set();
+  for (const endpoint of [config.baseUrl, config.imageEditUrl, config.pollBaseUrl]) {
+    const origin = providerOrigin(endpoint);
+    if (origin) origins.add(origin);
+  }
+  return origins;
+}
+
+function providerOrigin(value) {
+  try {
+    const parsed = new URL(stringValue(value).trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+function stripUrlHash(value) {
+  try {
+    const parsed = new URL(stringValue(value).trim());
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
 }
 
 export function defaultProviderConfig() {
@@ -445,7 +578,7 @@ export function sanitizeProviderConfig(source) {
   const keyMode = value.keyMode === "multi" ? "multi" : "single";
   const apiKeys = parseApiKeys(value.apiKeys, value.apiKey);
   const singleKey = stringValue(value.apiKey).trim() || apiKeys[0] || "";
-  const pollBaseUrl = value.pollBaseUrl ? normalizeEndpoint(value.pollBaseUrl) : "";
+  const pollBaseUrl = value.pollBaseUrl ? normalizePollBaseEndpoint(value.pollBaseUrl) : "";
   return {
     baseUrl,
     imageEditUrl,
@@ -497,6 +630,15 @@ export function normalizeEditsEndpoint(value) {
       errorCode: "INVALID_REQUEST_SCHEMA",
       message: "Provider image-to-image endpoint 必须以 /v1/images/edits 结尾。"
     });
+  }
+  return endpoint;
+}
+
+export function normalizePollBaseEndpoint(value) {
+  const endpoint = normalizeEndpoint(value);
+  const parsed = new URL(endpoint);
+  if (isUnsafeNetworkHost(parsed.hostname) || !parsed.pathname.startsWith("/v1/")) {
+    throw unsafeProviderPollUrl();
   }
   return endpoint;
 }
@@ -571,6 +713,24 @@ function mapProviderError(error) {
     status: "failed",
     errorCode: "IMAGE_PROVIDER_CALL_FAILED",
     message: "图片生成 provider 调用失败。"
+  });
+}
+
+function unsafeProviderPollUrl() {
+  throw new ImageApiError({
+    statusCode: 502,
+    status: "failed",
+    errorCode: "PROVIDER_POLL_URL_UNSAFE",
+    message: "provider poll url 不在授权上游范围内。"
+  });
+}
+
+function unsafeProviderEndpointUrl() {
+  throw new ImageApiError({
+    statusCode: 502,
+    status: "failed",
+    errorCode: "PROVIDER_ENDPOINT_UNSAFE",
+    message: "provider endpoint 不在授权上游范围内。"
   });
 }
 

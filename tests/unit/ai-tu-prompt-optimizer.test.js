@@ -54,6 +54,12 @@ test("frontend image job request includes structured references", () => {
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
 });
 
+test("frontend formats structured final image errors without object placeholders", () => {
+  assert.match(html, /function jobErrorMessage\(job\)/);
+  assert.match(html, /function normalizeErrorMessage\(error\)/);
+  assert.doesNotMatch(html, /job\.error \|\| "未知错误"/);
+});
+
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
     reference("ref_scene", "古巷", "scene", "scene_reference"),

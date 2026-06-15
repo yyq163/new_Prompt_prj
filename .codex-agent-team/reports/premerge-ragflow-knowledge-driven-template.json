@@ -17,7 +17,7 @@
   "browser_evidence": {
     "trace_id": "trace_887e122c9c2f4e2cbb",
     "generation_id": "gen_bbea9b38bed64989b8",
-    "image_url": "http://127.0.0.1:8793/api/v1/generated-images/img_38cc4787b590474993dc837637292a60",
+    "image_url": "[REDACTED_URL]",
     "get_http_status": 200,
     "content_type": "image/png",
     "cache_control": "no-store",

@@ -46,7 +46,7 @@ This report records the merge-before-main review loop after the original feature
 - API status: succeeded.
 - Trace: trace_887e122c9c2f4e2cbb.
 - Generation: gen_bbea9b38bed64989b8.
-- Image URL: http://127.0.0.1:8793/api/v1/generated-images/img_38cc4787b590474993dc837637292a60.
+- Image URL: [REDACTED_GENERATED_IMAGE_URL].
 - UI preview: visible, natural size 1824x1024.
 - GET image: HTTP 200, Content-Type image/png, Content-Length 1949856, Cache-Control no-store.
 - Old /api/image-jobs requests: 0.

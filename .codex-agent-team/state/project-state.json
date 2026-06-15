@@ -12,8 +12,8 @@
     "THREAT_MODEL.md": "Security and privacy threat model",
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
-  "currentPhase": "verification",
-  "currentTask": "T1-ragflow-knowledge-driven-template",
+  "currentPhase": "blocked",
+  "currentTask": "T1-provider-edits-debug-base64-fix",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -100,7 +100,28 @@
       "id": "T1-ragflow-knowledge-driven-template",
       "owner": "lead-solo-fallback",
       "status": "verified"
+    },
+    {
+      "id": "T1-provider-edits-debug-base64-fix",
+      "status": "review_failed",
+      "owner": "lead-codex",
+      "files": [
+        "src/providers/ai-tu-provider-adapter.js",
+        "src/providers/provider-result-normalizer.js",
+        "tests/unit/image-api.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        "evidence/**",
+        ".codex-agent-team/reports/**"
+      ],
+      "evidenceRefs": [
+        ".codex-agent-team/reports/provider-edits-debug-20260615.md",
+        ".codex-agent-team/reports/final-integrator-edits-20260615.md",
+        "evidence/browser-edits-debug-summary-20260615.json"
+      ],
+      "blockers": [
+        "Real browser image edit still returns HTTP 502 PROMPT_IMAGE_BACKEND_UNAVAILABLE from upstream; no mock success was used."
+      ]
     }
   ],
-  "updatedAt": "2026-06-11T09:14:02Z"
+  "updatedAt": "2026-06-15T08:43:28.365285+00:00"
 }

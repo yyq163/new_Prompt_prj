@@ -28,25 +28,23 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
     await app.stop();
   });
 
-  await assertInvalidBody({
+  await assertFinalInvalidBody({
     url: `${app.baseUrl}/api/v1/image-generations`,
-    body: "{\"task_type\":\"text_image\"",
-    expectedMessage: "请求体不是合法 JSON"
+    body: "{\"task_type\":\"text_image\""
   });
 
-  await assertInvalidBody({
+  await assertFinalInvalidBody({
     url: `${app.baseUrl}/api/v1/image-generations`,
-    body: JSON.stringify({ prompt: "x".repeat(2000) }),
-    expectedMessage: "请求体过大"
+    body: JSON.stringify({ prompt: "x".repeat(2000) })
   });
 
-  await assertInvalidBody({
+  await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\"",
     expectedMessage: "请求体不是合法 JSON"
   });
 
-  await assertInvalidBody({
+  await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: JSON.stringify({ prompt: "x".repeat(2000) }),
     expectedMessage: "请求体过大"
@@ -72,9 +70,7 @@ test("HTTP final route still accepts legal V1.4 JSON into the normal provider-ga
     }
   }));
   assert.equal(response.status, 503);
-  assert.equal(response.body.status, "failed");
-  assert.equal(response.body.error_code, "PROVIDER_CONFIG_MISSING");
-  assertNoForbiddenFields(response.body);
+  assertV36Error(response.body, "PROMPT_IMAGE_BACKEND_NOT_CONFIGURED");
 });
 
 test("HTTP reference image upload returns structured local image URL for browser flow", async (t) => {
@@ -105,7 +101,13 @@ test("HTTP reference image upload returns structured local image URL for browser
   assert.equal(image.headers.get("cache-control"), "no-store");
 });
 
-async function assertInvalidBody({ url, body, expectedMessage }) {
+async function assertFinalInvalidBody({ url, body }) {
+  const response = await postRaw(url, body);
+  assert.equal(response.status, 400);
+  assertV36Error(response.body, "INVALID_REQUEST_SCHEMA");
+}
+
+async function assertPromptInvalidBody({ url, body, expectedMessage }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 400);
   assert.equal(response.body.request_id, "");
@@ -116,6 +118,17 @@ async function assertInvalidBody({ url, body, expectedMessage }) {
   assert.equal("trace_id" in response.body, false);
   assert.equal("images" in response.body, false);
   assertNoForbiddenFields(response.body);
+}
+
+function assertV36Error(payload, code) {
+  assert.equal(payload.status, "failed");
+  assert.deepEqual(Object.keys(payload).sort(), ["error", "images", "status", "warnings"]);
+  assert.equal(payload.error.code, code);
+  assert.equal(typeof payload.error.message, "string");
+  assert.ok(payload.error.message.length > 0);
+  assert.deepEqual(payload.images, []);
+  assert.deepEqual(payload.warnings, []);
+  assertNoForbiddenFields(payload);
 }
 
 async function postRaw(url, body) {

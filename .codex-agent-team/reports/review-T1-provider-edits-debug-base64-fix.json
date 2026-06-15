@@ -1,0 +1,113 @@
+{
+  "taskId": "T1-provider-edits-debug-base64-fix",
+  "task_id": "T1-provider-edits-debug-base64-fix",
+  "status": "pass_base64_fix_image_edit_blocked",
+  "verdict": "pass_with_blocker",
+  "reviewed_at": "2026-06-15T08:38:23Z",
+  "summary": "Base64/binary normalizer and edits multipart hardening passed automated verification and subagent review; real browser text generation passed; real browser image edit remains blocked by upstream/backend unavailable public failure.",
+  "findings": [],
+  "blocking_items": [
+    {
+      "code": "IMAGE_EDIT_BLOCKED",
+      "summary": "Real browser image edit POST returned HTTP 502 PROMPT_IMAGE_BACKEND_UNAVAILABLE after successful reference upload; no mock success used and no image URL returned.",
+      "owner": "upstream_provider"
+    }
+  ],
+  "requirements": {
+    "gpt_image_2_only": "pass",
+    "text_generations_only": "pass",
+    "image_edits_only": "pass",
+    "no_fallback_model": "pass",
+    "no_mock_success": "pass",
+    "base64_data0_image_result_supported": "pass",
+    "binary_direct_response_supported": "pass",
+    "public_images_url_only": "pass",
+    "security_scan_extended": "pass",
+    "browser_text_image": "pass",
+    "browser_image_edit": "blocked"
+  },
+  "command_results": [
+    {
+      "command": "npm run check",
+      "status": "pass",
+      "details": "Node syntax checks passed."
+    },
+    {
+      "command": "npm test",
+      "status": "pass",
+      "details": "node --test tests/unit/*.test.js passed: 106 tests, 106 pass."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=真实配置.json node tests/integration/provider-config.test.js",
+      "status": "pass",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "pass",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "git diff --check",
+      "status": "pass",
+      "details": "Whitespace diff check passed."
+    },
+    {
+      "command": "review_gate.py --report .codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json",
+      "status": "pass",
+      "details": "Historical required gate passed with zero blocking findings."
+    },
+    {
+      "command": "codegraph sync . && codegraph status --json",
+      "status": "pass",
+      "details": "pendingChanges added=0 modified=0 removed=0."
+    },
+    {
+      "command": "git status --short --untracked-files=all",
+      "status": "pass",
+      "details": "Reviewed; feature branch contains expected modified and untracked artifacts."
+    }
+  ],
+  "subagent_reviews": [
+    {
+      "role": "Edits Protocol Reviewer",
+      "decision": "pass",
+      "report": ".codex-agent-team/reports/edits-protocol-reviewer-20260615.md"
+    },
+    {
+      "role": "Provider Config Reviewer",
+      "decision": "pass",
+      "report": ".codex-agent-team/reports/provider-config-reviewer-edits-20260615.md"
+    },
+    {
+      "role": "Normalizer Reviewer",
+      "decision": "pass",
+      "report": ".codex-agent-team/reports/normalizer-reviewer-20260615.md"
+    },
+    {
+      "role": "Security Reviewer",
+      "decision": "fail_then_pass",
+      "report": ".codex-agent-team/reports/security-reviewer-edits-rereview-20260615.md"
+    },
+    {
+      "role": "Browser QA",
+      "decision": "blocked",
+      "report": ".codex-agent-team/reports/browser-qa-edits-20260615.md"
+    },
+    {
+      "role": "Test Reviewer",
+      "decision": "pass",
+      "report": ".codex-agent-team/reports/test-reviewer-edits-20260615.md"
+    },
+    {
+      "role": "Final Integrator",
+      "status": "PASS_WITH_IMAGE_EDIT_BLOCKED",
+      "report": ".codex-agent-team/reports/final-integrator-edits-20260615.md"
+    }
+  ],
+  "decision": "Commit feature branch allowed to preserve fixes; push main is not allowed; pushing feature branch is deferred until user confirmation or final status policy allows.",
+  "updated_at": "2026-06-15T08:43:28.365285+00:00",
+  "final_status": "IMAGE_EDIT_BLOCKED",
+  "allow_push_main": false,
+  "allow_feature_branch_commit": true
+}

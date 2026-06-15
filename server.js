@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, normalize, resolve } from "node:path";
 import { handleImageGeneration, publicImageUrl } from "./src/routes/image-generations.js";
 import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
-import { ImageApiError } from "./src/core/errors.js";
+import { ImageApiError, v36ImageGenerationErrorPayload } from "./src/core/errors.js";
 import { makeId, normalizeRequest, stringValue } from "./src/core/runtime.js";
 import { extractEntityMentions } from "./src/core/entity-mentions.js";
 import { resolveReferences } from "./src/core/reference-binding.js";
@@ -44,7 +44,7 @@ async function route(request, response) {
   if (request.method === "POST" && url.pathname === "/api/v1/image-generations") {
     const body = await readJson(request);
     const invalid = invalidJsonPayload(body);
-    if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
+    if (invalid) return sendJson(response, invalid.statusCode, v36InvalidJsonPayload(invalid.payload));
     const result = await handleImageGeneration(body);
     return sendJson(response, result.statusCode, result.payload);
   }
@@ -413,6 +413,15 @@ function invalidJsonPayload(body) {
         : "请求体不是合法 JSON。"
     }
   };
+}
+
+function v36InvalidJsonPayload(payload) {
+  return v36ImageGenerationErrorPayload(new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: payload.error_code || "INVALID_REQUEST_SCHEMA",
+    message: payload.message || "请求体不是合法 JSON。"
+  })).payload;
 }
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {

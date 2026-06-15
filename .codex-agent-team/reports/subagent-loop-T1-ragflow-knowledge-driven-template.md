@@ -53,7 +53,7 @@ Date: 2026-06-11
 - Trace: `trace_5b17210c1a3a4d0587`.
 - Generation: `gen_2741feb461b843db9b`.
 - Image URL:
-  `http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37`.
+  `[REDACTED_GENERATED_IMAGE_URL]`.
 - GET image: `HTTP 200`, `Content-Type=image/png`,
   `Content-Length=1999538`, `Cache-Control=no-store`, PNG magic bytes verified.
 

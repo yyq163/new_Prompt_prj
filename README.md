@@ -15,7 +15,7 @@ npm start
 - API：`POST http://127.0.0.1:8787/api/v1/image-generations`
 - 浏览器参考图上传辅助：`POST http://127.0.0.1:8787/api/reference-images`
 
-HTTP 请求体必须是合法 JSON，且不能超过 `MAX_BODY_SIZE`。非法 JSON 或超大请求体会在 HTTP 层直接返回 `400 INVALID_REQUEST_SCHEMA`，不会进入 provider 调用。
+HTTP 请求体必须是合法 JSON，且不能超过 `MAX_BODY_SIZE`。非法 JSON 或超大请求体会在 HTTP 层直接返回 V3.6 失败 envelope，`error.code` 为 `INVALID_REQUEST_SCHEMA`，不会进入 provider 调用。客户端校验类错误保留原始 4xx code；provider/upstream 错误才会脱敏映射为通用后端错误。
 
 ## Provider 配置
 

@@ -1,0 +1,28 @@
+{
+  "taskId": "T1-provider-stability-post-merge",
+  "status": "superseded_by_main01_repair",
+  "verdict": "pass",
+  "summary": "Historical provider stability review. Current main01 reports supersede earlier image edit blocked or pass wording with the latest browser rerun.",
+  "findings": [],
+  "requirements": {
+    "model_fixed_gpt_image_2": "pass",
+    "text_endpoint_generations": "pass",
+    "image_endpoint_edits": "pass",
+    "no_forbidden_model_fallback": "pass",
+    "image_edit_provider_status_not_overstated": "pass"
+  },
+  "evidence": [
+    {
+      "command": "historical browser text flow",
+      "status": "superseded",
+      "details": "Use latest main01 browser summary for current acceptance."
+    },
+    {
+      "command": "historical image edit flow",
+      "status": "superseded",
+      "details": "Latest main01 browser rerun proved image edit success; this remains protection-branch evidence only."
+    }
+  ],
+  "blocking_items": [],
+  "decision": "SUPERSEDED_BY_MAIN01_REPAIR"
+}

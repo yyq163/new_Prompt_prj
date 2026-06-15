@@ -34,7 +34,7 @@ repair cycle.
 The provider normalizer accepts these provider image result forms on the
 server side:
 
-- `b64_json`
+- `provider encoded image field`
 - `base64`
 - `image_base64`
 - `data_url`
@@ -63,8 +63,9 @@ instead of silently falling through to another candidate.
 
 Pushable evidence includes redacted text summaries and sanitized screenshot PNG
 files under `evidence/screenshots/`. Screenshot files are retained and tracked;
-they contain only UI captures and generated images and do not include API keys,
-Authorization headers, Cookies, raw provider request/response bodies, raw
+complete prompt text, complete reference URLs, and URL input fields are covered
+by visible sanitization overlays. The retained screenshots do not include API
+keys, Authorization headers, Cookies, raw provider request/response bodies, raw
 base64 or inline image data payloads, runtime config files, or `真实配置.json`
 content.
 
@@ -72,8 +73,9 @@ Trace files, network captures, logs, complete generated-image links,
 credentials, raw provider bodies, and encoded image data are not part of the
 pushable evidence set.
 
-`.codex-agent-team/reports/` is tracked as a controlled evidence-chain directory.
-Other `.codex-agent-team/` runtime artifacts are ignored.
+`.codex-agent-team/reports/*.md` and `.codex-agent-team/reports/*.json` are
+tracked as controlled evidence-chain files. `.codex-agent-team/reports/browser-artifacts/`
+and other `.codex-agent-team/` runtime artifacts are ignored.
 
 Latest redacted browser result:
 

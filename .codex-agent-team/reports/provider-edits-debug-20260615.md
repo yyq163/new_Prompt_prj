@@ -19,7 +19,7 @@ No mock success was used. `main` was not pushed.
 
 ## Normalizer Contract
 
-- Accepts URL, `b64_json`, `base64`, `image_base64`, `data_url`,
+- Accepts URL, `provider encoded image field`, `base64`, `image_base64`, `data_url`,
   `data[0].image`, `data[0].result`, data URI, binary objects, and direct image
   HTTP response.
 - Encoded/binary images enter Generated Image Store.

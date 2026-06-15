@@ -1,9 +1,9 @@
 # Git Hygiene Reviewer Report
 
-**Role:** Git Hygiene Reviewer  
-**Branch:** main01  
-**HEAD:** 3a5124085176dc0372fd4fb76c38792b15573eb7  
-**Date:** 2026-06-15  
+**Role:** Git Hygiene Reviewer
+**Branch:** main01
+**HEAD:** HISTORICAL_SUPERSEDED_HEAD
+**Date:** 2026-06-15
 **Scope:** `.gitignore` rules for `.codex-agent-team/reports/` and `evidence/screenshots/`
 
 ---

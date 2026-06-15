@@ -31,7 +31,7 @@ trace、network capture、raw provider payload、encoded image payload 或凭据
 ## 安全
 
 - Sanitized screenshots are retained and tracked under `evidence/screenshots/`;
-  trace and network captures remain local-only and are not tracked.
+  trace and network captures remain ignored runtime and are ignored.
 - No raw request, raw response, prompt text, complete reference link, complete
   generated-image link, key, token, credential value, raw base64, or inline image
   payload is recorded.

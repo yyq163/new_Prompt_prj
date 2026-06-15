@@ -1,8 +1,8 @@
-# Final Integrator: main01 Post-Push Verdict
+# Final Integrator: main01 post-repair Verdict
 
 Date: 2026-06-15
 Role: Final Integrator
-Scope: post-push verification of the `main01` protection branch after the screenshot-policy and report-tracking repair cycle
+Scope: post-repair verification of the `main01` protection branch after the screenshot-policy and report-tracking repair cycle
 
 ## Final Verdict
 
@@ -12,9 +12,9 @@ Scope: post-push verification of the `main01` protection branch after the screen
 | `branch` | `main01` |
 | `origin/main HEAD` | `751b3013a0526f031c04d08946516d5e46cb6a01` |
 | `local main HEAD` | `a77c15fa40f39adaf1c77a6e100f5da354f0b64c` |
-| `main01 before repair` | `3a5124085176dc0372fd4fb76c38792b15573eb7` |
-| `main01 after repair (pre-push)` | `822d654fc75f504c37ebb6f96306207e2bb499e4` |
-| `origin/main01 after push` | `822d654fc75f504c37ebb6f96306207e2bb499e4` |
+| `main01 before repair` | `HISTORICAL_SUPERSEDED_HEAD` |
+| `main01 after repair (historical interim)` | `HISTORICAL_SUPERSEDED_HEAD` |
+| `origin/main01 after push` | `HISTORICAL_SUPERSEDED_HEAD` |
 | `pushed main01` | `yes` |
 | `pushed main` | `no` |
 | `main01 == origin/main01` | `yes` |
@@ -45,8 +45,8 @@ untouched; therefore merging this branch into `main` is not allowed.
 
 ## Narrative Summary
 
-- Pre-repair `main01` HEAD was `3a5124085176dc0372fd4fb76c38792b15573eb7`.
-- After this report is committed and pushed, the lead agent will fill in the
+- Pre-repair `main01` HEAD was `HISTORICAL_SUPERSEDED_HEAD`.
+- After this report is committed and pushed, the final refs are verified only in the final command output the
   post-repair `main01` HEAD and the resulting `origin/main01` HEAD.
 - `origin/main` remains at `751b3013a0526f031c04d08946516d5e46cb6a01` and has
   not been altered.
@@ -58,7 +58,7 @@ untouched; therefore merging this branch into `main` is not allowed.
 ## Audit Trail
 
 - `final-integrator-main01-20260615.md` is marked `HISTORICAL_PRE_PUSH_REPORT`.
-- `final-integrator-main01-post-push-20260615.md` is marked
+- `final-integrator-main01-post-repair-20260615.md` is marked
   `HISTORICAL_POST_PUSH_REPORT` and superseded by this report.
-- No Final Integrator report retains `READY_AFTER_FINAL_VERIFICATION` as its
+- No Final Integrator report retains `HISTORICAL_SUPERSEDED_STATUS` as its
   final state.

@@ -10,11 +10,11 @@ PASS（静态只读审查，未改代码，未读取/打印真实配置，未运
 
 | 输入形态 | 实现覆盖 | 进入 Store | Public API 只返 URL | 测试覆盖 | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| `b64_json` | `encodedImageValue` + `generatedImageFromEncoded` | 是 | 是 | 有 `data[0].b64_json` 与 public API 测试 | PASS |
+| `provider encoded image field` | `encodedImageValue` + `generatedImageFromEncoded` | 是 | 是 | 有 `data[0].provider encoded image field` 与 public API 测试 | PASS |
 | `base64` | 同上 | 是 | 是 | 有 `data[0].base64` 表驱动 | PASS |
 | `image_base64` | 同上 | 是 | 是 | 有 `data[0].image_base64` 表驱动 | PASS |
 | `data_url` / data URL | 同上，先解析 MIME 再存储 | 是 | 是 | 有字段与 `image` data URL 测试 | PASS |
-| `data[0].b64_json` | `json.data.forEach(pushImage)` | 是 | 是 | 有 | PASS |
+| `data[0].provider encoded image field` | `json.data.forEach(pushImage)` | 是 | 是 | 有 | PASS |
 | `data[0].base64` | 同上 | 是 | 是 | 有 | PASS |
 | `data[0].image` | 对 data URL 或疑似编码串识别 | 是 | 是 | 有裸编码与 data URL | PASS |
 | `data[0].result` | 对疑似编码串识别 | 是 | 是 | 有裸编码 | PASS |
@@ -31,7 +31,7 @@ PASS（静态只读审查，未改代码，未读取/打印真实配置，未运
 
 ## 缺失测试
 
-- 缺少顶层 `b64_json/base64/image_base64/data_url` 的显式表驱动测试；当前实现覆盖，但测试主要锁在 `data[0]`。
+- 缺少顶层 `provider encoded image field/base64/image_base64/data_url` 的显式表驱动测试；当前实现覆盖，但测试主要锁在 `data[0]`。
 - 缺少 direct `ArrayBuffer`、`Uint8Array`、其他 typed array 直接传入 `normalizeProviderImageObject` 或 `{ binary }/{ bytes }/{ buffer }/{ data }` 的单测。
 - 缺少 `data[0].image/result` 非法编码字段的专门断言；当前会拒绝为空结果或非法结果，但建议明确锁定公共错误不外露原始载荷。
 

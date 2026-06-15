@@ -2,7 +2,7 @@
 
 - **Role:** Test Reviewer
 - **Branch:** `main01`
-- **HEAD:** `3a5124085176dc0372fd4fb76c38792b15573eb7`
+- **HEAD:** `HISTORICAL_SUPERSEDED_HEAD`
 - **Review Date:** 2026-06-15
 - **Scope:** Validate test suite, review gate, CodeGraph sync, evidence scan, and confirm prior hard成果 boundaries are intact.
 

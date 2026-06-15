@@ -1,6 +1,6 @@
 # Report (HISTORICAL)
 
-**Status:** HISTORICAL — superseded by the screenshot-policy and post-push
+**Status:** HISTORICAL — superseded by the screenshot-policy and post-repair
 report repair cycle.
 
 The screenshot policy and `.codex-agent-team/reports` tracking strategy have

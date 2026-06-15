@@ -1,0 +1,13 @@
+{
+  "taskId": "T1-final-image-api-service",
+  "status": "superseded_by_main01_repair",
+  "verdict": "pass",
+  "summary": "Historical invalid-body review retained as superseded context. Current main01 final verification must use current command outputs.",
+  "findings": [],
+  "evidence": [
+    "invalid JSON handling remains covered by tests",
+    "oversized body handling remains covered by tests",
+    "current browser and evidence status must be read from main01 reports"
+  ],
+  "decision": "SUPERSEDED_BY_MAIN01_REPAIR"
+}

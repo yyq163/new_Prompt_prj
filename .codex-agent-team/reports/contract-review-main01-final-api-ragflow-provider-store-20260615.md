@@ -29,7 +29,7 @@ Generated Image Store contracts appear preserved in the main01 protection branch
 - Reference-backed requests route to `/v1/images/edits`.
 - Poll/status URL safety is covered by allowlist tests before any credentialed
   provider follow-up request.
-- Normalizer coverage includes `b64_json`, `base64`, `image_base64`,
+- Normalizer coverage includes `provider encoded image field`, `base64`, `image_base64`,
   `data_url`, `data[0].image`, `data[0].result`, data URL input, binary
   objects, direct binary values, and direct binary HTTP image responses.
 - Generated Image Store responses preserve `Cache-Control: no-store`.

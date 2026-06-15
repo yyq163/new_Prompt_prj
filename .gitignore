@@ -34,5 +34,10 @@ ai-tu/runtime-config.example.json
 evidence/visual-6task-results.json
 evidence/**/*.trace
 evidence/**/*.network
+evidence/**/*.network.json
 evidence/**/*.har
 evidence/**/*.log
+evidence/trace/
+evidence/har/
+evidence/network/
+evidence/log/

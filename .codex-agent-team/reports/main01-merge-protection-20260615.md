@@ -2,9 +2,9 @@
 
 Date: 2026-06-15
 **Status:** HISTORICAL_PRE_PUSH — superseded by
-`final-integrator-main01-post-push-20260615.md`. The original
+`final-integrator-main01-post-repair-20260615.md`. The original
 `PASS_MAIN01_PROTECTION_BRANCH_PUSHED` verdict was written before the evidence
-security contradiction repair cycle completed and before the post-push ref
+security contradiction repair cycle completed and before the post-repair ref
 checks of the current run.
 
 FINAL_STATUS (historical): PASS_MAIN01_PROTECTION_BRANCH_PUSHED
@@ -71,7 +71,7 @@ artifacts rather than conflict resolution.
 - Contract Reviewer: PASS with noted risks; sanitized report is stored separately.
 - Security Reviewer: initial FAIL; safe rebuild removed the risky artifacts and requires re-review before push.
 - Security Reviewer re-review: PASS for the safe rebuild staged index.
-- Final Integrator: pre-push ready; final push completed by lead agent after fresh verification.
+- Final Integrator: historical interim ready; final push completed by final command output after fresh verification.
 
 ## Critical Features Preserved
 

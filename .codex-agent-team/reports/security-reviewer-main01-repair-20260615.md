@@ -2,7 +2,7 @@
 
 **Status:** HISTORICAL — superseded by the screenshot-policy repair cycle report.
 
-This report was written when the repository used a `local_only_not_tracked`
+This report was written when the repository used a `HISTORICAL_SUPERSEDED_SCREENSHOT_POLICY`
 screenshot policy and when `.codex-agent-team/` was fully ignored by
 `.gitignore` while some files remained tracked.
 
@@ -14,6 +14,6 @@ During the subsequent repair cycle:
   runtime artifacts.
 
 The current authoritative security verdict is in the new screenshot-policy
-security reviewer report and the latest Final Integrator post-push report.
+security reviewer report and the latest Final Integrator post-repair report.
 
 This file is retained only as an audit trail.

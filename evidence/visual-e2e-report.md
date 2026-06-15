@@ -4,7 +4,7 @@ Status: MAIN01_REDACTED_SUMMARY
 
 This pushable evidence file records redacted browser status and retained
 screenshots. Screenshots are retained as sanitized PNG files and tracked on
-`main01`. Trace files and network captures remain local-only and are not tracked.
+`main01`. Trace files and network captures remain ignored runtime and are ignored.
 
 This version was refreshed during the evidence-chain security contradiction
 repair cycle.

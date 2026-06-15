@@ -1,19 +1,19 @@
-# Final Integrator: main01 Protection (PRE-PUSH HISTORICAL)
+# Final Integrator: main01 Protection (historical interim HISTORICAL)
 
 **Status:** HISTORICAL_PRE_PUSH_REPORT — superseded by
-`final-integrator-main01-post-push-20260615.md`.
+`final-integrator-main01-post-repair-20260615.md`.
 
-This report was written before the post-push repair cycle completed. It recorded
-`READY_AFTER_FINAL_VERIFICATION` because the final command rerun, commit, and
+This report was written before the post-repair repair cycle completed. It recorded
+`HISTORICAL_SUPERSEDED_STATUS` because the final command rerun, commit, and
 explicit push to `origin/main01` had not yet been performed at the time of
 writing.
 
-The current authoritative verdict is in the post-push Final Integrator report.
+The current authoritative verdict is in the post-repair Final Integrator report.
 This file is retained only as an audit trail.
 
 - Branch: `main01`.
 - `main` remains untouched and must not be pushed or merged.
-- Screenshot policy at the time was local-only; current policy is
+- Screenshot policy at the time was ignored runtime; current policy is
   `sanitized_png_retained` with screenshots tracked.
 - Provider/model contracts preserved.
 - Normalizer accepts required encoded/binary forms server-side and keeps public

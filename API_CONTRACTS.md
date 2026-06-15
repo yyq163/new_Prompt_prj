@@ -5,8 +5,11 @@
 Final image generation API. The request body is JSON only.
 
 Malformed JSON and request bodies over `MAX_BODY_SIZE` return HTTP 400 with
-`status: "failed"` and `error_code: "INVALID_REQUEST_SCHEMA"` before request
-normalization or provider execution.
+the V3.6 failure envelope (`status: "failed"`, `error.code:
+"INVALID_REQUEST_SCHEMA"`) before request normalization or provider execution.
+Client validation and clarification errors retain their original public
+`error.code` and 4xx status; only provider/upstream failures are mapped to
+generic prompt image backend error codes.
 
 ### Request Fields
 
@@ -117,6 +120,73 @@ Reference task rules:
 Generated Image Store URLs are built from `PUBLIC_BASE_URL` when configured. The value must be HTTP(S); trailing slashes are removed before appending `/api/v1/generated-images/:image_id`.
 
 In production, `PUBLIC_BASE_URL` is required for service-generated image URLs. Local development may fall back to the current local host and port.
+
+### Provider routing and model
+
+The Final API provider model is fixed to `gpt-image-2`. Runtime configuration
+must not change the model and must not fall back to `gpt-image-2-all`,
+`gpt-image-1`, `dall-e-*`, or any other model.
+
+Provider route selection is derived only from reference presence:
+
+- No references / `text_to_image`: `POST /v1/images/generations`, `model: "gpt-image-2"`
+- With references / `image_to_image`: `POST /v1/images/edits`, `model: "gpt-image-2"`
+
+`task_type` must not change the model. Text generation must not use the edits
+endpoint, and reference-backed generation must not use the generations endpoint.
+Provider failure is returned as failure; this API must not mock success.
+
+## POST /api/reference-images
+
+Browser helper endpoint for local UI acceptance. It accepts one multipart
+`image` file, stores the bytes in the in-memory Generated Image Store, and
+returns a structured local image URL that the page can place into
+`references[].url`.
+
+This endpoint is not the Final image generation API and does not allow
+URL-only generation requests. `POST /api/v1/image-generations` remains JSON
+only and still requires structured `references[]`.
+
+Only service-generated local image URLs under
+`/api/v1/generated-images/img_*` are allowed back into `references[].url` for
+this browser upload flow. Other localhost, loopback, link-local, or private
+reference URLs remain rejected unless an explicit development override is set.
+
+### RAGFlow knowledge enhancement
+
+RAGFlow is optional and may provide only a validated JSON enhancement object for
+the backend Prompt Compiler. It does not produce the public response, provider
+payload, final provider prompt, reference binding, image URLs, or callback
+state.
+
+The Prompt Compiler local fallback is intentionally minimal. Without a valid
+enhancement or explicit user prompt content, it must not inject full
+professional templates such as character four-view sheets, scene 3x3 or
+multi-camera boards, prop front/side/back or material-detail boards, or
+storyboard left/right planning layouts.
+
+Allowed enhancement fields are tracked by `TYPE_SCHEMAS.RagflowEnhancement` and
+include:
+
+- `scene_summary`
+- `visual_focus`
+- `story_function`
+- `action_stages`
+- `shot_plan`
+- `normalized_shot_plan`
+- `lighting_notes`
+- `composition_notes`
+- `negative_notes`
+- `missing_constraints`
+- `input_analysis`
+- `storyboard_processing`
+
+The API discards unsafe enhancement when it leaks `final_prompt` or
+`compiled_prompt`, emits any `reference_id` / `reference_ids`, emits any URL,
+uses fields outside `TYPE_SCHEMAS.RagflowEnhancement`, returns a non-object or
+non-JSON value, changes explicit shot-list count/order, carries primary /
+auxiliary / weight / priority binding semantics, or places internal
+implementation language in any enhancement field.
 
 ### Legacy route
 

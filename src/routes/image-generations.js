@@ -1,4 +1,4 @@
-import { ImageApiError, publicErrorPayload } from "../core/errors.js";
+import { ImageApiError, v36ImageGenerationErrorPayload } from "../core/errors.js";
 import { extractEntityMentions } from "../core/entity-mentions.js";
 import { resolveReferences } from "../core/reference-binding.js";
 import { compilePrompt } from "../core/prompt-compiler.js";
@@ -7,7 +7,7 @@ import { assertNoForbiddenPublicFields, makeId, normalizeRequest } from "../core
 import { taskTypeLabel } from "../core/labels.js";
 import { generateWithAiTuProvider } from "../providers/ai-tu-provider-adapter.js";
 import { appendTrace } from "../storage/trace-store.js";
-import { normalizePublicBaseUrl } from "../core/url-security.js";
+import { normalizePublicBaseUrl, normalizePublicHttpUrl } from "../core/url-security.js";
 
 export async function handleImageGeneration(body, { provider = generateWithAiTuProvider, fetchImpl = globalThis.fetch } = {}) {
   let requestId = "";
@@ -34,33 +34,14 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       compiledPrompt: compiled.compiled_prompt,
       fetchImpl
     });
-    const publicImages = providerResult.images.map((image, index) => ({
-      image_id: image.image_id || `img_${String(index + 1).padStart(3, "0")}`,
-      url: publicImageUrl(image.url),
-      width: Number.isFinite(Number(image.width)) ? Number(image.width) : null,
-      height: Number.isFinite(Number(image.height)) ? Number(image.height) : null,
-      format: typeof image.format === "string" && image.format.trim() ? image.format.trim() : "png"
+    const publicImages = providerResult.images.map((image) => ({
+      url: publicImageUrl(image.url)
     }));
 
     const payload = {
-      request_id: request.request_id,
-      generation_id: generationId,
       status: "succeeded",
-      task_type: request.task_type,
-      task_type_label: taskTypeLabel(request.task_type),
-      generation_mode: request.generation_mode,
-      input: {
-        prompt: request.prompt,
-        task_type: request.task_type,
-        task_type_label: taskTypeLabel(request.task_type)
-      },
       images: publicImages,
-      normalized: {
-        entity_mentions: binding.entity_mentions,
-        references_used: binding.references_used
-      },
-      warnings: binding.warnings,
-      trace_id: traceId
+      warnings: binding.warnings
     };
     assertNoForbiddenPublicFields(payload);
     await appendTrace({
@@ -81,7 +62,7 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
     return { statusCode: 200, payload };
   } catch (error) {
     const mapped = error instanceof ImageApiError ? error : error;
-    const { statusCode, payload } = publicErrorPayload(mapped, requestId);
+    const { statusCode, payload } = v36ImageGenerationErrorPayload(mapped);
     await appendTrace({
       endpoint: "/api/v1/image-generations",
       method: "POST",
@@ -91,20 +72,33 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       generation_mode: generationMode,
       prompt,
       status: payload.status,
-      error_code: payload.error_code,
+      error_code: payload.error.code,
       reference_count: referenceCount,
       callback_present: Boolean(body && (body.callback_url || body.callback)),
       image_count: 0,
       warning_count: 0
     });
-    payload.trace_id = payload.trace_id || traceId;
-    assertNoForbiddenPublicFields(payload);
     return { statusCode, payload };
   }
 }
 
-function publicImageUrl(url) {
-  if (!url || /^https?:\/\//i.test(url)) return url;
+export function publicImageUrl(url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) {
+    return normalizePublicHttpUrl(url, "provider image url", {
+      allowLocal: false,
+      statusCode: 502,
+      errorCode: "PROVIDER_IMAGE_URL_UNSAFE"
+    });
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || !url.startsWith("/api/v1/generated-images/")) {
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "PROVIDER_IMAGE_URL_UNSAFE",
+      message: "provider image url 必须是安全公网 HTTP(S) URL 或服务生成图片 URL。"
+    });
+  }
   const base = resolveGeneratedImagePublicBaseUrl();
   return `${base}${url.startsWith("/") ? url : `/${url}`}`;
 }

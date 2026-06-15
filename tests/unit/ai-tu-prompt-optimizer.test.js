@@ -45,11 +45,19 @@ test("frontend calls prompt optimizer and overwrites original prompt only on suc
 test("frontend image job request includes structured references", () => {
   assert.match(html, /references: structuredReferences/);
   assert.match(html, /collectOptimizerReferences\(\{ requireUrl: true \}\)/);
+  assert.match(html, /uploadedReferencesFromSlots\(refList, manualReferences\)/);
+  assert.match(html, /reference_id: sanitizeReferenceId/);
   assert.match(html, /reference_policy:/);
   assert.match(html, /reference URL/);
   assert.match(html, /finalApiEndpoint = "\/api\/v1\/image-generations"/);
   assert.match(html, /fetch\(finalApiEndpoint/);
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
+});
+
+test("frontend formats structured final image errors without object placeholders", () => {
+  assert.match(html, /function jobErrorMessage\(job\)/);
+  assert.match(html, /function normalizeErrorMessage\(error\)/);
+  assert.doesNotMatch(html, /job\.error \|\| "未知错误"/);
 });
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {

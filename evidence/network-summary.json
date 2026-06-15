@@ -1,55 +1,23 @@
 {
-  "status": "pass",
-  "endpoint": "/api/v1/image-generations",
-  "method": "POST",
-  "http_status": 200,
-  "api_status": "succeeded",
-  "browser_surface": "Codex in-app Browser",
-  "browser_submitted": true,
-  "post_result": {
-    "endpoint": "/api/v1/image-generations",
-    "http_status": 200,
-    "ok": true,
-    "status": "succeeded",
-    "image_count": 1,
-    "reference_count": 0
+  "status": "REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE",
+  "checked_at": "2026-06-15T06:41:04.144Z",
+  "note": "Legacy final-api evidence is superseded by the ai-tu V3.6 redacted browser and network summary.",
+  "current_evidence": {
+    "ai_tu_network_summary": "ai-tu/evidence/network-summary.json",
+    "ai_tu_visual_report": "ai-tu/evidence/visual-e2e-report.md"
   },
-  "generated_image_get": {
-    "http_status": 200,
-    "content_type": "image/png",
-    "content_length": 3118845,
-    "cache_control": "no-store",
-    "png_magic": true
+  "privacy": {
+    "internal_identifiers_recorded": false,
+    "complete_image_links_recorded": false,
+    "user_text_recorded": false,
+    "ref_link_recorded": false,
+    "credential_values_recorded": false,
+    "encoded_image_payloads_recorded": false,
+    "unfiltered_upstream_bodies_recorded": false
   },
-  "http_invalid_body": {
-    "image_generation_malformed_json": "pass",
-    "image_generation_oversized_body": "pass",
-    "prompt_optimization_malformed_json": "pass",
-    "prompt_optimization_oversized_body": "pass",
-    "error_code": "INVALID_REQUEST_SCHEMA"
-  },
-  "callback_public_url_validation": "pass",
-  "callback_delivery_attempted": false,
-  "public_response_privacy_scan": "pass",
-  "evidence_text_scan": "pass",
-  "browser_visual_e2e": "pass",
-  "provider_config_integration": "REAL_PROVIDER_CONFIG_PRESENT",
-  "trace_id": "trace_498493fb085144d8ac",
-  "generation_id": "gen_eb0bdb009b9842babe",
-  "generated_image_id": "img_f95359394abc49bcb5be11f025bc86ea",
-  "browser_page": "http://127.0.0.1:8792/",
-  "screenshots": {
-    "before_submit": "evidence/screenshots/final-v1-4-contract-before-submit.png",
-    "after_submit": "evidence/screenshots/final-v1-4-contract-after-submit.png"
-  },
-  "contract": {
-    "structured_references_required": true,
-    "url_only_reference_supported": false,
-    "empty_entity_reference_supported": false,
-    "reference_priority_weighting": false,
-    "usage_ignored": true,
-    "public_images_url_only": true,
-    "mock_success": false,
-    "high_concurrency_claim": false
+  "provider_boundary": {
+    "real_provider_encoded_image_consumed_server_side_only": true,
+    "public_response_url_only": true,
+    "binary_or_direct_image_provider_response_accepted": false
   }
 }

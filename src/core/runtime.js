@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { clarification, fail } from "./errors.js";
-import { normalizePublicHttpUrl } from "./url-security.js";
+import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "./url-security.js";
 import {
   ENTITY_TYPE_ALIASES,
   ROLE_ALIASES,
@@ -17,7 +17,7 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["request_id", "task_type", "prompt", "references", "reference_policy", "output", "options", "callback_url", "callback"]
   },
   ImageGenerationResponse: {
-    fields: ["request_id", "generation_id", "status", "task_type", "task_type_label", "generation_mode", "input", "images", "normalized", "warnings", "trace_id"]
+    fields: ["status", "images", "warnings"]
   },
   ReferenceInput: {
     fields: ["reference_id", "entity_name", "entity_type", "role", "url", "mime_type", "display_name", "description", "order"]
@@ -32,13 +32,13 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["unbound_entity"]
   },
   GenerationImage: {
-    fields: ["image_id", "url", "width", "height", "format"]
+    fields: ["url"]
   },
   ProviderAdapterResult: {
     fields: ["status", "images"]
   },
   RagflowEnhancement: {
-    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "input_analysis", "storyboard_processing"]
+    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints", "input_analysis", "storyboard_processing"]
   }
 });
 
@@ -129,9 +129,37 @@ export function normalizeRequest(body) {
 }
 
 export function assertReferenceUrlAllowed(value, field = "reference.url") {
+  if (isLocalGeneratedImageStoreReferenceUrl(value)) {
+    return normalizePublicHttpUrl(value, field, { allowLocal: true });
+  }
   return normalizePublicHttpUrl(value, field, {
     allowLocal: process.env.ALLOW_LOCAL_REFERENCE_URLS === "true"
   });
+}
+
+function isLocalGeneratedImageStoreReferenceUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(parsed.pathname)) return false;
+  if (!isUnsafeNetworkHost(parsed.hostname)) return false;
+  const expectedPort = String(process.env.PORT || 8787);
+  if ((parsed.port || defaultPort(parsed.protocol)) !== expectedPort) return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const configuredHost = stringValue(process.env.HOST || "127.0.0.1").toLowerCase();
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (configuredHost && configuredHost !== "0.0.0.0" && configuredHost !== "::") allowedHosts.add(configuredHost);
+  return allowedHosts.has(host);
+}
+
+function defaultPort(protocol) {
+  if (protocol === "http:") return "80";
+  if (protocol === "https:") return "443";
+  return "";
 }
 
 function normalizeReference(item, index) {

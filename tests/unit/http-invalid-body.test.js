@@ -28,25 +28,23 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
     await app.stop();
   });
 
-  await assertInvalidBody({
+  await assertFinalInvalidBody({
     url: `${app.baseUrl}/api/v1/image-generations`,
-    body: "{\"task_type\":\"text_image\"",
-    expectedMessage: "请求体不是合法 JSON"
+    body: "{\"task_type\":\"text_image\""
   });
 
-  await assertInvalidBody({
+  await assertFinalInvalidBody({
     url: `${app.baseUrl}/api/v1/image-generations`,
-    body: JSON.stringify({ prompt: "x".repeat(2000) }),
-    expectedMessage: "请求体过大"
+    body: JSON.stringify({ prompt: "x".repeat(2000) })
   });
 
-  await assertInvalidBody({
+  await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\"",
     expectedMessage: "请求体不是合法 JSON"
   });
 
-  await assertInvalidBody({
+  await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: JSON.stringify({ prompt: "x".repeat(2000) }),
     expectedMessage: "请求体过大"
@@ -72,12 +70,44 @@ test("HTTP final route still accepts legal V1.4 JSON into the normal provider-ga
     }
   }));
   assert.equal(response.status, 503);
-  assert.equal(response.body.status, "failed");
-  assert.equal(response.body.error_code, "PROVIDER_CONFIG_MISSING");
-  assertNoForbiddenFields(response.body);
+  assertV36Error(response.body, "PROMPT_IMAGE_BACKEND_NOT_CONFIGURED");
 });
 
-async function assertInvalidBody({ url, body, expectedMessage }) {
+test("HTTP reference image upload returns structured local image URL for browser flow", async (t) => {
+  const app = await startTestServer({ maxBodySize: "1mb" });
+  t.after(async () => {
+    await app.stop();
+  });
+
+  const form = new FormData();
+  form.append("image", new Blob([samplePngBytes()], { type: "image/png" }), "reference.png");
+  form.append("name", "reference.png");
+  const upload = await fetch(`${app.baseUrl}/api/reference-images`, {
+    method: "POST",
+    body: form
+  });
+  const payload = await upload.json();
+  assert.equal(upload.status, 200);
+  assert.equal(payload.status, "succeeded");
+  assert.match(payload.referenceId, /^ref_upload_/);
+  assert.match(payload.image_url, /^http:\/\/127\.0\.0\.1:\d+\/api\/v1\/generated-images\/img_/);
+  assert.equal(payload.type, "image/png");
+  assert.equal(payload.name, "reference.png");
+  assertNoForbiddenFields(payload);
+
+  const image = await fetch(payload.image_url, { cache: "no-store" });
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.equal(image.headers.get("cache-control"), "no-store");
+});
+
+async function assertFinalInvalidBody({ url, body }) {
+  const response = await postRaw(url, body);
+  assert.equal(response.status, 400);
+  assertV36Error(response.body, "INVALID_REQUEST_SCHEMA");
+}
+
+async function assertPromptInvalidBody({ url, body, expectedMessage }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 400);
   assert.equal(response.body.request_id, "");
@@ -88,6 +118,17 @@ async function assertInvalidBody({ url, body, expectedMessage }) {
   assert.equal("trace_id" in response.body, false);
   assert.equal("images" in response.body, false);
   assertNoForbiddenFields(response.body);
+}
+
+function assertV36Error(payload, code) {
+  assert.equal(payload.status, "failed");
+  assert.deepEqual(Object.keys(payload).sort(), ["error", "images", "status", "warnings"]);
+  assert.equal(payload.error.code, code);
+  assert.equal(typeof payload.error.message, "string");
+  assert.ok(payload.error.message.length > 0);
+  assert.deepEqual(payload.images, []);
+  assert.deepEqual(payload.warnings, []);
+  assertNoForbiddenFields(payload);
 }
 
 async function postRaw(url, body) {
@@ -110,7 +151,7 @@ function assertNoForbiddenFields(payload) {
   }
 }
 
-async function startTestServer() {
+async function startTestServer({ maxBodySize = "512b" } = {}) {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), "http-invalid-body-"));
   const configFile = join(dir, "runtime-config.json");
@@ -121,7 +162,7 @@ async function startTestServer() {
       ...process.env,
       PORT: String(port),
       HOST: "127.0.0.1",
-      MAX_BODY_SIZE: "512b",
+      MAX_BODY_SIZE: maxBodySize,
       AI_TU_RUNTIME_CONFIG_FILE: configFile,
       IMAGE_API_BASE: "",
       IMAGE_MODEL: "",
@@ -154,6 +195,16 @@ async function startTestServer() {
       rmSync(dir, { recursive: true, force: true });
     }
   };
+}
+
+function samplePngBytes() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89
+  ]);
 }
 
 async function waitForHealth(url) {

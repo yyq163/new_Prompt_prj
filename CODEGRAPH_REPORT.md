@@ -2,30 +2,37 @@
 
 Date: 2026-06-11
 
+Post-merge provider stability refresh: 2026-06-15
+
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
-Baseline commit before HTTP invalid body correction: `abfcdb41bc4ee52538dc44c55ffcee552bfaf655`
+Baseline commit before the original RAGFlow knowledge-driven template correction:
+`751b3013a0526f031c04d08946516d5e46cb6a01`
 
-This report is refreshed before the HTTP invalid body correction commit. The commit that
-contains this report must be verified after commit with `git log -1 --oneline`.
-The report therefore records the true pre-commit baseline and the true current
-index/worktree checks, rather than predicting a commit hash that would become
-stale as soon as this file is committed.
+Branch commit before this evidence/contract repair:
+`a81d6307605e8e9f99c900ad28b1741ab13f9326`
+
+This report is refreshed before the follow-up commit that repairs the evidence
+chain, subagent review record, and RAGFlow binding-decision validation. The
+commit that contains this report must be verified after commit with
+`git log -1 --oneline`.
 
 ## Verification State
 
-CodeGraph was refreshed from the project root and checked after the HTTP
-invalid body repair and evidence refresh.
+CodeGraph was refreshed from the project root and checked during the RAGFlow
+knowledge-driven template repair.
 
 Commands run for this report refresh:
 
 ```bash
 python3 /Users/yyq/.codex/.codex-agent-team/scripts/code_indexer.py --root . --out .code-index
 codegraph status --json
+codegraph sync .
+codegraph status --json
 git status --short --untracked-files=all
 ```
 
-Latest CodeGraph status:
+Initial CodeGraph status before production edits:
 
 ```json
 {
@@ -36,22 +43,34 @@ Latest CodeGraph status:
   "edgeCount": 1342,
   "backend": "native",
   "languages": ["javascript"],
-  "pendingChanges": {"added": 1, "modified": 0, "removed": 0}
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
 }
 ```
 
-The pre-commit `pendingChanges.added=1` is the newly indexed
-`tests/unit/http-invalid-body.test.js`. After the final commit, CodeGraph status
-must be checked again and should report no pending changes.
+Current CodeGraph status after final repair sync:
 
-Current pre-commit Git worktree changes are limited to the P1 repair:
+```json
+{
+  "initialized": true,
+  "projectPath": "/Volumes/App_Dev/new_Prompt_prj",
+  "fileCount": 24,
+  "nodeCount": 533,
+  "edgeCount": 1348,
+  "backend": "native",
+  "languages": ["javascript"],
+  "pendingChanges": {"added": 0, "modified": 0, "removed": 0}
+}
+```
 
-- add HTTP invalid body short-circuiting in `server.js`
-- add HTTP layer invalid body tests
-- update current Final V1.4 browser screenshots
-- update Final V1.4 evidence summaries
-- document HTTP 400 `INVALID_REQUEST_SCHEMA` for malformed and oversized bodies
-- refresh this CodeGraph report
+Current pre-commit Git worktree changes for this follow-up repair are limited to:
+
+- discard RAGFlow binding-decision semantics such as primary, auxiliary,
+  priority, and weight
+- add regression tests for English and Chinese binding-decision rejection
+- ignore local sensitive runtime config `真实配置.json`
+- refresh evidence reports, network summaries, screenshots, review ledgers, and
+  this CodeGraph report
+- keep old `8792 / trace_498493fb085144d8ac` browser evidence historical only
 
 After the final commit, `git status --short --untracked-files=all` must be
 empty before claiming final closure.
@@ -113,8 +132,8 @@ The final image generation flow is:
 1. `normalizeRequest` validates task type, references, output, callback URL, and generation mode.
 2. `extractEntityMentions` extracts `@实体名` and `[实体名]`.
 3. `resolveReferences` binds mentions by `entity_name` and keeps all valid references.
-4. `getRagflowEnhancement` optionally requests structured enhancement.
-5. `compilePrompt` builds backend-only upstream instructions.
+4. `getRagflowEnhancement` optionally requests structured knowledge-driven enhancement.
+5. `compilePrompt` builds backend-only upstream instructions from minimal local fallback plus validated enhancement fields.
 6. `generateWithAiTuProvider` calls the real upstream provider.
 7. `provider-result-normalizer.js` normalizes upstream image forms into public image URLs.
 8. Public response returns `images[].url`, normalized mentions/references, warnings, and trace id.
@@ -123,9 +142,62 @@ Public responses remain sanitized: no backend-only prompt text, optional
 enhancement state, upstream request details, raw image bytes, callback delivery
 state, or credential material is returned.
 
+## Provider Stability Update
+
+The post-merge provider policy is now fixed by contract rather than provider
+model config:
+
+- `generateWithAiTuProvider` always sends `model: "gpt-image-2"`.
+- `text_to_image` / no references posts only to a provider endpoint ending in
+  `/v1/images/generations`.
+- `image_to_image` / one or more references posts only to a provider endpoint
+  ending in `/v1/images/edits` and submits reference image parts to the
+  provider edit endpoint.
+- `task_type` does not select models.
+- `gpt-image-2-all`, `gpt-image-1`, `dall-e-*`, and other fallback models are
+  not allowed in Final API provider payloads.
+- Provider failure remains a failure path; no mock success branch is present in
+  the Final API adapter.
+- Provider-returned external image URLs are public-URL validated before entering
+  public `images[].url`.
+- `/api/reference-images` exists only as a browser helper upload endpoint. It
+  stores the uploaded image bytes in Generated Image Store and returns a local
+  generated-image URL for structured `references[].url`; the Final API image
+  generation endpoint remains JSON-only.
+
+`ai-tu/gateway/server.js` remains indexed as historical migration source only
+and can still contain legacy/mock/provider variants that are not Final API
+runtime behavior.
+
+## Prompt Compiler and RAGFlow Knowledge Status
+
+`src/core/prompt-compiler.js` no longer unconditionally injects full
+professional templates for `character_multiview`, `scene_multiview`,
+`prop_multiview`, or `storyboard`.
+
+Local fallback now keeps only:
+
+- task type
+- original user prompt
+- deterministic reference binding
+- output description
+- minimal per-task consistency/safety text
+- common negative rules
+
+Specific professional template content is expected from validated RAGFlow
+enhancement or explicit user prompt content. The compiler appends supported
+enhancement fields including `scene_summary`, `visual_focus`,
+`story_function`, `action_stages`, `shot_plan`, `normalized_shot_plan`,
+`lighting_notes`, `composition_notes`, `negative_notes`, and
+`missing_constraints`.
+
+RAGFlow system prompt and knowledge seed files were added under
+`docs/ragflow/`. These files are documentation and ingestion material; runtime
+code does not read them directly.
+
 ## Reference Binding Status
 
-Latest contract behavior is unchanged by this HTTP invalid body correction:
+Latest contract behavior is unchanged by this RAGFlow evidence/contract repair:
 
 - `reference_id` must be unique.
 - `references[].url` must be HTTP(S).
@@ -251,35 +323,65 @@ and current acceptance artifacts.
 
 ## Current Browser Evidence
 
-Current browser run:
+Current post-merge provider stability run at `2026-06-15 12:10 CST`:
+
+- Runtime config: local `真实配置.json` used without logging sensitive values.
+- Model fixed: `gpt-image-2`.
+- Text endpoint: `/v1/images/generations`.
+- Image endpoint: `/v1/images/edits`.
+- Browser text-to-image: in-app Browser opened `http://127.0.0.1:8793/`,
+  submitted the page form, received HTTP `200`, status `succeeded`, previewed
+  a Generated Image Store URL, and verified generated image GET HTTP `200`,
+  `Content-Type=image/png`, `Cache-Control=no-store`.
+- Browser image-to-image: Playwright real browser opened the same page,
+  uploaded `/Volumes/App_Dev/test-image/image_20260108131455.jpeg` through the
+  page file input, observed `POST /api/reference-images => 200`, submitted the
+  page form, received `POST /api/v1/image-generations => 200`, previewed a
+  Generated Image Store URL, and verified generated image GET HTTP `200`,
+  `Content-Type=image/png`, `Cache-Control=no-store`.
+- Screenshot files:
+  `evidence/screenshots/browser-text-generation-20260615.png` and
+  `evidence/screenshots/browser-image-generation-20260615.png`.
+- Request summary:
+  `.codex-agent-team/reports/browser-artifacts/playwright-requests-20260615.txt`.
+- Provider success was not mocked.
+
+Current accepted browser run:
 
 - Browser surface: Codex in-app Browser
-- Page: `http://127.0.0.1:8792/`
+- Page: `http://127.0.0.1:8793/`
 - Endpoint: `POST /api/v1/image-generations`
 - HTTP status: `200`
 - API status: `succeeded`
-- Trace id: `trace_498493fb085144d8ac`
-- Generation id: `gen_eb0bdb009b9842babe`
+- Trace id: `trace_5b17210c1a3a4d0587`
+- Generation id: `gen_2741feb461b843db9b`
 - Reference count: `0`
 - Image count: `1`
+- Image URL: `http://127.0.0.1:8793/api/v1/generated-images/img_c30fffcfab2447bc807553fe25561e37`
 - Generated image route: `GET /api/v1/generated-images/:image_id`
-- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=3118845`, `Cache-Control=no-store`
+- Generated image GET: HTTP `200`, `Content-Type=image/png`, `Content-Length=1999538`, `Cache-Control=no-store`
+- Screenshot files: `evidence/screenshots/final-v1-4-contract-before-submit.png`
+  and `evidence/screenshots/final-v1-4-contract-after-submit.png`, both PNG.
+
+Historical browser/provider runs on port `8792`, including
+`trace_498493fb085144d8ac`, are earlier Final API service evidence and are not
+current acceptance evidence for the RAGFlow knowledge-driven template branch.
+Provider fluctuation probes after the accepted browser run are likewise not part
+of the accepted run.
 
 ## Test Results
 
-Final pre-commit command results:
+Fresh command results at `2026-06-11T09:30:15Z`:
 
 ```text
 npm run check: pass
-npm test: pass, 73 tests
-node --test tests/unit/http-invalid-body.test.js: pass, malformed and oversized body cases
+npm test: pass, 79 tests
 node tests/integration/provider-config.test.js: pass, REAL_PROVIDER_CONFIG_PRESENT
 node tests/integration/final-v1-4-evidence.test.js: pass, FINAL_V1_4_EVIDENCE_SCAN_PASS
 git diff --check: pass
-python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-final-image-api-service.json: pass
-codegraph index --force: pass, indexed 24 files
-codegraph status --json: pass, pre-commit pendingChanges added=1 modified=0 removed=0 for the new indexed test file
-git status --short --untracked-files=all: expected evidence/report changes before commit
+python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-ragflow-knowledge-driven-template.json: pass
+codegraph sync . && codegraph status --json: pass, pendingChanges added=0 modified=0 removed=0
+git status --short --untracked-files=all: reviewed before commit; only intended branch changes present
 ```
 
 After the final commit, `git status --short --untracked-files=all` must be empty

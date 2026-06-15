@@ -1,0 +1,24 @@
+{
+  "status": "REDACTED_SUPERSEDED_BY_AI_TU_V3_6_EVIDENCE",
+  "title": "Premerge Current Tree Browser Summary",
+  "checked_at": "2026-06-15T06:41:04.146Z",
+  "note": "Legacy final-api evidence is superseded by the ai-tu V3.6 redacted browser and network summary.",
+  "current_evidence": {
+    "ai_tu_network_summary": "ai-tu/evidence/network-summary.json",
+    "ai_tu_visual_report": "ai-tu/evidence/visual-e2e-report.md"
+  },
+  "privacy": {
+    "internal_identifiers_recorded": false,
+    "complete_image_links_recorded": false,
+    "user_text_recorded": false,
+    "ref_link_recorded": false,
+    "credential_values_recorded": false,
+    "encoded_image_payloads_recorded": false,
+    "unfiltered_upstream_bodies_recorded": false
+  },
+  "provider_boundary": {
+    "real_provider_encoded_image_consumed_server_side_only": true,
+    "public_response_url_only": true,
+    "binary_or_direct_image_provider_response_accepted": false
+  }
+}

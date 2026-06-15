@@ -12,8 +12,15 @@ The service receives downstream JSON requests, validates structured references, 
 
 - `POST /api/v1/image-generations`
 - `GET /api/v1/generated-images/:image_id`
+- `POST /api/reference-images` for local browser helper uploads only
 
 The ai-tu frontend at `/` is the visible test page. The legacy `/api/image-jobs` route is not the final API acceptance route.
+
+`POST /api/reference-images` accepts one multipart `image` file from the local
+browser test page, stores it in the in-memory Generated Image Store, and returns
+a service-generated URL for structured `references[].url`. It is not the Final
+image generation endpoint and must not be used to bypass the JSON-only
+`references[]` contract of `POST /api/v1/image-generations`.
 
 ## Request
 
@@ -34,9 +41,10 @@ Optional:
 
 Malformed JSON and request bodies over `MAX_BODY_SIZE` are rejected at the HTTP
 layer with HTTP 400, `status: "failed"`, and
-`error_code: "INVALID_REQUEST_SCHEMA"`. The same handling applies to
-`POST /api/v1/prompt-optimizations`. These failures do not enter request
-normalization or provider execution.
+the V3.6 error envelope carrying `error.code:
+"INVALID_REQUEST_SCHEMA"`. The same 400 code applies to
+`POST /api/v1/prompt-optimizations`, using that legacy route's public error
+shape. These failures do not enter request normalization or provider execution.
 
 ## task_type
 
@@ -142,9 +150,50 @@ Callback URL validation defaults to rejecting localhost, loopback, link-local, p
 
 The backend Prompt Compiler owns the internal provider prompt. RAGFlow or other LLM output is optional structured enhancement only.
 
+Professional template detail is knowledge-driven:
+
+- RAGFlow system prompts define only JSON output protocol, field constraints,
+  anti-hallucination rules, and knowledge-driven behavior.
+- Concrete character, scene, prop, storyboard, and reference-binding templates
+  are seed knowledge under `docs/ragflow/knowledge/`.
+- The local Prompt Compiler keeps the task type, original prompt, reference
+  binding, output description, general negative rules, and minimal per-task
+  safety fallback.
+- Without valid enhancement or explicit user prompt content, the compiler does
+  not add character four-view sheets, scene 3x3/multi-camera boards, prop
+  front/side/back or close-up boards, or storyboard left/right planning layouts.
+- When valid enhancement exists, the compiler appends supported fields such as
+  `scene_summary`, `visual_focus`, `story_function`, `action_stages`,
+  `shot_plan`, `normalized_shot_plan`, `lighting_notes`, `composition_notes`,
+  `negative_notes`, and `missing_constraints`.
+
 Discard enhancement when it is unavailable, invalid, unsafe, oversized, leaks internal prompt fields, references unknown IDs, or introduces unknown URLs. Public responses must not expose enhancement, RAGFlow state, fallback state, or internal prompts.
 
 ## Provider Result Normalization
+
+## Provider Routing and Model
+
+The provider model is fixed to `gpt-image-2` for every Final API image
+generation request. Runtime configuration may provide endpoint host/base and
+keys, but must not select or fall back to any other model.
+
+Route selection is derived from `generation_mode`:
+
+- `text_to_image` / no references: POST the provider `/v1/images/generations`
+  endpoint with `model: "gpt-image-2"`.
+- `image_to_image` / one or more references: POST the provider
+  `/v1/images/edits` endpoint with `model: "gpt-image-2"` and the structured
+  reference URLs in the provider `image` array.
+
+Forbidden provider routing/model behavior:
+
+- `gpt-image-2-all`
+- `gpt-image-1`
+- `dall-e-*`
+- fallback model selection
+- text-to-image requests using `/v1/images/edits`
+- reference-backed requests using `/v1/images/generations`
+- mock success after provider failure
 
 Provider result forms supported:
 
@@ -158,6 +207,11 @@ Provider result forms supported:
 The final API always returns `images[].url`.
 
 If the provider returns external URLs, they are returned as public image URLs. If the provider returns real image bytes, the bytes are stored in Generated Image Store and exposed through `/api/v1/generated-images/:image_id`.
+
+Provider-returned external URLs must pass public URL safety validation before
+entering `images[].url`. Localhost, loopback, link-local, private network, and
+non-HTTP(S) provider URLs are rejected as provider failures instead of being
+returned as success.
 
 The public base for service-generated image URLs comes from `PUBLIC_BASE_URL` when set. It must be HTTP(S), is normalized by removing trailing slashes, and is required in production. Local development may fall back to the current local host and port.
 
@@ -179,8 +233,8 @@ Generated Image Store requirements:
 - mock provider success
 - fake image URL
 - placeholder image as success
-- reference image upload
-- multipart upload
+- file upload to `POST /api/v1/image-generations`
+- URL-only reference bypass
 - image hosting upload
 - runtime import of `ai-tu/gateway/server.js`
 - public internal prompt fields

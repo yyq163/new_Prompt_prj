@@ -1,14 +1,15 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { basename, extname, normalize, resolve } from "node:path";
-import { handleImageGeneration } from "./src/routes/image-generations.js";
+import { handleImageGeneration, publicImageUrl } from "./src/routes/image-generations.js";
 import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
-import { ImageApiError } from "./src/core/errors.js";
+import { ImageApiError, v36ImageGenerationErrorPayload } from "./src/core/errors.js";
 import { makeId, normalizeRequest, stringValue } from "./src/core/runtime.js";
 import { extractEntityMentions } from "./src/core/entity-mentions.js";
 import { resolveReferences } from "./src/core/reference-binding.js";
 import { generateWithAiTuProvider } from "./src/providers/ai-tu-provider-adapter.js";
 import { generatedImageHttpResponse } from "./src/core/generated-image-response.js";
+import { putGeneratedImage } from "./src/core/generated-image-store.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "./src/core/legacy-api.js";
 
 const ROOT = resolve(import.meta.dirname);
@@ -43,7 +44,7 @@ async function route(request, response) {
   if (request.method === "POST" && url.pathname === "/api/v1/image-generations") {
     const body = await readJson(request);
     const invalid = invalidJsonPayload(body);
-    if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
+    if (invalid) return sendJson(response, invalid.statusCode, v36InvalidJsonPayload(invalid.payload));
     const result = await handleImageGeneration(body);
     return sendJson(response, result.statusCode, result.payload);
   }
@@ -52,6 +53,10 @@ async function route(request, response) {
     const invalid = invalidJsonPayload(body);
     if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
     const result = await handlePromptOptimization(body);
+    return sendJson(response, result.statusCode, result.payload);
+  }
+  if (request.method === "POST" && url.pathname === "/api/reference-images") {
+    const result = await handleReferenceImageUpload(request);
     return sendJson(response, result.statusCode, result.payload);
   }
   if (request.method === "POST" && url.pathname === "/api/image-jobs") {
@@ -96,6 +101,103 @@ async function serveStatic(pathname, response) {
   } catch {
     return sendJson(response, 404, { status: "failed", error_code: "NOT_FOUND", message: "Not found." });
   }
+}
+
+async function handleReferenceImageUpload(request) {
+  try {
+    const contentType = String(request.headers["content-type"] || "");
+    if (!/^multipart\/form-data\b/i.test(contentType)) {
+      throw new ImageApiError({
+        statusCode: 400,
+        status: "failed",
+        errorCode: "INVALID_REQUEST_SCHEMA",
+        message: "参考图上传必须使用 multipart/form-data。"
+      });
+    }
+    const form = await requestToFormData(request, contentType);
+    const file = form.get("image");
+    if (!file || typeof file.arrayBuffer !== "function") {
+      throw new ImageApiError({
+        statusCode: 400,
+        status: "failed",
+        errorCode: "INVALID_REQUEST_SCHEMA",
+        message: "缺少 image 文件字段。"
+      });
+    }
+    const mime = String(file.type || "image/png").toLowerCase();
+    if (!/^image\/(png|jpeg|jpg|webp)$/i.test(mime)) {
+      throw new ImageApiError({
+        statusCode: 400,
+        status: "failed",
+        errorCode: "INVALID_REQUEST_SCHEMA",
+        message: "参考图只支持 png、jpeg 或 webp。"
+      });
+    }
+    const stored = putGeneratedImage({
+      bytes: Buffer.from(await file.arrayBuffer()),
+      mime: mime.replace("image/jpg", "image/jpeg"),
+      source: "browser_reference_upload"
+    });
+    const name = safeUploadName(String(form.get("name") || file.name || "reference.png"));
+    return {
+      statusCode: 200,
+      payload: {
+        status: "succeeded",
+        referenceId: `ref_upload_${stored.id.replace(/^img_/, "").slice(0, 18)}`,
+        image_url: publicGeneratedImageUrl(stored.path),
+        url: publicGeneratedImageUrl(stored.path),
+        name,
+        type: stored.mime,
+        size: stored.size,
+        host: "generated-image-store"
+      }
+    };
+  } catch (error) {
+    const statusCode = Number(error && error.statusCode) || 400;
+    return {
+      statusCode,
+      payload: {
+        status: "failed",
+        error_code: error && error.errorCode ? error.errorCode : "INVALID_REQUEST_SCHEMA",
+        message: error instanceof Error ? error.message : "参考图上传失败。"
+      }
+    };
+  }
+}
+
+async function requestToFormData(request, contentType) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) {
+      throw new ImageApiError({
+        statusCode: 400,
+        status: "failed",
+        errorCode: "INVALID_REQUEST_SCHEMA",
+        message: "请求体过大。"
+      });
+    }
+    chunks.push(chunk);
+  }
+  const body = Buffer.concat(chunks);
+  const webRequest = new Request("http://local.invalid/api/reference-images", {
+    method: "POST",
+    headers: { "Content-Type": contentType },
+    body: new Uint8Array(body)
+  });
+  return webRequest.formData();
+}
+
+function publicGeneratedImageUrl(path) {
+  const configuredHost = process.env.HOST || "127.0.0.1";
+  const host = configuredHost === "0.0.0.0" || configuredHost === "::" ? "127.0.0.1" : configuredHost;
+  const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${formattedHost}:${process.env.PORT || 8787}${path}`;
+}
+
+function safeUploadName(name) {
+  return String(name || "reference.png").replace(/[^\p{L}\p{N}._ -]+/gu, "_").slice(0, 120) || "reference.png";
 }
 
 async function createLegacyImageJob(body) {
@@ -208,7 +310,10 @@ async function runLegacyImageJob(job) {
       request: providerRequest,
       compiledPrompt: job.request.prompt
     });
-    job.images = result.images.map((image) => ({ url: image.url, image_url: image.url }));
+    job.images = result.images.map((image) => {
+      const safeUrl = publicImageUrl(image.url);
+      return { url: safeUrl, image_url: safeUrl };
+    });
     job.status = "succeeded";
   } catch (error) {
     job.status = "failed";
@@ -308,6 +413,15 @@ function invalidJsonPayload(body) {
         : "请求体不是合法 JSON。"
     }
   };
+}
+
+function v36InvalidJsonPayload(payload) {
+  return v36ImageGenerationErrorPayload(new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: payload.error_code || "INVALID_REQUEST_SCHEMA",
+    message: payload.message || "请求体不是合法 JSON。"
+  })).payload;
 }
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {

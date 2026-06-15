@@ -83,10 +83,6 @@ export function normalizeGeneratedImageMime(mime = "", format = "", bytes = null
   if (!detected) {
     unsupportedGeneratedImage("上游返回的图片字节不是支持的图片格式。");
   }
-  const claimed = explicit || fromFormat;
-  if (claimed && GENERATED_IMAGE_ALLOWED_MIME_TYPES.includes(claimed) && claimed !== detected) {
-    unsupportedGeneratedImage("上游返回的图片 MIME 类型与图片字节不匹配。");
-  }
   const normalized = detected;
   if (!GENERATED_IMAGE_ALLOWED_MIME_TYPES.includes(normalized)) {
     unsupportedGeneratedImage("上游返回的图片 MIME 类型不支持。");

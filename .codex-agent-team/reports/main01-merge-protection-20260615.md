@@ -1,7 +1,13 @@
 # main01 Merge Protection Report
 
 Date: 2026-06-15
-FINAL_STATUS: PASS_MAIN01_PROTECTION_BRANCH_PUSHED
+**Status:** HISTORICAL_PRE_PUSH — superseded by
+`final-integrator-main01-post-push-20260615.md`. The original
+`PASS_MAIN01_PROTECTION_BRANCH_PUSHED` verdict was written before the evidence
+security contradiction repair cycle completed and before the post-push ref
+checks of the current run.
+
+FINAL_STATUS (historical): PASS_MAIN01_PROTECTION_BRANCH_PUSHED
 
 ## Scope
 

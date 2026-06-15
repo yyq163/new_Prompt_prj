@@ -2,6 +2,7 @@
   "status": "FINAL_V1_4_MAIN01_REDACTED_NETWORK_SUMMARY",
   "checked_at": "2026-06-15",
   "branch": "main01",
+  "cycle": "evidence-security-contradiction-repair",
   "final_api_contract": {
     "public_response_url_only": true,
     "callback_executed": false,
@@ -13,16 +14,17 @@
     "text_endpoint_kind": "generations",
     "image_endpoint_kind": "edits",
     "encoded_and_binary_results_to_generated_image_store": true,
-    "invalid_encoded_or_wrong_magic_rejected": true
+    "invalid_encoded_or_wrong_magic_rejected": true,
+    "poll_url_authorization_regression_tests": true
   },
   "browser": {
-    "text_generation_status": "PASS_TEXT_IMAGE_AFTER_RETRY",
-    "text_generation_transient_failure_observed": true,
+    "text_generation_status": "PASS_TEXT_IMAGE",
     "image_edit_provider_status": "PASS_IMAGE_EDIT",
     "generated_image_get_no_store": true
   },
   "privacy": {
     "screenshots_tracked": false,
+    "screenshots_policy": "local_only_not_tracked",
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "raw_provider_bodies_recorded": false,

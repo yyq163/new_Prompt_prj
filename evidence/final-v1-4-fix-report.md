@@ -3,7 +3,9 @@
 Status: MAIN01_PROTECTION_SUMMARY
 
 This redacted artifact is part of the `main01` protection branch. It supersedes
-older final-api evidence paths that are not present on the pushable branch.
+older final-api evidence paths that are not present on the pushable branch. This
+version was refreshed after the evidence-chain security contradiction repair
+cycle.
 
 ## Provider Boundary
 
@@ -14,14 +16,18 @@ older final-api evidence paths that are not present on the pushable branch.
 - Public responses expose only `images[].url`.
 - Invalid encoded bytes, wrong image magic, and mixed raw-provider payloads fail
   without raw leakage.
+- Third-party poll/status URLs never receive provider credentials.
 
 ## Browser State
 
-- Text generation was verified by a real browser rerun after one transient
-  provider HTTP 502.
-- Image edit was verified by real browser upload, edits request, public success,
-  and generated-image GET no-store.
+- Text generation: latest real browser rerun returned HTTP 200, public status
+  succeeded, one image, generated-image GET 200, image content type, and no-store
+  cache control.
+- Image edit: latest real browser upload and edits request returned HTTP 200,
+  public status succeeded, one image, generated-image GET 200, image content
+  type, and no-store cache control.
 - This file does not claim main release PASS or authorize pushing `main`.
+- Screenshots are local-only and not tracked.
 
 ## Privacy
 

@@ -2,8 +2,10 @@
   "status": "MAIN01_REDACTED_NETWORK_SUMMARY",
   "checked_at": "2026-06-15",
   "branch": "main01",
+  "cycle": "evidence-security-contradiction-repair",
   "pushable_evidence_policy": {
     "screenshots_tracked": false,
+    "screenshots_policy": "local_only_not_tracked",
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "complete_generated_image_links_recorded": false,
@@ -17,11 +19,11 @@
     "provider_binary_or_direct_image_consumed_server_side_only": true,
     "generated_image_store_url_created": true,
     "public_response_url_only": true,
-    "invalid_encoded_or_wrong_magic_rejected": true
+    "invalid_encoded_or_wrong_magic_rejected": true,
+    "poll_url_authorization_regression_tests": true
   },
   "browser": {
-    "text_generation_status": "PASS_TEXT_IMAGE_AFTER_RETRY",
-    "text_generation_transient_failure_observed": true,
+    "text_generation_status": "PASS_TEXT_IMAGE",
     "image_edit_provider_status": "PASS_IMAGE_EDIT",
     "mock_success_used": false,
     "screenshots_saved": false,

@@ -6,6 +6,9 @@ This pushable evidence file records only redacted browser status. Screenshots
 and trace or network captures are local-only artifacts and are not tracked on
 `main01`.
 
+This version was refreshed during the evidence-chain security contradiction
+repair cycle.
+
 ## Current Acceptance Meaning
 
 - Text generation: latest real browser rerun returned HTTP 200, public status
@@ -15,6 +18,8 @@ and trace or network captures are local-only artifacts and are not tracked on
   public status succeeded, one image, generated-image GET 200, image content
   type, and no-store cache control.
 - No mock success is accepted.
+- This is protection-branch evidence only and does not authorize pushing or
+  merging `main`.
 
 ## Privacy
 

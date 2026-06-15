@@ -7,7 +7,17 @@ runtime-config.json
 .code-index/
 .codegraph/
 .understand-anything/
-.codex-agent-team/
+# Codex agent team: keep reports tracked as evidence chain; ignore runtime artifacts
+.codex-agent-team/*
+!.codex-agent-team/reports/
+.codex-agent-team/reports/browser-artifacts/
+.codex-agent-team/context/
+.codex-agent-team/state/
+.codex-agent-team/tmp/
+.codex-agent-team/logs/
+.codex-agent-team/cache/
+.codex-agent-team/ledger/
+.codex-agent-team/raw/
 .playwright-cli/
 output/
 test-image/

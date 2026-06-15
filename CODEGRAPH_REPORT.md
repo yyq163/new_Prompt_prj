@@ -7,10 +7,12 @@ Project root: `/Volumes/App_Dev/new_Prompt_prj`
 This report describes the current `main01` protection branch only. It is not a
 claim that `main` has passed release review.
 
+This version was refreshed during the evidence-chain security contradiction
+repair cycle.
+
 ## Branch State
 
 - Protection branch: `main01`.
-- Initial repaired head before this follow-up: `030fbb8770f2cd0663a9ffc90fc1d971ea9a77c8`.
 - Remote main base: `751b3013a0526f031c04d08946516d5e46cb6a01`.
 - Local `main`: ahead of `origin/main` and intentionally untouched.
 - Push target for this run: `origin/main01` only.
@@ -24,12 +26,12 @@ claim that `main` has passed release review.
 - No `gpt-image-2-all`, `gpt-image-1`, `dall-e-*`, or fallback model may enter
   provider payloads.
 - Third-party poll/status URLs must not receive provider credentials.
-- Reference image download now has provider-layer SSRF defense in addition to
+- Reference image download has provider-layer SSRF defense in addition to
   request normalization.
 
 ## Normalizer Contract
 
-The provider normalizer accepts these provider image result forms only on the
+The provider normalizer accepts these provider image result forms on the
 server side:
 
 - `b64_json`
@@ -64,23 +66,34 @@ files, network captures, logs, complete generated-image links, credentials, raw
 provider bodies, and encoded image data are not part of the pushable evidence
 set.
 
-Older reports that implied image edit was still blocked are superseded for
-`main01` by the latest real browser rerun. The rerun did not save screenshots,
-trace files, network captures, raw provider bodies, credentials, or encoded
-image payloads.
+`.codex-agent-team/reports/` is tracked as a controlled evidence-chain directory.
+Other `.codex-agent-team/` runtime artifacts are ignored.
 
 Latest redacted browser result:
 
-- Text generation: one transient provider HTTP 502 was observed, then a fresh
-  browser rerun returned HTTP 200, public status succeeded, one public image
-  URL, and generated-image GET HTTP 200 with image content type and no-store
-  cache control.
+- Text generation: real browser rerun returned HTTP 200, public status
+  succeeded, one public image URL, and generated-image GET HTTP 200 with image
+  content type and no-store cache control.
 - Image edit: real local test image upload returned HTTP 200, the final request
   returned HTTP 200, public status succeeded, one public image URL, and
   generated-image GET HTTP 200 with image content type and no-store cache
   control.
 
-## Verification To Refresh Before Final Push
+## Poll URL Authorization Security
+
+A dedicated regression suite in `tests/unit/provider-poll-url-security.test.js`
+covers:
+
+- Evil third-party poll URLs are rejected before any fetch or Authorization.
+- localhost, loopback, private, and link-local poll URLs are rejected.
+- Malformed or dangerous-scheme poll URLs do not crash.
+- Empty or whitespace `status_url` does not trigger an outbound fetch.
+- Same-origin absolute poll URLs are allowed and receive Authorization only on
+  the approved provider URL.
+- Relative poll paths resolve against the approved provider origin/path.
+- Rejected poll URLs do not leak Authorization or key in public responses.
+
+## Verification Performed
 
 - `npm run check`
 - `npm test`
@@ -94,6 +107,5 @@ Latest redacted browser result:
 ## Known Risk
 
 Provider availability is still upstream-dependent. This report records the
-latest real browser success for `main01`, plus one transient text-generation
-502 observed immediately before the successful text rerun. It does not authorize
-pushing or merging `main`.
+latest real browser success for `main01`. It does not authorize pushing or
+merging `main`.

@@ -12,7 +12,7 @@
     "THREAT_MODEL.md": "Security and privacy threat model",
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
-  "currentPhase": "blocked",
+  "currentPhase": "verified",
   "currentTask": "T1-provider-edits-debug-base64-fix",
   "schemaVersion": 1,
   "stage": "development",
@@ -103,7 +103,7 @@
     },
     {
       "id": "T1-provider-edits-debug-base64-fix",
-      "status": "review_failed",
+      "status": "verified",
       "owner": "lead-codex",
       "files": [
         "src/providers/ai-tu-provider-adapter.js",
@@ -116,12 +116,20 @@
       "evidenceRefs": [
         ".codex-agent-team/reports/provider-edits-debug-20260615.md",
         ".codex-agent-team/reports/final-integrator-edits-20260615.md",
-        "evidence/browser-edits-debug-summary-20260615.json"
+        "evidence/browser-edits-debug-summary-20260615.json",
+        ".codex-agent-team/reports/final-integrator-main01-minimal-current-20260616.md",
+        ".codex-agent-team/reports/review-T1-provider-edits-debug-base64-fix.json",
+        "browser-qa-main01-text-image-and-image-reference-pass-2026-06-16",
+        "generated-image-get-200-no-store-text-and-image-reference-2026-06-16",
+        "npm-run-check-pass-2026-06-16",
+        "npm-test-118-pass-2026-06-16",
+        "provider-config-present-2026-06-16",
+        "final-v1-4-evidence-scan-pass-2026-06-16",
+        "review-gate-pass-T1-provider-edits-debug-base64-fix-2026-06-16",
+        "codegraph-status-pendingChanges-0-2026-06-16"
       ],
-      "blockers": [
-        "Real browser image edit still returns HTTP 502 PROMPT_IMAGE_BACKEND_UNAVAILABLE from upstream; no mock success was used."
-      ]
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-15T08:43:28.365285+00:00"
+  "updatedAt": "2026-06-16T02:54:11Z"
 }

@@ -86,7 +86,7 @@
     {
       "id": "T1-provider-edits-debug-base64-fix",
       "title": "Debug gpt-image-2 image edits failure and protect base64 normalizer",
-      "status": "review_failed",
+      "status": "verified",
       "dependsOn": [
         "T1-ragflow-knowledge-driven-template"
       ],
@@ -127,11 +127,16 @@
         "codegraph sync . && codegraph status --json",
         "git status --short --untracked-files=all"
       ],
-      "blocker": "Real /v1/images/edits browser path returns HTTP 502 PROMPT_IMAGE_BACKEND_UNAVAILABLE after verified multipart/model/normalizer fixes.",
+      "blocker": "",
       "evidence": [
         ".codex-agent-team/reports/provider-edits-debug-20260615.md",
         ".codex-agent-team/reports/final-integrator-edits-20260615.md",
-        "evidence/browser-edits-debug-summary-20260615.json"
+        "evidence/browser-edits-debug-summary-20260615.json",
+        ".codex-agent-team/reports/final-integrator-main01-minimal-current-20260616.md",
+        ".codex-agent-team/reports/review-T1-provider-edits-debug-base64-fix.json",
+        "browser-qa-main01-text-image-and-image-reference-pass-2026-06-16",
+        "npm-test-118-pass-2026-06-16",
+        "codegraph-pendingChanges-0-2026-06-16"
       ]
     }
   ]

@@ -1,26 +1,11 @@
 {
   "taskId": "T1-live-provider-browser-path-repair",
   "task_id": "T1-live-provider-browser-path-repair",
-  "status": "FAIL_LIVE_PROVIDER_PATH_BLOCKED",
-  "verdict": "fail",
-  "reviewed_at": "2026-06-16T06:39:50Z",
-  "summary": "Local code path was repaired and hardened, but required live browser success did not pass. Real Browser text-to-image reached provider submit and failed with sanitized upstream_terminated summary; image-to-image browser upload remains unverified due browser-control file input limitations.",
-  "findings": [
-    {
-      "severity": "high",
-      "status": "FAIL",
-      "area": "Browser QA",
-      "message": "Real browser text-to-image did not return images[].url or a Generated Image Store URL.",
-      "evidence": "Browser UI showed public backend unavailable message; sanitized diagnostic returned provider_submit/generations/upstream_status 502/provider_error_code upstream_terminated."
-    },
-    {
-      "severity": "high",
-      "status": "UNVERIFIED",
-      "area": "Browser QA",
-      "message": "Real browser image-to-image could not be verified with local file upload in this session.",
-      "evidence": "Codex Browser lacks file input setter; Computer Use could read Safari but refused click actions after state read."
-    }
-  ],
+  "status": "PASS_UPSTREAM_502_REPAIRED_BROWSER_PASS",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-16T08:02:00Z",
+  "summary": "Live provider path repaired. Codex Browser text-to-image and image-to-image both reached provider submit, returned real Generated Image Store public URLs, and those URLs returned GET 200 with Cache-Control no-store.",
+  "findings": [],
   "requirements": {
     "main01_only": "PASS_STATIC",
     "main_not_pushed": "PASS_STATIC",
@@ -30,39 +15,51 @@
     "provider_submit_reached": "PASS_EVIDENCE",
     "provider_generations_contract": "PASS_TESTED",
     "provider_edits_contract": "PASS_TESTED",
-    "self_recursive_base_url_guard": "PASS_TESTED",
+    "unsupported_text_generation_knobs_removed": "PASS_TESTED",
+    "response_stream_recovery_complete_payload_only": "PASS_TESTED",
+    "provider_format_normalizer": "PASS_TESTED",
     "generated_store_strict_validation": "PASS_TESTED",
     "public_response_url_only": "PASS_TESTED",
     "redacted_backend_call_summary": "PASS_SECURITY",
     "runtime_config_loader": "PASS_CONTRACT",
-    "browser_text_image": "FAIL",
-    "browser_image_reference": "UNVERIFIED"
+    "browser_text_image": "PASS_BROWSER",
+    "browser_image_reference": "PASS_BROWSER"
   },
   "reviewers": {
-    "browser_qa": "FAIL",
-    "gateway_reviewer": "PASS_STATIC",
+    "upstream_investigator": "PASS_EVIDENCE",
+    "provider_integration_reviewer": "PASS_CONTRACT",
     "backend_reviewer": "PASS_STATIC",
-    "provider_integration_reviewer": "FAIL",
-    "generated_store_reviewer": "PASS_TESTED",
+    "gateway_reviewer": "PASS_STATIC",
+    "browser_qa": "PASS_BROWSER",
     "security_reviewer": "PASS_SECURITY",
     "test_reviewer": "PASS_TESTED",
-    "final_integrator": "FAIL"
+    "final_integrator": "PASS_UPSTREAM_502_REPAIRED_BROWSER_PASS"
   },
   "evidence": [
     {
       "command": "git fetch origin --prune && git checkout main01 && git pull --ff-only origin main01 && git ls-remote origin refs/heads/main01 && git status --short --untracked-files=all",
       "status": "PASS_STATIC",
-      "details": "main01 was current before repair; initial status clean."
+      "details": "main01 was current before repair; no main push or merge was performed."
     },
     {
-      "command": "grep -R \"生图服务暂时不可用\\|暂时不可用\\|PROMPT_IMAGE_BACKEND_UNAVAILABLE\\|BACKEND_UNAVAILABLE\\|image-generations\\|/api/image-jobs\" -n . --exclude-dir=node_modules --exclude-dir=.git",
-      "status": "PASS_STATIC",
-      "details": "Public text originates from V3.6 error mapping; fresh UI submit endpoint is /api/v1/image-generations."
+      "command": "Memefast Apifox contract review",
+      "status": "PASS_CONTRACT",
+      "details": "POST /v1/images/generations model gpt-image-2 contract reviewed; no secret, raw payload, or raw response recorded."
     },
     {
       "command": "node --test tests/unit/image-api.test.js tests/unit/ai-tu-prompt-optimizer.test.js",
       "status": "PASS_TESTED",
-      "details": "112/112 tests passed after imageEditUrl self-recursion coverage."
+      "details": "118/118 focused provider and UI tests passed, including complete response stream recovery and PNG/JPEG/WEBP store validation."
+    },
+    {
+      "command": "Codex Browser text-to-image UI submission",
+      "status": "PASS_BROWSER",
+      "details": "Live trace succeeded at 2026-06-16T07:46:01Z with image_count 1; public generated image GET returned 200, image/png, Cache-Control no-store."
+    },
+    {
+      "command": "Codex Browser image-to-image UI submission",
+      "status": "PASS_BROWSER",
+      "details": "User uploaded a local test image; live trace succeeded at 2026-06-16T07:55:31Z with image_count 1; public generated image GET returned 200, image/png, Cache-Control no-store."
     },
     {
       "command": "npm run check",
@@ -72,10 +69,10 @@
     {
       "command": "npm test",
       "status": "PASS_TESTED",
-      "details": "124/124 tests passed"
+      "details": "130/130 tests passed"
     },
     {
-      "command": "AI_TU_RUNTIME_CONFIG_FILE=真实配置.json node tests/integration/provider-config.test.js",
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=<local config> node tests/integration/provider-config.test.js",
       "status": "PASS_CONTRACT",
       "details": "REAL_PROVIDER_CONFIG_PRESENT"
     },
@@ -93,22 +90,9 @@
       "command": "codegraph sync . && codegraph status --json",
       "status": "PASS_STATIC",
       "details": "pendingChanges added 0 modified 0 removed 0"
-    },
-    {
-      "command": "Codex Browser text-to-image UI submission",
-      "status": "FAIL",
-      "details": "No images[].url; sanitized backend_call_summary indicates provider_submit/generations/upstream_status 502/provider_error_code upstream_terminated."
-    },
-    {
-      "command": "Safari Computer Use image-to-image upload attempt",
-      "status": "UNVERIFIED",
-      "details": "Computer Use could read Safari UI but refused click actions; file upload could not be completed."
     }
   ],
-  "blocking_items": [
-    "Browser text-to-image did not produce images[].url or Generated Image Store GET 200.",
-    "Browser image-to-image did not complete local file upload verification."
-  ],
+  "blocking_items": [],
   "evidence_debt": [],
-  "decision": "FAIL_LIVE_PROVIDER_PATH_BLOCKED. Continue development on main01 only; do not merge main."
+  "decision": "PASS_UPSTREAM_502_REPAIRED_BROWSER_PASS. Continue development on main01 only; do not merge main."
 }

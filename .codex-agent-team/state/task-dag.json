@@ -142,7 +142,7 @@
     {
       "id": "T1-live-provider-browser-path-repair",
       "title": "Repair live provider browser path through ai-tu gateway, prompt-image backend, provider, and Generated Image Store",
-      "status": "blocked",
+      "status": "verified",
       "dependsOn": [
         "T1-provider-edits-debug-base64-fix"
       ],
@@ -173,12 +173,15 @@
         "codegraph sync . && codegraph status --json",
         "git status --short --untracked-files=all"
       ],
-      "blocker": "Live Browser text-to-image reached provider submit but upstream terminated with 502 and no images[].url; Browser image-to-image file upload remains unverified in this session.",
+      "blocker": "",
       "evidence": [
         ".codex-agent-team/context/T1-live-provider-browser-path-repair.md",
         ".codex-agent-team/reports/final-integrator-live-provider-browser-path-repair-20260616.md",
         ".codex-agent-team/reports/review-T1-live-provider-browser-path-repair.json",
-        "npm-test-124-pass-2026-06-16",
+        "npm-test-130-pass-2026-06-16",
+        "browser-text-image-pass-generated-store-get-200-no-store-2026-06-16",
+        "browser-image-reference-pass-generated-store-get-200-no-store-2026-06-16",
+        "pass-upstream-502-repaired-browser-pass-2026-06-16",
         "browser-text-image-provider-submit-upstream-terminated-2026-06-16",
         "codegraph-pendingChanges-0-2026-06-16"
       ]

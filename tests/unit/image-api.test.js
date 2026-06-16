@@ -892,14 +892,43 @@ test("provider URL response mapper accepts url, image_url, and output_url", () =
     data: [
       { url: "https://provider.example.com/a.png", width: 100 },
       { image_url: "https://provider.example.com/b.webp", height: 120 },
-      { output_url: "https://provider.example.com/c.jpeg" }
+      { output_url: "https://provider.example.com/c.jpeg" },
+      { image_url: { url: "https://provider.example.com/d.png" } },
+      { content: [{ image_url: { url: "https://provider.example.com/e.webp" } }] },
+      { image: "https://provider.example.com/f.jpeg" },
+      { result: "https://provider.example.com/g.png" }
     ]
   });
-  assert.deepEqual(images.map((item) => item.url), [
+  assert.deepEqual(images.map((item) => item.url).sort(), [
     "https://provider.example.com/a.png",
     "https://provider.example.com/b.webp",
-    "https://provider.example.com/c.jpeg"
-  ]);
+    "https://provider.example.com/c.jpeg",
+    "https://provider.example.com/d.png",
+    "https://provider.example.com/e.webp",
+    "https://provider.example.com/f.jpeg",
+    "https://provider.example.com/g.png"
+  ].sort());
+});
+
+test("provider chat-style text content image links are accepted only when image-shaped", () => {
+  const images = extractImageUrls({
+    choices: [{
+      message: {
+        content: "done: https://provider.example.com/generated/result.webp?sig=redacted"
+      }
+    }]
+  });
+  assert.equal(images.length, 1);
+  assert.equal(images[0].url, "https://provider.example.com/generated/result.webp?sig=redacted");
+  assert.equal(images[0].format, "webp");
+
+  assert.throws(() => extractImageUrls({
+    choices: [{
+      message: {
+        content: "done: https://provider.example.com/generated/result"
+      }
+    }]
+  }), /没有找到可访问的图片 URL/);
 });
 
 test("provider URL response with forbidden raw or encoded fields is rejected", async () => {
@@ -1085,8 +1114,49 @@ test("provider direct binary HTTP image response is accepted by postLiveJson", a
   assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
 });
 
+test("provider JSON body is recovered when stream terminates after a complete payload", async () => {
+  clearGeneratedImagesForTest();
+  const encoder = new TextEncoder();
+  const payload = JSON.stringify({
+    data: [{ b64_json: samplePngBytes().toString("base64"), mime_type: "image/png" }]
+  });
+  let readCount = 0;
+  const response = {
+    ok: true,
+    status: 200,
+    headers: { get: () => "application/json" },
+    body: {
+      getReader: () => ({
+        async read() {
+          readCount += 1;
+          if (readCount === 1) return { done: false, value: encoder.encode(payload) };
+          throw new Error("terminated");
+        },
+        releaseLock() {}
+      })
+    }
+  };
+
+  const images = await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => postLiveJson("https://provider.example.com/v1/images/generations", {
+    model: "gpt-image-2",
+    prompt: "生成山间晨雾。",
+    n: 1,
+    size: "1024x1024",
+    format: "png"
+  }, async () => response));
+
+  assert.equal(images.length, 1);
+  assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
+});
+
 test("text generation provider JSON uses documented gpt-image-2 format contract", async () => {
   const calls = [];
+  const longCompiledPrompt = "山间晨雾".repeat(260);
   await withTempProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
     imageEditUrl: "https://provider.example.com/v1/images/edits",
@@ -1098,16 +1168,31 @@ test("text generation provider JSON uses documented gpt-image-2 format contract"
       references: [],
       output: { count: 1, aspect_ratio: "1:1", quality: "high", return_format: "url", language: "zh-CN" }
     }),
-    compiledPrompt: "compiled prompt",
+    compiledPrompt: longCompiledPrompt,
     fetchImpl: providerFetchRecorder(calls)
   }));
 
   const submit = calls.find((call) => call.kind === "submit");
   assert.equal(submit.url, "https://provider.example.com/v1/images/generations");
+  assert.deepEqual(Object.keys(submit.body).sort(), ["format", "model", "n", "prompt", "quality", "size"]);
+  assert.deepEqual(submit.headers, {
+    Accept: "application/json",
+    "Accept-Encoding": "identity",
+    Authorization: "Bearer test-key",
+    Connection: "close",
+    "Content-Type": "application/json"
+  });
   assert.equal(submit.body.model, "gpt-image-2");
+  assert.equal(submit.body.n, 1);
+  assert.equal(submit.body.size, "1024x1024");
+  assert.equal(submit.body.quality, "high");
   assert.equal(submit.body.format, "png");
+  assert.equal(submit.body.prompt.length <= 1000, true);
   assert.equal("output_format" in submit.body, false);
   assert.equal("image" in submit.body, false);
+  assert.equal("images" in submit.body, false);
+  assert.equal("response_format" in submit.body, false);
+  assert.equal("style" in submit.body, false);
   assertNoForbiddenModel(submit.body);
 });
 
@@ -1123,6 +1208,34 @@ test("generated image store supports put get delete cleanup and TTL", () => {
   const item = getGeneratedImage(expired.id);
   item.expiresAt = Date.now() - 1;
   assert.equal(getGeneratedImage(expired.id), null);
+});
+
+test("generated image store accepts real PNG JPEG and WEBP bytes without weakening validation", () => {
+  clearGeneratedImagesForTest();
+  for (const [bytes, mime, format] of [
+    [samplePngBytes(), "image/png", "png"],
+    [sampleJpegBytes(), "image/jpeg", "jpeg"],
+    [sampleWebpBytes(), "image/webp", "webp"]
+  ]) {
+    const stored = putGeneratedImage({ bytes, mime });
+    const record = getGeneratedImage(stored.id);
+    assert.equal(record.mime, mime);
+    assert.equal(record.format, format);
+    assert.equal(record.bytes.equals(bytes), true);
+  }
+});
+
+test("provider encoded and binary JPEG WEBP payloads become generated image URLs", () => {
+  clearGeneratedImagesForTest();
+  const jpeg = extractImageUrls({ data: [{ b64_json: sampleJpegBytes().toString("base64"), mime_type: "image/jpeg" }] });
+  assert.equal(jpeg.length, 1);
+  assert.match(jpeg[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(jpeg[0].image_id).mime, "image/jpeg");
+
+  const webp = extractImageUrls({ data: [{ binary: sampleWebpBytes(), mime_type: "image/webp" }] });
+  assert.equal(webp.length, 1);
+  assert.match(webp[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  assert.equal(getGeneratedImage(webp[0].image_id).mime, "image/webp");
 });
 
 test("generated image route response metadata returns correct content headers and 404", () => {
@@ -1971,6 +2084,37 @@ test("Final API exposes text provider failures without mock success or internals
   assertNoUnsafeBackendCallSummary(result.payload);
 });
 
+test("Final API classifies terminated generations submit as upstream 502 without fake image URL", async () => {
+  const result = await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => handleImageGeneration({
+    task_type: "text_image",
+    prompt: "生成山间晨雾。",
+    references: [],
+    output: { count: 1, aspect_ratio: "1:1", quality: "high" }
+  }, {
+    provider: generateWithAiTuProvider,
+    fetchImpl: async () => {
+      throw new Error("terminated");
+    }
+  }));
+
+  assert.equal(result.statusCode, 502);
+  assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
+  assert.match(result.payload.error.message, /上游.*502|请求终止|未生成图片/);
+  assert.deepEqual(result.payload.images, []);
+  assert.deepEqual(result.payload.error.backend_call_summary, {
+    stage: "provider_submit",
+    endpoint_kind: "generations",
+    upstream_status: 502,
+    provider_error_code: "upstream_terminated",
+    retryable: true
+  });
+  assertNoUnsafeBackendCallSummary(result.payload);
+});
+
 test("Final API exposes image provider failures without mock success or internals", async () => {
   const oldHost = process.env.HOST;
   const oldPort = process.env.PORT;
@@ -2067,6 +2211,44 @@ test("provider 200 error object maps to redacted backend-call-summary", async ()
     stage: "provider_normalize",
     endpoint_kind: "unknown",
     provider_error_code: "IMAGE_PROVIDER_CALL_FAILED",
+    retryable: false
+  });
+  assertNoUnsafeBackendCallSummary(result.payload);
+});
+
+test("provider 200 unsupported image format is classified as provider_normalize without fake URL", async () => {
+  const result = await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => handleImageGeneration({
+    task_type: "text_image",
+    prompt: "生成山间晨雾。",
+    references: [],
+    output: { count: 1, aspect_ratio: "1:1", quality: "high" }
+  }, {
+    provider: generateWithAiTuProvider,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{
+          message: {
+            content: "done: https://provider.example.com/generated/not-image"
+          }
+        }]
+      }),
+      headers: { get: () => "application/json" }
+    })
+  }));
+
+  assert.equal(result.statusCode, 502);
+  assertV36Error(result, "PROMPT_IMAGE_BACKEND_INVALID_RESPONSE");
+  assert.deepEqual(result.payload.images, []);
+  assert.deepEqual(result.payload.error.backend_call_summary, {
+    stage: "provider_normalize",
+    endpoint_kind: "unknown",
+    provider_error_code: "IMAGE_RESULT_EMPTY",
     retryable: false
   });
   assertNoUnsafeBackendCallSummary(result.payload);
@@ -2598,6 +2780,26 @@ function samplePngBytes() {
 function samplePngArrayBuffer() {
   const bytes = samplePngBytes();
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function sampleJpegBytes() {
+  return Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x00,
+    0xff, 0xd9
+  ]);
+}
+
+function sampleWebpBytes() {
+  return Buffer.from([
+    0x52, 0x49, 0x46, 0x46,
+    0x16, 0x00, 0x00, 0x00,
+    0x57, 0x45, 0x42, 0x50,
+    0x56, 0x50, 0x38, 0x20,
+    0x0a, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x00, 0x00, 0x00, 0x00
+  ]);
 }
 
 function sampleGifBytes() {

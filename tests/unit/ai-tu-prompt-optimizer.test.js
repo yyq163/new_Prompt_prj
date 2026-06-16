@@ -65,6 +65,10 @@ test("frontend does not persist temporary pending jobs into legacy restore polli
 test("frontend formats structured final image errors without object placeholders", () => {
   assert.match(html, /function jobErrorMessage\(job\)/);
   assert.match(html, /function normalizeErrorMessage\(error\)/);
+  assert.match(html, /function formatBackendCallSummaryError\(summary\)/);
+  assert.match(html, /backend_call_summary/);
+  assert.match(html, /上游返回 502/);
+  assert.match(html, /请求终止/);
   assert.doesNotMatch(html, /job\.error \|\| "未知错误"/);
 });
 

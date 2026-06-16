@@ -138,6 +138,7 @@ export function mapV36ImageGenerationError(error) {
     IMAGE_RESULT_EMPTY: ["PROMPT_IMAGE_BACKEND_INVALID_RESPONSE", "生成结果格式暂不支持。"],
     PROVIDER_IMAGE_URL_UNSAFE: ["PROMPT_IMAGE_BACKEND_INVALID_RESPONSE", "生成结果格式暂不支持。"]
   };
+  const backendCallSummary = safeBackendCallSummary(error);
   const [code, message] = table[sourceCode] || ["PROMPT_IMAGE_BACKEND_INVALID_RESPONSE", "生成结果格式暂不支持。"];
   const statusByCode = {
     PROMPT_IMAGE_BACKEND_NOT_CONFIGURED: 503,
@@ -150,9 +151,20 @@ export function mapV36ImageGenerationError(error) {
     statusCode: statusByCode[code] || (sourceStatus >= 400 ? sourceStatus : 502),
     status: "failed",
     code,
-    message,
-    backendCallSummary: safeBackendCallSummary(error)
+    message: publicBackendMessage(code, message, backendCallSummary),
+    backendCallSummary
   };
+}
+
+function publicBackendMessage(code, fallbackMessage, summary) {
+  if (!summary || code !== "PROMPT_IMAGE_BACKEND_UNAVAILABLE") return fallbackMessage;
+  if (summary.upstream_status === 502 && summary.provider_error_code === "upstream_terminated") {
+    return "上游返回 502，请求终止，未生成图片。";
+  }
+  if (summary.upstream_status === 502) {
+    return "上游返回 502，未生成图片。";
+  }
+  return fallbackMessage;
 }
 
 function safeBackendCallSummary(error) {

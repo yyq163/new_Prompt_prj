@@ -33,6 +33,9 @@ export function normalizeProviderImages(json, format = "png") {
     if (!node || typeof node !== "object" || Buffer.isBuffer(node) || ArrayBuffer.isView(node) || node instanceof ArrayBuffer) return;
     if (isProviderImageCandidate(node)) pushImage(node);
     if (Array.isArray(node.images)) node.images.forEach((item) => pushImage(item, { explicitImageFields: true }));
+    for (const url of providerImageUrlsFromText(node.content || node.text || node.message)) {
+      pushImage(url);
+    }
   });
 
   if (!found.length) {
@@ -145,8 +148,40 @@ function isProviderImageCandidate(node) {
 }
 
 function providerUrlValue(item) {
-  return [item.url, item.image_url, item.output_url, item.download_url]
-    .find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
+  return [
+    item.url,
+    item.image_url,
+    item.output_url,
+    item.download_url,
+    item.image,
+    item.result,
+    nestedUrlValue(item.image_url),
+    nestedUrlValue(item.output_url),
+    nestedUrlValue(item.download_url),
+    nestedUrlValue(item.image)
+  ].find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
+}
+
+function providerImageUrlsFromText(value) {
+  const text = stringValue(value);
+  if (!text) return [];
+  const urls = [];
+  const pattern = /https?:\/\/[^\s<>"')\]}]+/gi;
+  for (const match of text.matchAll(pattern)) {
+    const url = match[0].replace(/[.,;:!?]+$/, "");
+    if (isProviderImageUrl(url)) urls.push(url);
+  }
+  return urls;
+}
+
+function isProviderImageUrl(value) {
+  return /^https?:\/\//i.test(value) && Boolean(inferFormat(value));
+}
+
+function nestedUrlValue(value) {
+  if (!value || typeof value !== "object" || Buffer.isBuffer(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return "";
+  return [value.url, value.image_url, value.output_url, value.download_url]
+    .find((item) => typeof item === "string" && /^https?:\/\//i.test(item)) || "";
 }
 
 function assertNoProviderError(value) {
@@ -220,6 +255,7 @@ function encodedImageValue(item) {
     const value = item[key];
     if (typeof value === "string" && value.trim()) return value;
   }
+  if (typeof item.url === "string" && isDataImageUrl(item.url)) return item.url;
   for (const key of ["image", "result"]) {
     const value = stringValue(item[key]).trim();
     if (!value) continue;

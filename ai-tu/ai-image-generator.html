@@ -2961,14 +2961,14 @@
     function normalizeJob(payload, request = {}) {
       const fill = payload.fill || payload.request || (request.prompt ? buildJobFillSnapshot(request) : null);
       const jobId = payload.jobId || payload.generation_id || payload.request_id || `job_${Date.now()}`;
-      const errorMessage = normalizeErrorMessage(payload.error || payload.message || payload.error_code || null);
+      const errorValue = payload.error || payload.message || payload.error_code || null;
       return {
         jobId,
         prompt: payload.prompt || payload.input?.prompt || request.prompt || "",
         fill,
         status: payload.status || (payload.images && payload.images.length ? "succeeded" : "failed"),
         images: Array.isArray(payload.images) ? payload.images : [],
-        error: errorMessage,
+        error: errorValue,
         createdAt: payload.createdAt || Date.now(),
         updatedAt: payload.updatedAt || Date.now()
       };
@@ -3809,6 +3809,8 @@
       if (!error) return "";
       if (typeof error === "string") return error;
       if (typeof error === "object") {
+        const summaryMessage = formatBackendCallSummaryError(error.backend_call_summary);
+        if (summaryMessage) return summaryMessage;
         if (typeof error.message === "string" && error.message.trim()) return error.message;
         if (typeof error.code === "string" && error.code.trim()) return error.code;
         if (error.error) return normalizeErrorMessage(error.error);
@@ -3819,6 +3821,19 @@
       } catch {
         return String(error || "");
       }
+    }
+
+    function formatBackendCallSummaryError(summary) {
+      if (!summary || typeof summary !== "object") return "";
+      const upstreamStatus = Number(summary.upstream_status);
+      const providerCode = typeof summary.provider_error_code === "string" ? summary.provider_error_code.trim() : "";
+      if (upstreamStatus === 502 && providerCode === "upstream_terminated") {
+        return "上游返回 502，请求终止，未生成图片。";
+      }
+      if (upstreamStatus === 502) {
+        return "上游返回 502，未生成图片。";
+      }
+      return "";
     }
 
     function errorToMessage(error) {

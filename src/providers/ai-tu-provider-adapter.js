@@ -17,6 +17,7 @@ const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
 const AI_TU_DEFAULT_EDITS_URL = "https://memefast.top/v1/images/edits";
 const FIXED_IMAGE_MODEL = "gpt-image-2";
+const PROVIDER_PROMPT_MAX_CHARS = 1000;
 const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 600;
 const DEFAULT_REFERENCE_FETCH_TIMEOUT_SECONDS = 30;
 let upstreamKeyCursor = 0;
@@ -29,7 +30,7 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
   const hasReferenceImages = references.length > 0;
   const providerRequest = {
     model: FIXED_IMAGE_MODEL,
-    prompt: compiledPrompt,
+    prompt: providerPrompt(compiledPrompt),
     n: request.output.count,
     size: parseAspectSize(request.output.aspect_ratio),
     quality: request.output.quality,
@@ -76,13 +77,22 @@ export function baseUpstreamPayload(request) {
   return payload;
 }
 
+export function providerPrompt(value) {
+  const text = stringValue(value).trim();
+  if (text.length <= PROVIDER_PROMPT_MAX_CHARS) return text;
+  return text.slice(0, PROVIDER_PROMPT_MAX_CHARS);
+}
+
 export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
   const body = JSON.stringify(payload);
   const submitConfig = longRunningSubmitConfig(config);
   const json = await fetchUpstream(kind, (credential) => ({
     method: "POST",
     headers: {
+      "Accept": "application/json",
+      "Accept-Encoding": "identity",
       "Authorization": `Bearer ${credential.key}`,
+      "Connection": "close",
       "Content-Type": "application/json"
     },
     body
@@ -330,7 +340,7 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
       if (!response.ok) {
         throw upstreamHttpError(response, {}, "", kind);
       }
-      const bytes = normalizeImageBytes(await response.arrayBuffer());
+      const bytes = await readUpstreamResponseBytes(response);
       return {
         data: [{
           binary: bytes,
@@ -338,7 +348,7 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
         }]
       };
     }
-    const text = await response.text();
+    const text = await readUpstreamResponseText(response);
     let json = {};
     try {
       json = text ? JSON.parse(text) : {};
@@ -377,6 +387,55 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function readUpstreamResponseText(response) {
+  if (response?.body && typeof response.body.getReader === "function") {
+    const bytes = await readUpstreamResponseBytes(response, { recoverAs: "json" });
+    return bytes.toString("utf8");
+  }
+  if (typeof response?.text === "function") return response.text();
+  return "";
+}
+
+async function readUpstreamResponseBytes(response, { recoverAs = "image" } = {}) {
+  if (response?.body && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = normalizeImageBytes(value);
+        total += chunk.length;
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      const buffered = Buffer.concat(chunks, total);
+      if (isRecoverableCompletePayload(buffered, recoverAs)) return buffered;
+      throw error;
+    } finally {
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks, total);
+  }
+  if (typeof response?.arrayBuffer === "function") return normalizeImageBytes(await response.arrayBuffer());
+  return Buffer.alloc(0);
+}
+
+function isRecoverableCompletePayload(bytes, recoverAs) {
+  if (!bytes.length) return false;
+  if (recoverAs === "image") return Boolean(detectImageMime(bytes));
+  if (recoverAs === "json") {
+    try {
+      JSON.parse(bytes.toString("utf8"));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 export function isRetryableUpstreamError(error) {

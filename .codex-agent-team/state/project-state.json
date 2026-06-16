@@ -132,7 +132,7 @@
     },
     {
       "id": "T1-live-provider-browser-path-repair",
-      "status": "blocked",
+      "status": "verified",
       "owner": "lead-codex",
       "files": [
         "ai-tu/**",
@@ -147,18 +147,18 @@
         ".codex-agent-team/reports/final-integrator-live-provider-browser-path-repair-20260616.md",
         ".codex-agent-team/reports/review-T1-live-provider-browser-path-repair.json",
         "npm-run-check-pass-2026-06-16",
-        "npm-test-124-pass-2026-06-16",
+        "npm-test-130-pass-2026-06-16",
+        "browser-text-image-pass-generated-store-get-200-no-store-2026-06-16",
+        "browser-image-reference-pass-generated-store-get-200-no-store-2026-06-16",
+        "pass-upstream-502-repaired-browser-pass-2026-06-16",
         "provider-config-present-2026-06-16",
         "final-v1-4-evidence-scan-pass-2026-06-16",
         "git-diff-check-pass-2026-06-16",
         "codegraph-status-pendingChanges-0-2026-06-16",
         "browser-text-image-provider-submit-upstream-terminated-2026-06-16"
       ],
-      "blockers": [
-        "Browser text-to-image reached provider submit but returned upstream_terminated with no public images[].url",
-        "Browser image-to-image remains UNVERIFIED because file upload could not be completed through available Browser/Computer Use controls"
-      ]
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-16T06:39:50Z"
+  "updatedAt": "2026-06-16T08:02:00Z"
 }

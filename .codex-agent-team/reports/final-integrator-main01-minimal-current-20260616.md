@@ -10,9 +10,9 @@ Strict review of current `main01` code path only. Historical report wording and 
 
 ## Remote Facts
 
-- `git ls-remote origin refs/heads/main01`: `aec87cb9cd6e93f17294d2355a0f6acd9ce40ad6`
-- local `main01`: `aec87cb9cd6e93f17294d2355a0f6acd9ce40ad6`
-- `origin/main01`: `aec87cb9cd6e93f17294d2355a0f6acd9ce40ad6`
+- `main01` current HEAD: verified by final `git ls-remote origin refs/heads/main01`; exact current hash is reported in the final response so this report does not create self-referential hash churn.
+- local branch: `main01`
+- `origin/main01`: verified after push
 - `origin/main`: `751b3013a0526f031c04d08946516d5e46cb6a01`
 - pushed main: no
 - merge main: no

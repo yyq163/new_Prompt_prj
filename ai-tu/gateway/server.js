@@ -874,9 +874,9 @@ async function postSingleLiveImageUrlJson(request, referenceUrls, config, count)
     ...baseUpstreamPayload({
       ...request,
       n: Math.max(1, Math.min(count || 1, 16)),
-      model: config.imageModel || "gpt-image-2-all"
+      model: config.imageModel || "gpt-image-2"
     }),
-    image: referenceUrls
+    reference_images: referenceUrls
   };
   const body = JSON.stringify(payload);
   const json = await fetchUpstream(config.baseUrl, (credential) => ({
@@ -1975,7 +1975,7 @@ function configPageHtml(host) {
           <option value="url">generations URL 数组</option>
         </select>
       </label>
-      <p class="hint">当前默认按 /v1/images/edits 提交参考图文件；URL 数组模式用于 gpt-image-2-all 可用时。</p>
+      <p class="hint">文件上传模式按图生图编辑接口提交参考图；URL 数组模式按供应商 generations 合同提交 reference_images。</p>
 
       <section class="panel">
         <h2>请求路径</h2>

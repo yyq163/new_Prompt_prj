@@ -33,14 +33,19 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
     prompt: providerPrompt(compiledPrompt),
     n: request.output.count,
     size: parseAspectSize(request.output.aspect_ratio),
+    aspect_ratio: request.output.aspect_ratio,
     quality: request.output.quality,
     output_format: "png",
     mode: hasReferenceImages ? "image" : "text",
     images: references.map((item) => ({ image_url: item.url, url: item.url }))
   };
 
-  const images = hasReferenceImages
-    ? await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
+  const images = config.imageTransport === "url"
+    ? hasReferenceImages
+      ? await postLiveImageUrlJson(providerRequest, config, fetchImpl)
+      : await postLiveJson(config.baseUrl, toapisGenerationPayload(providerRequest), fetchImpl, config)
+    : hasReferenceImages
+      ? await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
     : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
 
   if (!images.length) {
@@ -77,10 +82,28 @@ export function baseUpstreamPayload(request) {
   return payload;
 }
 
+export function toapisGenerationPayload(request) {
+  const payload = {
+    model: request.model,
+    prompt: request.prompt,
+    n: request.n,
+    size: normalizeToapisAspectRatio(request.aspect_ratio),
+    resolution: "1K",
+    response_format: "url"
+  };
+  if (request.quality && request.quality !== "auto") payload.quality = request.quality;
+  return payload;
+}
+
 export function providerPrompt(value) {
   const text = stringValue(value).trim();
   if (text.length <= PROVIDER_PROMPT_MAX_CHARS) return text;
   return text.slice(0, PROVIDER_PROMPT_MAX_CHARS);
+}
+
+function normalizeToapisAspectRatio(value) {
+  const text = stringValue(value).trim();
+  return /^(1:1|16:9|9:16|4:3|3:4)$/.test(text) ? text : "1:1";
 }
 
 export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
@@ -117,6 +140,34 @@ export async function postLiveImageEditMultipart(request, config = defaultProvid
   return images.slice(0, count);
 }
 
+export async function postLiveImageUrlJson(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
+  const referenceUrls = providerReferenceUrls(request.images);
+  if (!referenceUrls.length) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "REFERENCE_REQUIRED",
+      message: "图生图需要至少一张参考图 URL。"
+    });
+  }
+  const payload = {
+    ...toapisGenerationPayload(request),
+    reference_images: referenceUrls
+  };
+  const json = await fetchUpstream(config.baseUrl, (credential) => ({
+    method: "POST",
+    headers: {
+      "Accept": "application/json",
+      "Accept-Encoding": "identity",
+      "Authorization": `Bearer ${credential.key}`,
+      "Connection": "close",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  }), fetchImpl, longRunningSubmitConfig(config));
+  return normalizeProviderResult(json, request.output_format, fetchImpl, config);
+}
+
 export async function postSingleLiveImageEditMultipart(request, config = defaultProviderConfig(), fetchImpl = globalThis.fetch) {
   const form = new FormData();
   form.append("model", FIXED_IMAGE_MODEL);
@@ -151,6 +202,14 @@ function hasFormImageFiles(form) {
     if ((key === "image[]" || key === "image") && value && typeof value.arrayBuffer === "function") return true;
   }
   return false;
+}
+
+function providerReferenceUrls(images) {
+  if (!Array.isArray(images)) return [];
+  return images
+    .map((image) => stringValue(image?.image_url || image?.url).trim())
+    .filter(Boolean)
+    .map((url) => new URL(assertProviderReferenceUrlAllowed(url)).toString());
 }
 
 async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
@@ -666,6 +725,7 @@ export function defaultProviderConfig() {
   const envKeys = parseApiKeys(process.env.IMAGE_API_KEYS, process.env.IMAGE_API_KEY);
   const fileKeys = parseApiKeys(fileConfig.apiKeys, fileConfig.apiKey);
   const keys = envKeys.length ? envKeys : fileKeys;
+  const imageTransport = stringValue(process.env.IMAGE_TRANSPORT).trim() || stringValue(fileConfig.imageTransport).trim();
   const baseUrl = generationsEndpointFor(
     stringValue(process.env.IMAGE_API_BASE).trim()
     || stringValue(fileConfig.baseUrl).trim()
@@ -675,6 +735,7 @@ export function defaultProviderConfig() {
   return sanitizeProviderConfig({
     baseUrl,
     imageEditUrl,
+    imageTransport,
     keyMode: keys.length > 1 || fileConfig.keyMode === "multi" ? "multi" : "single",
     apiKey: keys[0] || "",
     apiKeys: keys,
@@ -707,18 +768,20 @@ export function loadAiTuRuntimeConfig() {
 export function sanitizeProviderConfig(source) {
   const value = source && typeof source === "object" ? source : {};
   const baseUrl = normalizeGenerationsEndpoint(value.baseUrl || AI_TU_DEFAULT_GENERATIONS_URL);
+  const imageTransport = value.imageTransport === "url" ? "url" : "edit";
   const imageEditUrl = normalizeEditsEndpoint(value.imageEditUrl || editsEndpointFor(baseUrl));
   assertNotSelfRecursiveProviderEndpoint(baseUrl);
   assertNotSelfRecursiveProviderEndpoint(imageEditUrl);
   const keyMode = value.keyMode === "multi" ? "multi" : "single";
   const apiKeys = parseApiKeys(value.apiKeys, value.apiKey);
   const singleKey = stringValue(value.apiKey).trim() || apiKeys[0] || "";
-  const pollBaseUrl = value.pollBaseUrl ? normalizePollBaseEndpoint(value.pollBaseUrl) : "";
+  const pollBaseUrl = normalizePollBaseEndpoint(value.pollBaseUrl || baseUrl);
   return {
     baseUrl,
     imageEditUrl,
     model: FIXED_IMAGE_MODEL,
     imageModel: FIXED_IMAGE_MODEL,
+    imageTransport,
     keyMode,
     apiKey: keyMode === "single" ? singleKey : "",
     apiKeys: keyMode === "multi" ? apiKeys : singleKey ? [singleKey] : [],
@@ -757,16 +820,7 @@ export function normalizeGenerationsEndpoint(value) {
 }
 
 export function normalizeEditsEndpoint(value) {
-  const endpoint = normalizeEndpoint(value);
-  if (!/\/v1\/images\/edits$/i.test(endpoint)) {
-    throw new ImageApiError({
-      statusCode: 400,
-      status: "failed",
-      errorCode: "INVALID_REQUEST_SCHEMA",
-      message: "Provider image-to-image endpoint 必须以 /v1/images/edits 结尾。"
-    });
-  }
-  return endpoint;
+  return normalizeEndpoint(value);
 }
 
 export function normalizePollBaseEndpoint(value) {

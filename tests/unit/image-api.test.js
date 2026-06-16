@@ -23,6 +23,7 @@ import {
   fetchUpstreamOnce,
   postLiveJson,
   postLiveImageEditMultipart,
+  postLiveImageUrlJson,
   assertProviderReferenceUrlAllowed,
   resolveAuthorizedFetchUrl,
   resolveAuthorizedUpstreamUrl,
@@ -1521,6 +1522,71 @@ test("image edit multipart sends every valid reference as image array file", asy
   assert.deepEqual(submittedBody.imageMimeTypes, ["image/png", "image/png"]);
 });
 
+test("image URL transport uses ToAPIs generations reference_images contract", async () => {
+  const config = longRunningSubmitConfig(sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageTransport: "url",
+    apiKey: "test-key",
+    requestTimeoutSeconds: 10
+  }));
+  const calls = [];
+  await postLiveImageUrlJson({
+    model: "gpt-image-2",
+    prompt: "URL 模式生成",
+    n: 1,
+    aspect_ratio: "1:1",
+    output_format: "png",
+    images: [{ image_url: "https://i.example.com/ref.png" }]
+  }, config, async (url, init) => {
+    calls.push({ url: String(url), method: init?.method || "", body: init?.body ? JSON.parse(init.body) : null });
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ url: imageUrl }] }),
+      headers: { get: () => "application/json" }
+    };
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://provider.example.com/v1/images/generations");
+  assert.equal(calls[0].body.model, "gpt-image-2");
+  assert.equal(calls[0].body.size, "1:1");
+  assert.equal(calls[0].body.resolution, "1K");
+  assert.equal(calls[0].body.response_format, "url");
+  assert.deepEqual(calls[0].body.reference_images, ["https://i.example.com/ref.png"]);
+  assert.equal("format" in calls[0].body, false);
+  assert.equal("image" in calls[0].body, false);
+  assert.equal("image_urls" in calls[0].body, false);
+  assert.equal("client_business_id" in calls[0].body, false);
+});
+
+test("real provider adapter uses ToAPIs URL transport payload for text generations", async () => {
+  const calls = [];
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageTransport: "url",
+    apiKey: "test-key"
+  }, () => generateWithAiTuProvider({
+    request: normalizeRequest({
+      task_type: "text_image",
+      prompt: "生成山间晨雾。",
+      references: [],
+      output: { count: 1, aspect_ratio: "16:9", quality: "high", return_format: "url", language: "zh-CN" }
+    }),
+    compiledPrompt: "compiled prompt",
+    fetchImpl: providerFetchRecorder(calls)
+  }));
+  assert.equal(calls[0].url, "https://provider.example.com/v1/images/generations");
+  assert.equal(calls[0].body.model, "gpt-image-2");
+  assert.equal(calls[0].body.size, "16:9");
+  assert.equal(calls[0].body.resolution, "1K");
+  assert.equal(calls[0].body.response_format, "url");
+  assert.equal("format" in calls[0].body, false);
+  assert.equal("reference_images" in calls[0].body, false);
+  assert.equal("client_business_id" in calls[0].body, false);
+});
+
 test("image edit multipart rejects requests with no usable reference URL before upstream submit", async () => {
   const config = longRunningSubmitConfig(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
@@ -2356,11 +2422,12 @@ test("provider config fixes endpoints and model and requires at least one key", 
     imageEditUrl: "https://provider.example.com/v1/images/edits",
     apiKey: "test-key"
   }), /generations/);
-  assert.throws(() => sanitizeProviderConfig({
+  const providerSpecificEdit = sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
     imageEditUrl: "https://provider.example.com/v1/images/generations",
     apiKey: "test-key"
-  }), /edits/);
+  });
+  assert.equal(providerSpecificEdit.imageEditUrl, "https://provider.example.com/v1/images/generations");
   assert.equal(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
     imageEditUrl: "https://provider.example.com/v1/images/edits",
@@ -2476,6 +2543,29 @@ test("provider config normalizes legacy edits baseUrl into the fixed text endpoi
     restoreEnv("IMAGE_API_KEYS", oldKeys);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("provider config allows provider-specific image edit endpoint paths", () => {
+  const config = sanitizeProviderConfig({
+    baseUrl: "https://toapis.com/v1/images/generations",
+    imageEditUrl: "https://toapis.com/v1/images/edits",
+    imageTransport: "url",
+    keyMode: "single",
+    apiKey: "test-key"
+  });
+  assert.equal(config.baseUrl, "https://toapis.com/v1/images/generations");
+  assert.equal(config.imageEditUrl, "https://toapis.com/v1/images/edits");
+  assert.equal(config.imageTransport, "url");
+  assert.equal(config.pollBaseUrl, "https://toapis.com/v1/images/generations");
+  assert.equal(config.model, "gpt-image-2");
+  assert.equal(config.imageModel, "gpt-image-2");
+  const sameEndpoint = sanitizeProviderConfig({
+    baseUrl: "https://toapis.com/v1/images/generations",
+    imageEditUrl: "https://toapis.com/v1/images/generations",
+    imageTransport: "url",
+    apiKey: "test-key"
+  });
+  assert.equal(sameEndpoint.imageEditUrl, "https://toapis.com/v1/images/generations");
 });
 
 test("provider config infers fixed generations and edits endpoints but not model from imageModel", () => {

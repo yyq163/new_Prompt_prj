@@ -10,7 +10,7 @@ if (!hasProvider) {
 }
 
 assert.match(config.baseUrl, /^https?:\/\/.+\/v1\/images\/generations$/);
-assert.match(config.imageEditUrl, /^https?:\/\/.+\/v1\/images\/edits$/);
+assert.match(config.imageEditUrl, /^https?:\/\//);
 assert.equal(config.model, "gpt-image-2");
 assert.equal(config.imageModel, "gpt-image-2");
 assert.equal(JSON.stringify(config).includes("gpt-image-2-all"), false);

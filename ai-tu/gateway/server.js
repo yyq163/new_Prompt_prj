@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { dirname, extname, join, resolve } from "node:path";
 
 const ROOT = resolve(join(import.meta.dirname, ".."));
@@ -16,6 +17,14 @@ const REFERENCE_TTL_MS = clampInt(process.env.REFERENCE_TTL_MINUTES, 1, 240, 30)
 const JOB_TTL_MS = clampInt(process.env.JOB_TTL_MINUTES, 1, 240, 30) * 60 * 1000;
 const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
 const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
+const PROMPT_IMAGE_BACKEND_DEFAULT_PATH = "/api/v1/image-generations";
+const PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS = 120;
+const VALID_V36_TASK_TYPES = new Set(["text_image", "image_reference", "character_multiview", "scene_multiview", "prop_multiview", "storyboard"]);
+const VALID_V36_REFERENCE_ROLES = new Set(["face_reference", "character_reference", "outfit_reference", "hair_reference", "prop_reference", "scene_reference", "style_reference", "composition_reference", "lighting_reference", "material_reference", "ornament_reference", "storyboard_reference"]);
+const VALID_V36_ENTITY_TYPES = new Set(["character", "scene", "prop", "outfit", "hair", "material", "ornament", "style", "lighting", "composition", "storyboard", "other"]);
+const VALID_V36_ASPECT_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4"]);
+const VALID_V36_QUALITIES = new Set(["standard", "high"]);
+const VALID_V36_LANGUAGES = new Set(["zh-CN"]);
 
 const jobs = new Map();
 const queue = [];
@@ -115,13 +124,17 @@ async function route(request, response) {
     });
   }
 
+  if (request.method === "POST" && url.pathname === "/api/v1/image-generations") {
+    const body = await readFinalImageJson(request);
+    if (body.error) {
+      return sendJson(response, 400, finalImageError("INVALID_REQUEST_SCHEMA", body.error.message, 400).payload);
+    }
+    const result = await handlePromptBackendImageGeneration(body.value, request);
+    return sendJson(response, result.statusCode, result.payload);
+  }
+
   if (request.method === "POST" && url.pathname === "/api/image-jobs") {
-    const { ownerToken, isNewOwner } = ensureOwner(request);
-    if (isNewOwner) setOwnerCookie(response, ownerToken);
-    const body = await readJson(request);
-    const job = createJob(ownerToken, body);
-    enqueue(job);
-    return sendJson(response, 202, publicJob(job));
+    return sendJson(response, 410, legacyImageJobsDisabledPayload());
   }
 
   const jobMatch = url.pathname.match(/^\/api\/image-jobs\/([^/]+)$/);
@@ -278,6 +291,459 @@ function normalizeSize(value) {
   if (!size || size === "auto") return "auto";
   if (/^\d{2,5}x\d{2,5}$/.test(size)) return size;
   return "auto";
+}
+
+async function handlePromptBackendImageGeneration(body, request) {
+  const validation = normalizeFinalImageRequest(body);
+  if (validation.error) {
+    return finalImageError(validation.error.code, validation.error.message, validation.error.statusCode || 400);
+  }
+
+  const backend = promptImageBackendConfig(request);
+  if (!backend.baseUrl) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_NOT_CONFIGURED", "提示词优化生图后端未配置。", 503);
+  }
+  if (isSelfReferentialBackend(backend.baseUrl, request)) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_SELF_REFERENCE", "提示词优化生图后端不能指向 ai-tu gateway 自身。", 400);
+  }
+
+  let payload;
+  try {
+    payload = await postPromptImageBackend(validation.request, backend);
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      return finalImageError("PROMPT_IMAGE_BACKEND_TIMEOUT", "生成超时，请稍后重试。", 504);
+    }
+    return finalImageError("PROMPT_IMAGE_BACKEND_UNAVAILABLE", "生图服务暂时不可用，请稍后重试。", 502);
+  }
+
+  if (payload && payload.__backendError) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_UNAVAILABLE", "生图服务暂时不可用，请稍后重试。", 502);
+  }
+
+  return whitelistPromptBackendResponse(payload);
+}
+
+function normalizeFinalImageRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return invalidFinalRequest("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
+  }
+  const taskType = stringValue(body.task_type).trim();
+  if (!VALID_V36_TASK_TYPES.has(taskType)) {
+    return invalidFinalRequest("UNSUPPORTED_TASK_TYPE", "不支持的 task_type。");
+  }
+  const prompt = stringValue(body.prompt).trim();
+  if (!prompt) {
+    return invalidFinalRequest("PROMPT_REQUIRED", "prompt 不能为空。");
+  }
+  if (body.references != null && !Array.isArray(body.references)) {
+    return invalidFinalRequest("INVALID_REQUEST_SCHEMA", "references 必须是数组。");
+  }
+  const references = Array.isArray(body.references)
+    ? body.references.map((item, index) => normalizeFinalReference(item, index))
+    : [];
+  const badReference = references.find((item) => item.error);
+  if (badReference) return invalidFinalRequest(badReference.error.code, badReference.error.message);
+  if (taskType === "text_image" && references.length) {
+    return invalidFinalRequest("REFERENCES_NOT_ALLOWED", "text_image 不允许传 references。");
+  }
+  if (taskType === "image_reference" && !references.length) {
+    return invalidFinalRequest("REFERENCE_REQUIRED", "当前任务类型需要至少一张参考图。");
+  }
+  const seenReferenceIds = new Set();
+  for (const item of references) {
+    const referenceId = item.reference.reference_id;
+    if (!referenceId) {
+      return invalidFinalRequest("REFERENCE_ID_REQUIRED", "reference_id 不能为空。");
+    }
+    if (seenReferenceIds.has(referenceId)) {
+      return invalidFinalRequest("DUPLICATE_REFERENCE_ID", "参考图 ID 重复，请检查上传的参考图。");
+    }
+    seenReferenceIds.add(referenceId);
+  }
+
+  const output = normalizeFinalOutput(body.output);
+  if (output.error) return invalidFinalRequest(output.error.code, output.error.message);
+
+  return {
+    request: {
+      ...body,
+      task_type: taskType,
+      prompt,
+      references: references.map((item) => item.reference),
+      output: output.value
+    }
+  };
+}
+
+function normalizeFinalReference(item, index) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: `第 ${index + 1} 个 reference 必须是对象。` } };
+  }
+  const role = stringValue(item.role).trim();
+  const entityType = stringValue(item.entity_type).trim();
+  if (!VALID_V36_ENTITY_TYPES.has(entityType)) {
+    return { error: { code: "REFERENCE_ENTITY_TYPE_INVALID", message: "reference.entity_type 不合法。" } };
+  }
+  if (!VALID_V36_REFERENCE_ROLES.has(role)) {
+    return { error: { code: "INVALID_REFERENCE_ROLE", message: "参考图 role 不合法。" } };
+  }
+  if (!stringValue(item.entity_name).trim()) {
+    return { error: { code: "REFERENCE_ENTITY_NAME_REQUIRED", message: "reference.entity_name 不能为空。" } };
+  }
+  const url = stringValue(item.url).trim();
+  if (!/^https?:\/\//i.test(url)) {
+    return { error: { code: "REFERENCE_URL_INVALID", message: "reference.url 只支持 http 或 https URL。" } };
+  }
+  return {
+    reference: {
+      reference_id: stringValue(item.reference_id || item.referenceId).trim(),
+      entity_name: stringValue(item.entity_name).trim(),
+      entity_type: entityType,
+      role,
+      url,
+      mime_type: stringValue(item.mime_type).trim(),
+      display_name: stringValue(item.display_name).trim(),
+      description: stringValue(item.description).trim(),
+      order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1
+    }
+  };
+}
+
+function normalizeFinalOutput(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const rawCount = source.count == null || source.count === "" ? 1 : Number(source.count);
+  if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 4) {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: "output.count 必须是 1 到 4 的整数。" } };
+  }
+  const count = rawCount;
+  const aspectRatio = stringValue(source.aspect_ratio || "1:1").trim();
+  const quality = stringValue(source.quality || "high").trim();
+  const language = stringValue(source.language || "zh-CN").trim();
+  const returnFormat = stringValue(source.return_format || "url").trim();
+  if (!VALID_V36_ASPECT_RATIOS.has(aspectRatio)) {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: "output.aspect_ratio 不合法。" } };
+  }
+  if (!VALID_V36_QUALITIES.has(quality)) {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: "output.quality 不合法。" } };
+  }
+  if (!VALID_V36_LANGUAGES.has(language)) {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: "output.language 不合法。" } };
+  }
+  if (returnFormat !== "url") {
+    return { error: { code: "INVALID_REQUEST_SCHEMA", message: "output.return_format 只支持 url。" } };
+  }
+  return {
+    value: {
+      ...source,
+      count,
+      aspect_ratio: aspectRatio,
+      quality,
+      return_format: "url"
+    }
+  };
+}
+
+function invalidFinalRequest(code, message, statusCode = 400) {
+  return { error: { code, message, statusCode } };
+}
+
+function promptImageBackendConfig(request) {
+  const path = stringValue(process.env.PROMPT_IMAGE_BACKEND_GENERATION_PATH).trim() || PROMPT_IMAGE_BACKEND_DEFAULT_PATH;
+  return {
+    baseUrl: stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim().replace(/\/+$/, ""),
+    path: path.startsWith("/") ? path : `/${path}`,
+    apiKey: stringValue(process.env.PROMPT_IMAGE_BACKEND_API_KEY).trim(),
+    timeoutSeconds: clampInt(process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS, 1, 600, PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS),
+    requestHost: request.headers.host || `${HOST}:${PORT}`
+  };
+}
+
+function isSelfReferentialBackend(baseUrl, request) {
+  let backend;
+  try {
+    backend = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  const requestHost = request.headers.host || `${HOST}:${PORT}`;
+  const gatewayCandidates = [
+    `http://${requestHost}`,
+    `https://${requestHost}`,
+    `http://${HOST}:${PORT}`,
+    `https://${HOST}:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+    `http://localhost:${PORT}`
+  ];
+  return gatewayCandidates.some((candidate) => {
+    try {
+      const parsed = new URL(candidate);
+      return sameGatewayOrigin(backend, parsed);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function sameGatewayOrigin(left, right) {
+  return left.protocol === right.protocol
+    && normalizeGatewayHost(left.hostname) === normalizeGatewayHost(right.hostname)
+    && (left.port || defaultPort(left.protocol)) === (right.port || defaultPort(right.protocol));
+}
+
+function normalizeGatewayHost(hostname) {
+  const host = stringValue(hostname).trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "::1") return "localhost";
+  return host === "127.0.0.1" ? "localhost" : host;
+}
+
+function isUnsafeNetworkHost(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host) return true;
+  if (host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain") return true;
+  if (host === "0.0.0.0") return true;
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) return isUnsafeIpv4(host);
+  if (ipVersion === 6) return isUnsafeIpv6(host);
+  const mappedIpv4 = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mappedIpv4) return isUnsafeIpv4(mappedIpv4[1]);
+  return false;
+}
+
+function normalizeHost(hostname) {
+  return stringValue(hostname)
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/%.*$/, "")
+    .replace(/\.+$/, "");
+}
+
+function isUnsafeIpv4(host) {
+  const parts = host.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isUnsafeIpv6(host) {
+  if (host === "::" || host === "::1") return true;
+  const mappedIpv4 = ipv4FromEmbeddedIpv6(host);
+  if (mappedIpv4) return isUnsafeIpv4(mappedIpv4);
+  const first = host.split(":").find(Boolean);
+  const firstHextet = Number.parseInt(first || "0", 16);
+  if (!Number.isFinite(firstHextet)) return true;
+  if ((firstHextet & 0xfe00) === 0xfc00) return true;
+  if ((firstHextet & 0xffc0) === 0xfe80) return true;
+  return false;
+}
+
+function ipv4FromEmbeddedIpv6(host) {
+  const hextets = expandIpv6Hextets(host);
+  if (!hextets) return "";
+  const firstFiveZero = hextets.slice(0, 5).every((part) => part === 0);
+  const isMapped = firstFiveZero && hextets[5] === 0xffff;
+  const isCompatible = firstFiveZero && hextets[5] === 0;
+  if (!isMapped && !isCompatible) return "";
+  const value = ((hextets[6] << 16) | hextets[7]) >>> 0;
+  if (!value) return "";
+  return [
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff
+  ].join(".");
+}
+
+function expandIpv6Hextets(host) {
+  const value = stringValue(host).trim().toLowerCase();
+  if (!value || value.includes(":::")) return null;
+  const dotted = value.match(/(.+:)(\d+\.\d+\.\d+\.\d+)$/);
+  let source = value;
+  if (dotted) {
+    const parts = dotted[2].split(".").map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    source = `${dotted[1]}${((parts[0] << 8) | parts[1]).toString(16)}:${((parts[2] << 8) | parts[3]).toString(16)}`;
+  }
+  const hasCompress = source.includes("::");
+  const halves = source.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":").filter(Boolean) : [];
+  const right = halves[1] ? halves[1].split(":").filter(Boolean) : [];
+  const missing = hasCompress ? 8 - left.length - right.length : 0;
+  if (missing < 0) return null;
+  const parts = hasCompress ? [...left, ...Array(missing).fill("0"), ...right] : source.split(":");
+  if (parts.length !== 8) return null;
+  const hextets = parts.map((part) => {
+    if (!/^[0-9a-f]{1,4}$/.test(part)) return Number.NaN;
+    return Number.parseInt(part, 16);
+  });
+  return hextets.some((part) => !Number.isInteger(part) || part < 0 || part > 0xffff) ? null : hextets;
+}
+
+function defaultPort(protocol) {
+  if (protocol === "http:") return "80";
+  if (protocol === "https:") return "443";
+  return "";
+}
+
+async function postPromptImageBackend(requestBody, backend) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), backend.timeoutSeconds * 1000);
+  try {
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    if (backend.apiKey) headers.Authorization = `Bearer ${backend.apiKey}`;
+    const response = await fetch(`${backend.baseUrl}${backend.path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let json = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = {};
+    }
+    if (!response.ok) return { __backendError: true };
+    return json;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function whitelistPromptBackendResponse(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_INVALID_RESPONSE", "生成结果格式暂不支持。", 502);
+  }
+  if (payload.status && payload.status !== "succeeded") {
+    const error = payload.error && typeof payload.error === "object" ? payload.error : {};
+    return finalImageError(
+      sanitizePublicErrorCode(error.code) || "PROMPT_IMAGE_BACKEND_INVALID_RESPONSE",
+      sanitizePublicErrorMessage(error.message) || "生成结果格式暂不支持。",
+      payload.status === "needs_clarification" ? 400 : 502
+    );
+  }
+  const images = Array.isArray(payload && payload.images)
+    ? payload.images.map(whitelistPromptBackendImage).filter(Boolean)
+    : [];
+  if (!images.length) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_INVALID_RESPONSE", "生成结果格式暂不支持。", 502);
+  }
+  return {
+    statusCode: 200,
+    payload: {
+      status: "succeeded",
+      images,
+      warnings: whitelistWarnings(payload && payload.warnings)
+    }
+  };
+}
+
+function whitelistPromptBackendImage(image) {
+  if (!image || typeof image !== "object" || Array.isArray(image)) return null;
+  const url = stringValue(image.url).trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (!isAllowedBackendImageUrl(url)) return null;
+  const result = { url };
+  const width = Number(image.width);
+  const height = Number(image.height);
+  const format = stringValue(image.format).trim();
+  if (Number.isInteger(width) && width > 0) result.width = width;
+  if (Number.isInteger(height) && height > 0) result.height = height;
+  if (/^[a-z0-9.+-]{1,24}$/i.test(format)) result.format = format;
+  return result;
+}
+
+function isAllowedBackendImageUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (isUnsafeNetworkHost(parsed.hostname)) {
+    return isConfiguredBackendGeneratedImageUrl(parsed);
+  }
+  return true;
+}
+
+function isConfiguredBackendGeneratedImageUrl(parsed) {
+  if (!/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(parsed.pathname)) return false;
+  const backendBase = stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim();
+  if (!backendBase) return false;
+  let backend;
+  try {
+    backend = new URL(backendBase);
+  } catch {
+    return false;
+  }
+  return sameGatewayOrigin(parsed, backend);
+}
+
+function whitelistWarnings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 20).map((item) => {
+    if (typeof item === "string") return item.slice(0, 300);
+    if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+    const warning = {};
+    const code = stringValue(item.code).trim();
+    const message = stringValue(item.message).trim();
+    if (code && !containsUnsafePublicText(code)) warning.code = code.slice(0, 80);
+    if (message && !containsUnsafePublicText(message)) warning.message = message.slice(0, 300);
+    return Object.keys(warning).length ? warning : "";
+  }).filter(Boolean);
+}
+
+function containsUnsafePublicText(value) {
+  return /authorization|bearer|api[_-]?key|token|secret|cookie|base64|b64_json|data:image|final_prompt|compiled_prompt|raw_provider|provider_payload/i.test(String(value || ""));
+}
+
+function sanitizePublicErrorCode(value) {
+  const code = stringValue(value).trim();
+  if (!code || code.length > 80 || !/^[A-Z0-9_]+$/.test(code) || containsUnsafePublicText(code)) return "";
+  return code;
+}
+
+function sanitizePublicErrorMessage(value) {
+  const message = stringValue(value).trim();
+  if (!message || containsUnsafePublicText(message)) return "";
+  return message.slice(0, 300);
+}
+
+function finalImageError(code, message, statusCode) {
+  return {
+    statusCode,
+    payload: {
+      status: "failed",
+      error: {
+        code,
+        message
+      },
+      images: [],
+      warnings: []
+    }
+  };
+}
+
+function legacyImageJobsDisabledPayload() {
+  return {
+    status: "failed",
+    error: {
+      code: "LEGACY_IMAGE_JOBS_DISABLED",
+      message: "旧图片任务接口已停用，请使用 /api/v1/image-generations。"
+    },
+    images: [],
+    warnings: []
+  };
 }
 
 function enqueue(job) {
@@ -876,7 +1342,22 @@ function configResponse(request) {
   const host = request.headers.host || `${HOST}:${PORT}`;
   return {
     config: {
-      ...config,
+      upstreamMode: config.upstreamMode,
+      baseUrl: config.baseUrl,
+      imageEditUrl: config.imageEditUrl,
+      model: config.model,
+      imageModel: config.imageModel,
+      imageTransport: config.imageTransport,
+      keyMode: config.keyMode,
+      apiKeyConfigured: Boolean(config.apiKey),
+      apiKeysConfigured: Array.isArray(config.apiKeys) ? config.apiKeys.length : 0,
+      imageHostMode: config.imageHostMode,
+      imageHostUploadUrl: config.imageHostUploadUrl,
+      imageHostApiKeyConfigured: Boolean(config.imageHostApiKey),
+      imageHostExpirationSeconds: config.imageHostExpirationSeconds,
+      maxConcurrency: config.maxConcurrency,
+      requestTimeoutSeconds: config.requestTimeoutSeconds,
+      retryAttempts: config.retryAttempts,
       upstreamKeyCount: activeKeys(config).length
     },
     paths: requestPaths(host, config),
@@ -886,7 +1367,7 @@ function configResponse(request) {
 
 function requestPaths(host, config = getRuntimeConfig()) {
   return {
-    createJob: `POST http://${host}/api/image-jobs`,
+    createJob: `POST http://${host}/api/v1/image-generations`,
     getJob: `GET http://${host}/api/image-jobs/<jobId>`,
     config: `GET/POST http://${host}/api/config`,
     uploadReference: `POST http://${host}/api/reference-images`,
@@ -895,6 +1376,24 @@ function requestPaths(host, config = getRuntimeConfig()) {
     imageUpstream: config.imageTransport === "edit" ? `POST ${config.imageEditUrl}` : `POST ${config.baseUrl}`,
     configFile: CONFIG_FILE
   };
+}
+
+async function readFinalImageJson(request) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) {
+      return { error: { message: "请求体过大。" } };
+    }
+    chunks.push(chunk);
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  try {
+    return { value: text ? JSON.parse(text) : {} };
+  } catch {
+    return { error: { message: "请求体不是合法 JSON。" } };
+  }
 }
 
 async function readJson(request) {
@@ -1627,11 +2126,14 @@ function configPageHtml(host) {
       $("imageModel").value = config.imageModel || "gpt-image-2";
       $("imageTransport").value = config.imageTransport || "edit";
       $("upstreamMode").value = config.upstreamMode || "live";
-      $("apiKey").value = config.apiKey || "";
-      $("apiKeys").value = Array.isArray(config.apiKeys) ? config.apiKeys.join("\\n") : "";
+      $("apiKey").value = "";
+      $("apiKey").placeholder = config.apiKeyConfigured ? "已配置，留空将清除或覆盖" : "";
+      $("apiKeys").value = "";
+      $("apiKeys").placeholder = config.apiKeysConfigured ? "已配置 " + config.apiKeysConfigured + " 个 key，留空将清除或覆盖" : "一行一个 key，也支持逗号、分号或空格分隔";
       $("imageHostMode").value = config.imageHostMode || "imgbb";
       $("imageHostUploadUrl").value = config.imageHostUploadUrl || "https://api.imgbb.com/1/upload";
-      $("imageHostApiKey").value = config.imageHostApiKey || "";
+      $("imageHostApiKey").value = "";
+      $("imageHostApiKey").placeholder = config.imageHostApiKeyConfigured ? "已配置，留空将清除或覆盖" : "";
       $("imageHostExpirationSeconds").value = Number.isFinite(Number(config.imageHostExpirationSeconds)) ? Number(config.imageHostExpirationSeconds) : 0;
       $("maxConcurrency").value = Number.isFinite(Number(config.maxConcurrency)) ? Number(config.maxConcurrency) : 1;
       $("requestTimeoutSeconds").value = Number.isFinite(Number(config.requestTimeoutSeconds)) ? Number(config.requestTimeoutSeconds) : 180;

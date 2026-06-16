@@ -1,0 +1,99 @@
+{
+  "taskId": "main01-fix02-v36-gateway-contract",
+  "task_id": "main01-fix02-v36-gateway-contract",
+  "status": "BLOCKED_BROWSER_UNVERIFIED",
+  "verdict": "blocked",
+  "reviewed_at": "2026-06-16T14:25:53Z",
+  "summary": "The ai-tu gateway V3.6 generation contract repair is implemented on main01-fix02 and the code/test/security gates pass. The pre-merge gate remains blocked because Browser QA with the user-specified live config reached the new generation endpoint but timed out without a generated image.",
+  "findings": [
+    {
+      "id": "BROWSER-LIVE-CONFIG-TIMEOUT",
+      "severity": "high",
+      "status": "open",
+      "area": "Browser QA",
+      "details": "In-app Browser text generation against ai-tu gateway using the user-specified local runtime config reached POST /api/v1/image-generations and returned HTTP 504 with Cache-Control no-store after the configured timeout. No generated image was loaded, so this branch is not eligible to merge back to main01 yet."
+    }
+  ],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "context_capsule_before_edit": "PASS_EVIDENCE",
+    "gateway_v1_image_generations_route": "PASS_CONTRACT",
+    "gateway_prompt_image_backend_proxy": "PASS_CONTRACT",
+    "gateway_backend_self_reference_guard": "PASS_CONTRACT",
+    "gateway_backend_secret_server_only": "PASS_SECURITY",
+    "gateway_response_whitelist": "PASS_SECURITY",
+    "gateway_invalid_image_url_response": "PASS_CONTRACT",
+    "gateway_no_mock_no_generated_store_no_provider_direct": "PASS_CONTRACT",
+    "legacy_image_jobs_disabled": "PASS_CONTRACT",
+    "frontend_main_path_v1_image_generations": "PASS_CONTRACT",
+    "frontend_text_image_no_refs": "PASS_CONTRACT",
+    "frontend_image_reference_requires_uploaded_http_refs": "PASS_CONTRACT",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "ai_tu_gateway_contract_test": "PASS_TESTED",
+    "git_diff_check": "PASS_STATIC",
+    "browser_text_image_live_config": "BLOCKED_BROWSER_UNVERIFIED",
+    "browser_image_reference_live_config": "BLOCKED_BROWSER_UNVERIFIED"
+  },
+  "evidence": [
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --out-dir .understand-anything --max-nodes 6000 --max-edges 20000",
+      "status": "PASS_STATIC",
+      "details": "Code map skill refreshed before work on main01; CodeGraph was initialized and pending changes were zero."
+    },
+    {
+      "command": "git fetch origin --prune; git checkout main01; git pull --ff-only origin main01; git checkout -b main01-fix02",
+      "status": "PASS_BRANCH",
+      "details": "Work was isolated on main01-fix02 created from main01. main01 was not edited directly."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0; includes ai-tu gateway server syntax and V3.6 gateway contract test syntax."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "All unit tests passed."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=<local ignored config> node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "node api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "All ai-tu gateway V3.6 contract tests passed."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "In-app Browser text_image UI submit through ai-tu product page",
+      "status": "BLOCKED_BROWSER_UNVERIFIED",
+      "details": "The product page title was the expected fast edition title, the browser reached POST /api/v1/image-generations through ai-tu gateway using the requested local config, no legacy image job request was observed, and the response was HTTP 504 no-store without a generated image."
+    },
+    {
+      "command": "In-app Browser image_reference UI submit through ai-tu product page",
+      "status": "BLOCKED_BROWSER_UNVERIFIED",
+      "details": "A prior contract Browser pass proved uploaded http references are sent through /api/v1/image-generations with no legacy image job request, but the live-config rerun was not completed after the text path timed out without an image."
+    }
+  ],
+  "blocking_items": [
+    {
+      "status": "BLOCKED_BROWSER_UNVERIFIED",
+      "details": "Retry Browser QA with the requested local config after the live provider path returns a generated image within the gateway timeout, then merge the fix branch into main01 and rerun the total gate."
+    }
+  ]
+}

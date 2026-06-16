@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>帧界图片生成器快速版</title>
+  <title>帧界图片生成器极速版</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='24' fill='%230057df'/%3E%3C/svg%3E">
   <style>
     :root {
@@ -1662,7 +1662,7 @@
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true"></div>
-        <h1 class="brand-title">帧界图片生成器快速版</h1>
+        <h1 class="brand-title">帧界图片生成器极速版</h1>
       </div>
     </header>
 
@@ -1680,7 +1680,7 @@
         <span class="mode-pill" id="modeChip">文生图</span>
         <span id="serviceText">服务：当前浏览器地址</span>
         <span id="refCountText">0 / 16 参考图</span>
-        <span>内网异步生成；任务结果按浏览器会话隔离。</span>
+        <span>当前页面统一调用最终生图 API；结果按浏览器会话隔离。</span>
       </div>
     </aside>
 
@@ -2801,19 +2801,18 @@
     }
 
     function buildJobRequest() {
+      return preferredMode === "image" || selectedRefs().length
+        ? buildImageReferenceRequest()
+        : buildTextImageRequest();
+    }
+
+    function buildTextImageRequest() {
       const prompt = getPromptValue();
-      const refList = selectedRefs();
-      const manualReferences = collectOptimizerReferences({ requireUrl: true });
-      const structuredReferences = [
-        ...manualReferences,
-        ...uploadedReferencesFromSlots(refList, manualReferences)
-      ];
-      const hasReferenceUrls = structuredReferences.some((reference) => /^https?:\/\//i.test(reference.url));
       return {
         prompt,
         model: DEFAULT_MODEL,
-        task_type: controls.optimizerTaskType.value || "image_reference",
-        mode: preferredMode === "image" || refList.length || hasReferenceUrls ? "image" : "text",
+        task_type: controls.optimizerTaskType.value || "text_image",
+        mode: "text",
         size: computeSize(),
         quality: controls.quality.value || "high",
         output_format: controls.outputFormat.value || "png",
@@ -2828,14 +2827,39 @@
           return_format: "url",
           language: "zh-CN"
         },
-        references: structuredReferences,
-        images: refList.map((ref) => ({
-          referenceId: ref.referenceId || "",
-          name: ref.name,
-          type: ref.type,
-          size: ref.size,
-          image_url: ref.image_url || ref.url || ""
-        }))
+        references: []
+      };
+    }
+
+    function buildImageReferenceRequest() {
+      const prompt = getPromptValue();
+      const refList = selectedRefs();
+      const manualReferences = collectOptimizerReferences({ requireUrl: true });
+      const structuredReferences = [
+        ...manualReferences,
+        ...uploadedReferencesFromSlots(refList, manualReferences)
+      ];
+      const selectedTaskType = controls.optimizerTaskType.value || "image_reference";
+      return {
+        prompt,
+        model: DEFAULT_MODEL,
+        task_type: selectedTaskType,
+        mode: "image",
+        size: computeSize(),
+        quality: controls.quality.value || "high",
+        output_format: controls.outputFormat.value || "png",
+        n: clampNumber(Number(controls.n.value || 1), 1, 4),
+        reference_policy: {
+          unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
+        },
+        output: {
+          count: clampNumber(Number(controls.n.value || 1), 1, 4),
+          aspect_ratio: controls.aspectRatio.value || "16:9",
+          quality: controls.quality.value || "high",
+          return_format: "url",
+          language: "zh-CN"
+        },
+        references: structuredReferences
       };
     }
 
@@ -2871,15 +2895,15 @@
 
     function validateJobRequest(request) {
       if (!request.prompt) throw new Error("请填写提示词。");
-      const hasUrlReferences = Array.isArray(request.references) && request.references.some((reference) => /^https?:\/\//i.test(reference.url || ""));
-      if (request.task_type === "text_image" && hasUrlReferences) {
+      const urlReferences = Array.isArray(request.references) ? request.references.filter((reference) => /^https?:\/\//i.test(reference.url || "")) : [];
+      if (request.task_type === "text_image" && urlReferences.length) {
         throw new Error("text_image 不允许填写 references。");
       }
-      if (request.task_type === "image_reference" && !hasUrlReferences) {
-        throw new Error("图生图模式请先上传参考图或填写 reference URL。");
+      if (request.mode === "image" && request.task_type === "text_image") {
+        throw new Error("图生图模式不能使用 text_image，请切换 task_type。");
       }
-      if (request.mode === "image" && request.images.some((image) => !image.image_url)) {
-        throw new Error("上传槽位参考图需要先得到可访问 URL。");
+      if (request.mode === "image" && !urlReferences.length) {
+        throw new Error("图生图模式请先上传参考图，且参考图必须已得到 http(s) URL。");
       }
       if (Array.isArray(request.references) && request.references.some((reference) => reference.url && !/^https?:\/\//i.test(reference.url))) {
         throw new Error("references[].url 只支持 http 或 https URL。");
@@ -2889,71 +2913,17 @@
     async function pollJob(jobId, options = {}) {
       const existing = pollers.get(jobId);
       if (existing) window.clearTimeout(existing.timer);
-      const startedAt = existing ? existing.startedAt : Date.now();
-      const run = async () => {
-        try {
-          const response = await fetch(`/api/image-jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
-          if (response.status === 403 || response.status === 404) {
-            markJobFailed(jobId, response.status === 403 ? "无权查看该任务。" : "任务不存在或已过期。");
-            removePendingJob(jobId);
-            pollers.delete(jobId);
-            return;
-          }
-          const payload = await parseJsonResponse(response);
-          const job = normalizeJob(payload);
-          upsertJob(job);
-          if (activePreview && activePreview.kind === "job" && activePreview.jobId === jobId) previewJob(jobId);
-          renderJobs();
-
-          if (job.status === "succeeded" || job.status === "failed") {
-            removePendingJob(jobId);
-            pollers.delete(jobId);
-            setStatus(job.status === "succeeded" ? "生成完成。" : `生成失败：${jobErrorMessage(job)}`, job.status === "succeeded" ? "good" : "bad");
-            return;
-          }
-
-          if (Date.now() - startedAt > MAX_POLL_MS) {
-            setStatus("任务仍在后台运行，可稍后刷新查看。", "busy");
-            pollers.delete(jobId);
-            return;
-          }
-
-          const timer = window.setTimeout(run, POLL_INTERVAL_MS);
-          pollers.set(jobId, { timer, startedAt });
-        } catch (error) {
-          const timer = window.setTimeout(run, POLL_INTERVAL_MS);
-          pollers.set(jobId, { timer, startedAt });
-          setStatus(`任务状态刷新失败，正在重试：${errorToMessage(error)}`, "busy");
-        }
-      };
-
+      pollers.delete(jobId);
+      removePendingJob(jobId);
       if (options.immediate) {
-        await run();
-      } else {
-        const timer = window.setTimeout(run, POLL_INTERVAL_MS);
-        pollers.set(jobId, { timer, startedAt });
+        markJobFailed(jobId, "旧图片任务接口已停用，请重新提交生成。");
       }
     }
 
     async function restorePendingJobs() {
       const ids = readPendingJobIds();
       if (!ids.length) return;
-      setStatus("正在恢复未完成任务。", "busy");
-      for (const jobId of ids) {
-        try {
-          const response = await fetch(`/api/image-jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
-          if (!response.ok) {
-            removePendingJob(jobId);
-            continue;
-          }
-          const job = normalizeJob(await response.json());
-          upsertJob(job);
-          if (job.status === "queued" || job.status === "running") pollJob(job.jobId);
-          else removePendingJob(job.jobId);
-        } catch {
-          pollJob(jobId);
-        }
-      }
+      localStorage.removeItem(PENDING_STORAGE_KEY);
       renderJobs();
       setInitialPreview();
     }
@@ -3727,17 +3697,11 @@
     }
 
     function persistPendingJobs() {
-      const ids = jobs
-        .filter((job) => isRestorableJobId(job.jobId) && (job.status === "queued" || job.status === "running"))
-        .map((job) => job.jobId);
-      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify([...new Set(ids)]));
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify([]));
     }
 
     function addPendingJob(jobId) {
-      if (!isRestorableJobId(jobId)) return;
-      const ids = new Set(readPendingJobIds());
-      ids.add(jobId);
-      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify([...ids]));
+      removePendingJob(jobId);
     }
 
     function removePendingJob(jobId) {
@@ -3746,7 +3710,7 @@
     }
 
     function isRestorableJobId(jobId) {
-      return !String(jobId || "").startsWith("pending_");
+      return Boolean(jobId) && !String(jobId || "").startsWith("pending_");
     }
 
     function statusLabel(status) {

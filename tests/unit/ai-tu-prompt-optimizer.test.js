@@ -17,7 +17,7 @@ const server = readFileSync(resolve(root, "server.js"), "utf8");
 const gateway = readFileSync(resolve(root, "ai-tu/gateway/server.js"), "utf8");
 
 test("ai-tu original page contains prompt optimizer entry and six task_type options", () => {
-  assert.match(html, /帧界图片生成器快速版/);
+  assert.match(html, /帧界图片生成器极速版/);
   assert.match(html, /提示词优化/);
   assert.match(html, /id="optimizePromptBtn"/);
   assert.match(html, /id="optimizerSixTaskSamplesBtn"/);
@@ -42,24 +42,34 @@ test("frontend calls prompt optimizer and overwrites original prompt only on suc
   assert.match(html, /controls\.prompt\.value = originalPrompt/);
 });
 
-test("frontend image job request includes structured references", () => {
+test("frontend image generation request uses V3.6 builders and structured references", () => {
+  assert.match(html, /function buildTextImageRequest\(\)/);
+  assert.match(html, /task_type: controls\.optimizerTaskType\.value \|\| "text_image"/);
+  assert.match(html, /references: \[\]/);
+  assert.match(html, /function buildImageReferenceRequest\(\)/);
+  assert.match(html, /\.\.\.manualReferences/);
   assert.match(html, /references: structuredReferences/);
   assert.match(html, /collectOptimizerReferences\(\{ requireUrl: true \}\)/);
   assert.match(html, /uploadedReferencesFromSlots\(refList, manualReferences\)/);
   assert.match(html, /reference_id: sanitizeReferenceId/);
   assert.match(html, /reference_policy:/);
-  assert.match(html, /reference URL/);
+  assert.match(html, /图生图模式不能使用 text_image，请切换 task_type。/);
+  assert.match(html, /图生图模式请先上传参考图，且参考图必须已得到 http\(s\) URL。/);
   assert.match(html, /finalApiEndpoint = "\/api\/v1\/image-generations"/);
   assert.match(html, /fetch\(finalApiEndpoint/);
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
+  assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
 });
 
 test("frontend does not persist temporary pending jobs into legacy restore polling", () => {
   assert.match(html, /function isRestorableJobId\(jobId\)/);
   assert.match(html, /startsWith\("pending_"\)/);
   assert.match(html, /isRestorableJobId\(job\.jobId\) && \(job\.status === "queued" \|\| job\.status === "running"\)/);
-  assert.match(html, /if \(!isRestorableJobId\(jobId\)\) return;/);
+  assert.match(html, /localStorage\.removeItem\(PENDING_STORAGE_KEY\)/);
+  assert.match(html, /旧图片任务接口已停用，请重新提交生成。/);
   assert.doesNotMatch(html, /if \(job\.status === "queued" \|\| job\.status === "running"\) addPendingJob\(job\.jobId\);/);
+  assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
+  assert.doesNotMatch(html, /fetch\("\/api\/image-jobs/);
 });
 
 test("frontend formats structured final image errors without object placeholders", () => {

@@ -190,7 +190,7 @@ implementation language in any enhancement field.
 
 ### Legacy route
 
-`/api/image-jobs` is a deprecated compatibility route for old page/client behavior. It sends deprecation headers and is not a Final API V1.4 acceptance endpoint. It must not be used to bypass the structured `references[]` contract.
+`/api/image-jobs` is a deprecated compatibility route for old page/client behavior. `POST /api/image-jobs` returns `410 LEGACY_IMAGE_JOBS_DISABLED`, sends deprecation headers, and never creates a provider job. `GET /api/image-jobs/:id` is retained only as a deprecated 404 cleanup surface for old pending-job polling. It is not a Final API V1.4 acceptance endpoint and cannot bypass the structured `references[]` contract.
 
 ### Response
 

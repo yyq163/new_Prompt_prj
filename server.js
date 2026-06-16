@@ -1,13 +1,9 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { basename, extname, normalize, resolve } from "node:path";
-import { handleImageGeneration, publicImageUrl } from "./src/routes/image-generations.js";
+import { extname, normalize, resolve } from "node:path";
+import { handleImageGeneration } from "./src/routes/image-generations.js";
 import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
 import { ImageApiError, v36ImageGenerationErrorPayload } from "./src/core/errors.js";
-import { makeId, normalizeRequest, stringValue } from "./src/core/runtime.js";
-import { extractEntityMentions } from "./src/core/entity-mentions.js";
-import { resolveReferences } from "./src/core/reference-binding.js";
-import { generateWithAiTuProvider } from "./src/providers/ai-tu-provider-adapter.js";
 import { generatedImageHttpResponse } from "./src/core/generated-image-response.js";
 import { putGeneratedImage } from "./src/core/generated-image-store.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "./src/core/legacy-api.js";
@@ -18,7 +14,6 @@ const AI_TU_ROOT = resolve(ROOT, "ai-tu");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 8787);
 const MAX_BODY_BYTES = parseBytes(process.env.MAX_BODY_SIZE || "2mb");
-const legacyJobs = new Map();
 
 const server = createServer(async (request, response) => {
   try {
@@ -60,15 +55,12 @@ async function route(request, response) {
     return sendJson(response, result.statusCode, result.payload);
   }
   if (request.method === "POST" && url.pathname === "/api/image-jobs") {
-    const body = await readJson(request);
-    const result = await createLegacyImageJob(body);
+    const result = disabledLegacyImageJob();
     return sendJson(response, result.statusCode, result.payload, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
   }
   const legacyJobMatch = url.pathname.match(/^\/api\/image-jobs\/([^/]+)$/);
   if (request.method === "GET" && legacyJobMatch) {
-    const job = legacyJobs.get(legacyJobMatch[1]);
-    if (!job) return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" }, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
-    return sendJson(response, 200, publicLegacyJob(job), LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
+    return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" }, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
   }
   const generatedImageMatch = url.pathname.match(/^\/api\/v1\/generated-images\/([^/]+)$/);
   if (request.method === "GET" && generatedImageMatch) {
@@ -200,178 +192,15 @@ function safeUploadName(name) {
   return String(name || "reference.png").replace(/[^\p{L}\p{N}._ -]+/gu, "_").slice(0, 120) || "reference.png";
 }
 
-async function createLegacyImageJob(body) {
-  try {
-    const invalid = invalidJsonPayload(body);
-    if (invalid) {
-      throw new ImageApiError({
-        statusCode: invalid.statusCode,
-        status: invalid.payload.status,
-        errorCode: invalid.payload.error_code,
-        message: invalid.payload.message
-      });
-    }
-    const request = normalizeLegacyImageJobRequest(body);
-    const job = {
-      jobId: makeId("job"),
-      prompt: request.prompt,
-      request,
-      fill: buildLegacyFill(request),
-      status: "queued",
-      images: [],
-      error: null,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    legacyJobs.set(job.jobId, job);
-    void runLegacyImageJob(job);
-    return { statusCode: 202, payload: publicLegacyJob(job) };
-  } catch (error) {
-    const statusCode = Number(error && error.statusCode) || 400;
-    return {
-      statusCode,
-      payload: {
-        status: "failed",
-        error: error instanceof Error ? error.message : "请求无效。"
-      }
-    };
-  }
-}
-
-function normalizeLegacyImageJobRequest(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new ImageApiError({ statusCode: 400, message: "请求体必须是 JSON 对象。" });
-  }
-  const prompt = stringValue(body.prompt).trim();
-  if (!prompt) throw new ImageApiError({ statusCode: 400, message: "请填写提示词。" });
-
-  const references = normalizeLegacyReferences(body, prompt);
-  const mode = body.mode === "image" || references.length ? "image" : "text";
+function disabledLegacyImageJob() {
   return {
-    prompt,
-    mode,
-    model: stringValue(body.model).trim() || "gpt-image-2",
-    size: stringValue(body.size).trim() || "auto",
-    quality: stringValue(body.quality).trim() || "auto",
-    output_format: stringValue(body.output_format || body.format).trim() || "png",
-    n: clamp(Number(body.n || 1), 1, 10),
-    references
-  };
-}
-
-function normalizeLegacyReferences(body, prompt) {
-  const images = Array.isArray(body.images) ? body.images : [];
-  const structuredRefs = Array.isArray(body.references) ? body.references : [];
-  if (images.length) {
-    throw new ImageApiError({
-      statusCode: 400,
+    statusCode: 410,
+    payload: {
       status: "failed",
-      errorCode: "INVALID_REQUEST_SCHEMA",
-      message: "Deprecated /api/image-jobs 不再接受 URL-only images[]；请使用结构化 references[]。"
-    });
-  }
-  if (!structuredRefs.length) return [];
-  const taskType = stringValue(body.task_type).trim() || "image_reference";
-  const request = normalizeRequest({
-    task_type: taskType,
-    prompt,
-    references: structuredRefs,
-    reference_policy: { unbound_entity: "warn" },
-    output: {
-      count: clamp(Number(body.n || 1), 1, 4),
-      aspect_ratio: sizeToAspect(body.size),
-      quality: stringValue(body.quality).trim() || "high",
-      return_format: "url",
-      language: "zh-CN"
+      error_code: "LEGACY_IMAGE_JOBS_DISABLED",
+      message: "Deprecated /api/image-jobs 已禁用，请使用 /api/v1/image-generations。"
     }
-  });
-  const binding = resolveReferences(request, extractEntityMentions(prompt));
-  return binding.resolved_references;
-}
-
-async function runLegacyImageJob(job) {
-  job.status = "running";
-  job.updatedAt = Date.now();
-  try {
-    const providerRequest = {
-      request_id: makeId("req"),
-      task_type: job.request.references.length ? "image_reference" : "text_image",
-      prompt: job.request.prompt,
-      references: job.request.references,
-      output: {
-        count: job.request.n,
-        aspect_ratio: sizeToAspect(job.request.size),
-        quality: job.request.quality === "auto" ? "high" : job.request.quality,
-        return_format: "url"
-      },
-      generation_mode: job.request.references.length ? "image_to_image" : "text_to_image"
-    };
-    const result = await generateWithAiTuProvider({
-      request: providerRequest,
-      compiledPrompt: job.request.prompt
-    });
-    job.images = result.images.map((image) => {
-      const safeUrl = publicImageUrl(image.url);
-      return { url: safeUrl, image_url: safeUrl };
-    });
-    job.status = "succeeded";
-  } catch (error) {
-    job.status = "failed";
-    job.error = error instanceof Error ? error.message : "图片生成失败。";
-  } finally {
-    job.updatedAt = Date.now();
-  }
-}
-
-function buildLegacyFill(request) {
-  return {
-    prompt: request.prompt,
-    mode: request.mode,
-    size: request.size,
-    quality: request.quality,
-    output_format: request.output_format,
-    n: request.n,
-    images: request.references.map((ref) => ({
-      referenceId: ref.reference_id,
-      name: ref.display_name,
-      type: ref.mime_type,
-      image_url: ref.url
-    })),
-    references: request.references
   };
-}
-
-function publicLegacyJob(job) {
-  return {
-    jobId: job.jobId,
-    prompt: job.prompt,
-    status: job.status,
-    images: job.images,
-    error: job.error,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    fill: job.fill
-  };
-}
-
-function sizeToAspect(size) {
-  const text = stringValue(size).trim();
-  const match = text.match(/^(\d+)x(\d+)$/);
-  if (!match) return "16:9";
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  if (!width || !height) return "16:9";
-  const ratio = width / height;
-  if (Math.abs(ratio - 1) < 0.05) return "1:1";
-  if (ratio > 1.5) return "16:9";
-  if (ratio < 0.75) return "9:16";
-  if (ratio > 1) return "4:3";
-  return "3:4";
-}
-
-function clamp(value, min, max) {
-  if (!Number.isFinite(value)) return min;
-  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 async function readJson(request) {

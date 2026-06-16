@@ -48,7 +48,7 @@ Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、
 - Provider 返回的 URL、base64、data URL 或 binary 生成图会统一标准化为 `images[].url`；其中真实上游 bytes 会通过短期内存 Generated Image Store 暴露为 `/api/v1/generated-images/:image_id`。
 - Provider 返回的外部图片 URL 也会经过公网 URL 安全校验；localhost、loopback、link-local、内网或非 HTTP(S) URL 不会进入公共成功响应。
 - `callback_url` / `callback.url` 只接收和校验，不执行回调。校验默认拒绝 localhost、loopback、link-local、内网地址和非 HTTP(S) scheme。
-- 兼容路由 `/api/image-jobs` 已标记 deprecated，仅服务旧页面/旧客户端，不作为 Final API V1.4 验收入口，也不允许 URL-only reference 绕过结构化合同。
+- 兼容路由 `/api/image-jobs` 已标记 deprecated；`POST /api/image-jobs` 返回 `410 LEGACY_IMAGE_JOBS_DISABLED`，不会创建任务或直连 provider。`GET /api/image-jobs/:id` 仅保留 deprecated 404 清理语义，不作为 Final API V1.4 验收入口。
 - API 响应不返回 final prompt、compiled prompt、enhancement、RAGFlow 状态、fallback 状态、storyboard 路径或 provider payload。
 - 专业模板内容由 RAGFlow 知识库命中后返回 JSON enhancement，再由 Prompt Compiler 确定性拼接；Prompt Compiler 本地只保留最小安全骨架、参考绑定、输出说明和通用负向规则。
 - RAGFlow 未配置、调用失败、无知识命中或 enhancement 被安全校验丢弃时，服务仍可继续生图，但不会自动补人物四视图、场景 3×3、多机位、道具多角度或故事板左右分区等完整专业模板。

@@ -72,6 +72,18 @@ test("frontend formats structured final image errors without object placeholders
   assert.doesNotMatch(html, /job\.error \|\| "未知错误"/);
 });
 
+test("frontend only renders and downloads public http image URLs", () => {
+  assert.match(html, /function imageToSrc\(image\)/);
+  assert.match(html, /function isPublicImageUrl\(value\)/);
+  assert.match(html, /isPublicImageUrl\(image\.url\)/);
+  assert.match(html, /isPublicImageUrl\(source\)/);
+  assert.doesNotMatch(html, /image\.b64_json/);
+  assert.doesNotMatch(html, /image\.base64/);
+  assert.doesNotMatch(html, /dataUrlToObjectUrl/);
+  assert.doesNotMatch(html, /\^data:/);
+  assert.doesNotMatch(html, /atob\(payload/);
+});
+
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
     reference("ref_scene", "古巷", "scene", "scene_reference"),

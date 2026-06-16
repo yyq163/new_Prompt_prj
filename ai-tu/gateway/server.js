@@ -454,7 +454,7 @@ function promptImageBackendConfig(request) {
     baseUrl: stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim().replace(/\/+$/, ""),
     path: path.startsWith("/") ? path : `/${path}`,
     apiKey: stringValue(process.env.PROMPT_IMAGE_BACKEND_API_KEY).trim(),
-    timeoutSeconds: clampInt(process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS, 1, 600, PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS),
+    timeoutSeconds: clampInt(process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS, 1, 900, PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS),
     requestHost: request.headers.host || `${HOST}:${PORT}`
   };
 }
@@ -1256,7 +1256,7 @@ function defaultRuntimeConfig() {
     imageHostApiKey: stringValue(process.env.IMGBB_API_KEY || process.env.IMAGE_HOST_API_KEY).trim(),
     imageHostExpirationSeconds: clampInt(process.env.IMGBB_EXPIRATION_SECONDS, 0, 15552000, 0),
     maxConcurrency: parseMaxConcurrency(process.env.MAX_CONCURRENCY, envKeys.length > 1 ? Math.min(envKeys.length, 5) : 1),
-    requestTimeoutSeconds: clampInt(process.env.REQUEST_TIMEOUT_SECONDS, 10, 600, 180),
+    requestTimeoutSeconds: clampInt(process.env.REQUEST_TIMEOUT_SECONDS, 10, 900, 180),
     retryAttempts: clampInt(process.env.UPSTREAM_RETRY_ATTEMPTS, 1, 5, 5)
   };
 }
@@ -1303,7 +1303,7 @@ function sanitizeRuntimeConfig(value, defaults = defaultRuntimeConfig()) {
     imageHostApiKey: stringValue(source.imageHostApiKey).trim() || defaults.imageHostApiKey || "",
     imageHostExpirationSeconds: clampInt(source.imageHostExpirationSeconds, 0, 15552000, defaults.imageHostExpirationSeconds || 0),
     maxConcurrency: parseMaxConcurrency(source.maxConcurrency, maxConcurrencyFallback),
-    requestTimeoutSeconds: clampInt(source.requestTimeoutSeconds, 10, 600, defaults.requestTimeoutSeconds || 180),
+    requestTimeoutSeconds: clampInt(source.requestTimeoutSeconds, 10, 900, defaults.requestTimeoutSeconds || 180),
     retryAttempts: clampInt(source.retryAttempts, 1, 5, defaults.retryAttempts || 5)
   };
 }
@@ -2029,7 +2029,7 @@ function configPageHtml(host) {
         </label>
         <label>
           请求超时秒数
-          <input id="requestTimeoutSeconds" type="number" min="10" max="600" step="10">
+          <input id="requestTimeoutSeconds" type="number" min="10" max="900" step="10">
         </label>
         <label>
           上游重试次数

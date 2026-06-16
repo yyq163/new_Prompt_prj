@@ -1561,8 +1561,9 @@ test("image URL transport uses ToAPIs generations reference_images contract", as
 });
 
 test("real provider adapter uses ToAPIs URL transport payload for text generations", async () => {
+  clearGeneratedImagesForTest();
   const calls = [];
-  await withTempProviderConfig({
+  const result = await withTempProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
     imageEditUrl: "https://provider.example.com/v1/images/generations",
     imageTransport: "url",
@@ -1585,6 +1586,12 @@ test("real provider adapter uses ToAPIs URL transport payload for text generatio
   assert.equal("format" in calls[0].body, false);
   assert.equal("reference_images" in calls[0].body, false);
   assert.equal("client_business_id" in calls[0].body, false);
+  assert.equal(calls[1].kind, "provider-image");
+  assert.equal(calls[1].url, imageUrl);
+  assert.match(result.images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
+  const storedId = result.images[0].url.split("/").pop();
+  assert.equal(getGeneratedImage(storedId).mime, "image/png");
+  assert.equal(generatedImageHttpResponse(storedId).headers["Cache-Control"], "no-store");
 });
 
 test("image edit multipart rejects requests with no usable reference URL before upstream submit", async () => {
@@ -1871,11 +1878,14 @@ test("real provider adapter fixes text generation endpoint and model regardless 
   }));
 
   assert.equal(result.status, "succeeded");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://provider.example.com/v1/images/generations");
-  assert.equal(calls[0].body.model, "gpt-image-2");
-  assert.equal("image" in calls[0].body, false);
-  assertNoForbiddenModel(calls[0].body);
+  const submit = calls.find((call) => call.kind === "submit");
+  assert.equal(calls.filter((call) => call.kind === "submit").length, 1);
+  assert.equal(submit.url, "https://provider.example.com/v1/images/generations");
+  assert.equal(submit.body.model, "gpt-image-2");
+  assert.equal("image" in submit.body, false);
+  assertNoForbiddenModel(submit.body);
+  assert.equal(calls.find((call) => call.kind === "provider-image").url, imageUrl);
+  assert.match(result.images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
 });
 
 test("real provider adapter ignores forbidden configured model names in payload", async () => {
@@ -1898,8 +1908,9 @@ test("real provider adapter ignores forbidden configured model names in payload"
     }));
 
     assert.equal(result.status, "succeeded");
-    assert.equal(calls[0].body.model, "gpt-image-2");
-    assertNoForbiddenModel(calls[0].body);
+    const submit = calls.find((call) => call.kind === "submit");
+    assert.equal(submit.body.model, "gpt-image-2");
+    assertNoForbiddenModel(submit.body);
   }
 });
 
@@ -2056,9 +2067,10 @@ test("real provider adapter derives endpoint from references instead of trusting
     compiledPrompt: "compiled prompt",
     fetchImpl: providerFetchRecorder(noReferenceCalls)
   }));
-  assert.equal(noReferenceCalls[0].url, "https://provider.example.com/v1/images/generations");
-  assert.equal(noReferenceCalls[0].body.model, "gpt-image-2");
-  assert.equal("image" in noReferenceCalls[0].body, false);
+  const noReferenceSubmit = noReferenceCalls.find((call) => call.kind === "submit");
+  assert.equal(noReferenceSubmit.url, "https://provider.example.com/v1/images/generations");
+  assert.equal(noReferenceSubmit.body.model, "gpt-image-2");
+  assert.equal("image" in noReferenceSubmit.body, false);
 });
 
 test("generated image store URL works only as a full structured reference for image_to_image", async () => {
@@ -2551,12 +2563,16 @@ test("provider config allows provider-specific image edit endpoint paths", () =>
     imageEditUrl: "https://toapis.com/v1/images/edits",
     imageTransport: "url",
     keyMode: "single",
-    apiKey: "test-key"
+    apiKey: "test-key",
+    requestTimeoutSeconds: 900,
+    pollTimeoutSeconds: 900
   });
   assert.equal(config.baseUrl, "https://toapis.com/v1/images/generations");
   assert.equal(config.imageEditUrl, "https://toapis.com/v1/images/edits");
   assert.equal(config.imageTransport, "url");
   assert.equal(config.pollBaseUrl, "https://toapis.com/v1/images/generations");
+  assert.equal(config.requestTimeoutSeconds, 900);
+  assert.equal(config.pollTimeoutSeconds, 900);
   assert.equal(config.model, "gpt-image-2");
   assert.equal(config.imageModel, "gpt-image-2");
   const sameEndpoint = sanitizeProviderConfig({
@@ -2660,7 +2676,10 @@ async function withTempProviderConfig(config, fn) {
 function providerFetchRecorder(calls) {
   return async (url, init) => {
     if (!init || !init.method) {
-      calls.push({ kind: "reference", url });
+      calls.push({
+        kind: String(url).includes("/generated.") ? "provider-image" : "reference",
+        url
+      });
       return {
         ok: true,
         status: 200,

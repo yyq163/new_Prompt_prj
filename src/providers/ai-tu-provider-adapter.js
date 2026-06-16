@@ -5,7 +5,8 @@ import {
   DEFAULT_GENERATED_IMAGE_MAX_BYTES,
   GENERATED_IMAGE_ALLOWED_MIME_TYPES,
   detectImageMime,
-  normalizeImageBytes
+  normalizeImageBytes,
+  putGeneratedImage
 } from "../core/generated-image-store.js";
 import { normalizeProviderImages } from "./provider-result-normalizer.js";
 export { normalizeProviderImageObject } from "./provider-result-normalizer.js";
@@ -57,9 +58,11 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
     });
   }
 
+  const storedImages = await materializeProviderHttpImages(images, fetchImpl);
+
   return {
     status: "succeeded",
-    images: images.map((image, index) => ({
+    images: storedImages.map((image, index) => ({
       image_id: image.image_id || `img_${String(index + 1).padStart(3, "0")}`,
       url: image.url,
       width: image.width || null,
@@ -104,6 +107,28 @@ export function providerPrompt(value) {
 function normalizeToapisAspectRatio(value) {
   const text = stringValue(value).trim();
   return /^(1:1|16:9|9:16|4:3|3:4)$/.test(text) ? text : "1:1";
+}
+
+async function materializeProviderHttpImages(images, fetchImpl = globalThis.fetch) {
+  const result = [];
+  for (const image of images) {
+    result.push(await materializeProviderHttpImage(image, fetchImpl));
+  }
+  return result;
+}
+
+async function materializeProviderHttpImage(image, fetchImpl = globalThis.fetch) {
+  const url = stringValue(image?.url).trim();
+  if (!/^https?:\/\//i.test(url)) return image;
+  const stored = await fetchProviderOutputImage(url, fetchImpl);
+  return {
+    ...image,
+    image_id: stored.id,
+    url: stored.path,
+    format: stored.format || image.format,
+    width: image.width || null,
+    height: image.height || null
+  };
 }
 
 export async function postLiveJson(kind, payload, fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
@@ -242,6 +267,45 @@ async function fetchReferenceImageBlob(url, fetchImpl = globalThis.fetch) {
   }
 }
 
+async function fetchProviderOutputImage(url, fetchImpl = globalThis.fetch) {
+  const safeUrl = normalizePublicHttpUrl(url, "provider image url", {
+    allowLocal: false,
+    statusCode: 502,
+    errorCode: "PROVIDER_IMAGE_URL_UNSAFE"
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), referenceFetchTimeoutMs());
+  try {
+    const response = await fetchImpl(safeUrl, { redirect: "manual", signal: controller.signal });
+    if (!response || !response.ok) providerOutputImageInvalid("供应商返回的图片 URL 无法访问。");
+
+    const maxBytes = referenceImageMaxBytes();
+    const contentLength = Number(response.headers?.get?.("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) providerOutputImageInvalid("供应商返回的图片超过大小限制。");
+
+    const bytes = await readReferenceResponseBytes(response, maxBytes);
+    const detectedMime = detectImageMime(bytes);
+    if (!detectedMime || !GENERATED_IMAGE_ALLOWED_MIME_TYPES.includes(detectedMime)) {
+      providerOutputImageInvalid("供应商返回的图片字节不是支持的 png、jpeg 或 webp 图片。");
+    }
+    const declaredMime = normalizeReferenceMime(response.headers?.get?.("content-type"));
+    if (declaredMime && declaredMime !== detectedMime) {
+      providerOutputImageInvalid("供应商返回的图片 MIME 类型与图片字节不匹配。");
+    }
+    return putGeneratedImage({
+      bytes,
+      mime: detectedMime,
+      maxBytes,
+      source: "real_provider_response_url"
+    });
+  } catch (error) {
+    if (error instanceof ImageApiError) throw error;
+    providerOutputImageInvalid("供应商返回的图片 URL 无法访问。");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function assertProviderReferenceUrlAllowed(value) {
   if (isLocalGeneratedImageStoreReferenceUrl(value)) {
     return normalizePublicHttpUrl(value, "reference.url", {
@@ -341,6 +405,15 @@ function referenceImageUnsupported(message) {
     statusCode: 400,
     status: "failed",
     errorCode: "REFERENCE_IMAGE_UNSUPPORTED",
+    message
+  });
+}
+
+function providerOutputImageInvalid(message) {
+  throw new ImageApiError({
+    statusCode: 502,
+    status: "failed",
+    errorCode: "PROVIDER_RESPONSE_UNSUPPORTED",
     message
   });
 }
@@ -785,7 +858,7 @@ export function sanitizeProviderConfig(source) {
     keyMode,
     apiKey: keyMode === "single" ? singleKey : "",
     apiKeys: keyMode === "multi" ? apiKeys : singleKey ? [singleKey] : [],
-    requestTimeoutSeconds: intRange(value.requestTimeoutSeconds, 10, 600, 180),
+    requestTimeoutSeconds: intRange(value.requestTimeoutSeconds, 10, 900, 180),
     retryAttempts: intRange(value.retryAttempts, 1, 5, 5),
     pollTimeoutSeconds: intRange(value.pollTimeoutSeconds, 10, 900, 180),
     pollIntervalSeconds: intRange(value.pollIntervalSeconds, 1, 30, 2),

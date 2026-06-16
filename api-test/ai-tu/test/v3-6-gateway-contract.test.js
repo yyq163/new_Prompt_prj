@@ -234,10 +234,12 @@ test("ai-tu gateway /api/config does not expose configured key values", async (t
     apiKey: "legacy-image-secret",
     imageHostMode: "imgbb",
     imageHostUploadUrl: "https://api.imgbb.com/1/upload",
-    imageHostApiKey: "imgbb-secret"
+    imageHostApiKey: "imgbb-secret",
+    requestTimeoutSeconds: 900
   });
   assert.equal(saved.status, 200);
   assertConfigDoesNotLeakSecrets(saved.body);
+  assert.equal(saved.body.config.requestTimeoutSeconds, 900);
 
   const response = await fetch(`${gateway.baseUrl}/api/config`, { cache: "no-store" });
   const payload = await response.json();
@@ -245,6 +247,7 @@ test("ai-tu gateway /api/config does not expose configured key values", async (t
   assertConfigDoesNotLeakSecrets(payload);
   assert.equal(payload.config.apiKeyConfigured, true);
   assert.equal(payload.config.imageHostApiKeyConfigured, true);
+  assert.equal(payload.config.requestTimeoutSeconds, 900);
 });
 
 function assertConfigDoesNotLeakSecrets(payload) {

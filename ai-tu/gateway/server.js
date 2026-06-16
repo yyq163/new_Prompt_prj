@@ -347,7 +347,7 @@ function normalizeFinalImageRequest(body) {
   if (taskType === "text_image" && references.length) {
     return invalidFinalRequest("REFERENCES_NOT_ALLOWED", "text_image 不允许传 references。");
   }
-  if (taskType === "image_reference" && !references.length) {
+  if (taskType !== "text_image" && !references.length) {
     return invalidFinalRequest("REFERENCE_REQUIRED", "当前任务类型需要至少一张参考图。");
   }
   const seenReferenceIds = new Set();
@@ -364,13 +364,14 @@ function normalizeFinalImageRequest(body) {
 
   const output = normalizeFinalOutput(body.output);
   if (output.error) return invalidFinalRequest(output.error.code, output.error.message);
+  const referencePolicy = normalizeFinalReferencePolicy(body.reference_policy);
 
   return {
     request: {
-      ...body,
       task_type: taskType,
       prompt,
       references: references.map((item) => item.reference),
+      reference_policy: referencePolicy,
       output: output.value
     }
   };
@@ -392,7 +393,7 @@ function normalizeFinalReference(item, index) {
     return { error: { code: "REFERENCE_ENTITY_NAME_REQUIRED", message: "reference.entity_name 不能为空。" } };
   }
   const url = stringValue(item.url).trim();
-  if (!/^https?:\/\//i.test(url)) {
+  if (!isAbsoluteHttpUrl(url)) {
     return { error: { code: "REFERENCE_URL_INVALID", message: "reference.url 只支持 http 或 https URL。" } };
   }
   return {
@@ -407,6 +408,23 @@ function normalizeFinalReference(item, index) {
       description: stringValue(item.description).trim(),
       order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1
     }
+  };
+}
+
+function isAbsoluteHttpUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+}
+
+function normalizeFinalReferencePolicy(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    unbound_entity: source.unbound_entity === "block" ? "block" : "warn"
   };
 }
 
@@ -435,11 +453,11 @@ function normalizeFinalOutput(value) {
   }
   return {
     value: {
-      ...source,
       count,
       aspect_ratio: aspectRatio,
       quality,
-      return_format: "url"
+      return_format: "url",
+      language
     }
   };
 }

@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "repair",
-  "currentTask": "T1-live-provider-browser-path-repair",
+  "currentTask": "main01-fix03-premerge-blocker",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -158,7 +158,36 @@
         "browser-text-image-provider-submit-upstream-terminated-2026-06-16"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix03-premerge-blocker",
+      "status": "verified",
+      "owner": "lead-codex",
+      "files": [
+        "ai-tu/ai-image-generator.html",
+        "ai-tu/gateway/server.js",
+        "api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        ".codex-agent-team/context/main01-fix03-premerge-blocker.md",
+        ".codex-agent-team/reports/final-integrator-main01-fix03-premerge-blocker-20260617.md",
+        ".codex-agent-team/reports/review-main01-fix03-premerge-blocker.json"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-before-work-2026-06-17",
+        "branch-main01-fix03-from-main01-2026-06-17",
+        "node-api-test-ai-tu-v36-gateway-contract-13-pass-2026-06-17",
+        "node-test-ai-tu-prompt-optimizer-23-pass-2026-06-17",
+        "npm-run-check-pass-2026-06-17",
+        "npm-test-135-pass-2026-06-17",
+        "provider-config-present-2026-06-17",
+        "final-v1-4-evidence-scan-pass-2026-06-17",
+        "git-diff-check-pass-2026-06-17",
+        "browser-text-image-pass-trace_bb42a68a8a984a5388-2026-06-17",
+        "browser-image-reference-pass-trace_db05d7c182e04916aa-2026-06-17",
+        "review-gate-pass-main01-fix03-premerge-blocker-2026-06-17"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-16T08:02:00Z"
+  "updatedAt": "2026-06-17T02:55:00+08:00"
 }

@@ -43,23 +43,55 @@ test("frontend calls prompt optimizer and overwrites original prompt only on suc
 });
 
 test("frontend image generation request uses V3.6 builders and structured references", () => {
+  const textBuilder = extractFunctionBody(html, "buildTextImageRequest");
+  const imageBuilder = extractFunctionBody(html, "buildImageReferenceRequest");
   assert.match(html, /function buildTextImageRequest\(\)/);
-  assert.match(html, /task_type: controls\.optimizerTaskType\.value \|\| "text_image"/);
-  assert.match(html, /references: \[\]/);
+  assert.match(textBuilder, /task_type: "text_image"/);
+  assert.match(textBuilder, /references: \[\]/);
+  assert.doesNotMatch(textBuilder, /optimizerTaskType/);
+  assertNoForbiddenFinalApiRequestFieldSource(textBuilder);
   assert.match(html, /function buildImageReferenceRequest\(\)/);
+  assertNoForbiddenFinalApiRequestFieldSource(imageBuilder);
   assert.match(html, /\.\.\.manualReferences/);
   assert.match(html, /references: structuredReferences/);
   assert.match(html, /collectOptimizerReferences\(\{ requireUrl: true \}\)/);
   assert.match(html, /uploadedReferencesFromSlots\(refList, manualReferences\)/);
   assert.match(html, /reference_id: sanitizeReferenceId/);
   assert.match(html, /reference_policy:/);
-  assert.match(html, /图生图模式不能使用 text_image，请切换 task_type。/);
   assert.match(html, /图生图模式请先上传参考图，且参考图必须已得到 http\(s\) URL。/);
   assert.match(html, /finalApiEndpoint = "\/api\/v1\/image-generations"/);
   assert.match(html, /fetch\(finalApiEndpoint/);
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
   assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
 });
+
+function assertNoForbiddenFinalApiRequestFieldSource(source) {
+  for (const field of ["model", "mode", "size", "output_format"]) {
+    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets ${field}`);
+  }
+  for (const field of ["resolution", "format"]) {
+    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets top-level ${field}`);
+  }
+  assert.doesNotMatch(source, /return_format:\s*"png"/, "frontend request builder still sets top-level return_format=png");
+}
+
+function extractFunctionBody(source, name) {
+  const signature = `function ${name}(`;
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `${name} not found`);
+  const open = source.indexOf("{", start);
+  assert.notEqual(open, -1, `${name} body not found`);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, index + 1);
+    }
+  }
+  throw new Error(`${name} body not closed`);
+}
 
 test("frontend does not persist temporary pending jobs into legacy restore polling", () => {
   assert.match(html, /function isRestorableJobId\(jobId\)/);

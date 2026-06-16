@@ -24,6 +24,21 @@ const FORBIDDEN_TOKENS = [
   "secret-api-key",
   "token"
 ];
+const FORBIDDEN_REQUEST_FIELDS = [
+  "size",
+  "output_format",
+  "model",
+  "mode",
+  "resolution",
+  "format",
+  "final_prompt",
+  "compiled_prompt",
+  "raw_provider_payload",
+  "provider_payload",
+  "provider_raw_response",
+  "b64_json",
+  "base64"
+];
 
 test("ai-tu gateway POST /api/v1/image-generations calls prompt-image backend", async (t) => {
   const backendCalls = [];
@@ -58,6 +73,100 @@ test("ai-tu gateway POST /api/v1/image-generations calls prompt-image backend", 
   assert.equal(backendCalls[0].request.headers.authorization, "Bearer secret-api-key");
   assert.equal(backendCalls[0].body.task_type, "text_image");
   assert.deepEqual(backendCalls[0].body.references, []);
+  assertV36BackendRequestWhitelist(backendCalls[0].body);
+  assertNoForbiddenFields(response.body);
+});
+
+test("ai-tu gateway forwards only V3.6 whitelist fields to prompt-image backend", async (t) => {
+  const backendCalls = [];
+  const backend = await startBackend(async (request, response, body) => {
+    backendCalls.push(body);
+    sendJson(response, 200, {
+      status: "succeeded",
+      images: [{ url: "https://cdn.example.com/generated/whitelist.png", width: 1024, height: 768, format: "png" }],
+      warnings: []
+    });
+  });
+  t.after(backend.stop);
+
+  const gateway = await startGateway({ PROMPT_IMAGE_BACKEND_BASE_URL: backend.baseUrl });
+  t.after(gateway.stop);
+
+  const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, {
+    ...textImageRequest(),
+    size: "2048x1152",
+    output_format: "png",
+    model: "gpt-image-2",
+    mode: "text",
+    resolution: "2048",
+    format: "png",
+    return_format: "png",
+    final_prompt: "must-not-forward",
+    compiled_prompt: "must-not-forward",
+    raw_provider_payload: { token: "raw provider" },
+    provider_payload: { token: "raw provider" },
+    b64_json: sampleBase64(),
+    base64: sampleBase64(),
+    data_url: `data:image/png;base64,${sampleBase64()}`,
+    api_key: "secret-api-key",
+    token: "secret-token",
+    output: {
+      ...textImageRequest().output,
+      format: "png",
+      raw_provider_payload: { token: "raw provider" }
+    },
+    reference_policy: {
+      unbound_entity: "block",
+      token: "secret-token"
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(backendCalls.length, 1);
+  assert.deepEqual(backendCalls[0], {
+    task_type: "text_image",
+    prompt: "生成一张山间晨雾图。",
+    references: [],
+    reference_policy: {
+      unbound_entity: "block"
+    },
+    output: {
+      count: 1,
+      aspect_ratio: "16:9",
+      quality: "high",
+      return_format: "url",
+      language: "zh-CN"
+    }
+  });
+  assertV36BackendRequestWhitelist(backendCalls[0]);
+});
+
+test("ai-tu gateway proxies legal http and https backend image URLs", async (t) => {
+  const backend = await startBackend(async (request, response) => {
+    sendJson(response, 200, {
+      status: "succeeded",
+      images: [
+        { url: "https://cdn.example.com/generated/https.png", width: 1024, height: 768, format: "png" },
+        { url: "http://cdn.example.com/generated/http.png", width: 512, height: 512, format: "png" }
+      ],
+      warnings: []
+    });
+  });
+  t.after(backend.stop);
+
+  const gateway = await startGateway({ PROMPT_IMAGE_BACKEND_BASE_URL: backend.baseUrl });
+  t.after(gateway.stop);
+
+  const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, textImageRequest());
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, {
+    status: "succeeded",
+    images: [
+      { url: "https://cdn.example.com/generated/https.png", width: 1024, height: 768, format: "png" },
+      { url: "http://cdn.example.com/generated/http.png", width: 512, height: 512, format: "png" }
+    ],
+    warnings: []
+  });
   assertNoForbiddenFields(response.body);
 });
 
@@ -110,10 +219,15 @@ test("ai-tu gateway validates references and output before backend submit", asyn
   const invalidCases = [
     [{ ...textImageRequest(), references: [validReference()] }, "REFERENCES_NOT_ALLOWED"],
     [{ task_type: "image_reference", prompt: "基于参考图生成。", references: [], output: textImageRequest().output }, "REFERENCE_REQUIRED"],
+    [{ task_type: "character_multiview", prompt: "生成角色三视图。", references: [], output: textImageRequest().output }, "REFERENCE_REQUIRED"],
+    [{ task_type: "scene_multiview", prompt: "生成场景多视角。", references: [], output: textImageRequest().output }, "REFERENCE_REQUIRED"],
+    [{ task_type: "prop_multiview", prompt: "生成道具多视角。", references: [], output: textImageRequest().output }, "REFERENCE_REQUIRED"],
+    [{ task_type: "storyboard", prompt: "生成分镜。", references: [], output: textImageRequest().output }, "REFERENCE_REQUIRED"],
     [{ task_type: "image_reference", prompt: "x", references: [{ ...validReference(), reference_id: "" }], output: textImageRequest().output }, "REFERENCE_ID_REQUIRED"],
     [{ task_type: "image_reference", prompt: "x", references: [validReference(), validReference()], output: textImageRequest().output }, "DUPLICATE_REFERENCE_ID"],
     [{ task_type: "image_reference", prompt: "x", references: [{ ...validReference(), role: "bad_role" }], output: textImageRequest().output }, "INVALID_REFERENCE_ROLE"],
     [{ task_type: "image_reference", prompt: "x", references: [{ ...validReference(), entity_type: "bad_type" }], output: textImageRequest().output }, "REFERENCE_ENTITY_TYPE_INVALID"],
+    [{ task_type: "image_reference", prompt: "x", references: [{ ...validReference(), url: "/relative/ref.png" }], output: textImageRequest().output }, "REFERENCE_URL_INVALID"],
     [{ ...textImageRequest(), output: { ...textImageRequest().output, aspect_ratio: "bad" } }, "INVALID_REQUEST_SCHEMA"]
   ];
 
@@ -262,18 +376,22 @@ function assertConfigDoesNotLeakSecrets(payload) {
 test("ai-tu page uses /api/v1/image-generations and V3.6 builders", () => {
   const html = readFileSync(HTML_FILE, "utf8");
   const gateway = readFileSync(SERVER_FILE, "utf8");
+  const textBuilder = extractFunctionBody(html, "buildTextImageRequest");
+  const imageBuilder = extractFunctionBody(html, "buildImageReferenceRequest");
   assert.match(html, /帧界图片生成器极速版/);
   assert.match(html, /const finalApiEndpoint = "\/api\/v1\/image-generations"/);
   assert.match(html, /fetch\(finalApiEndpoint/);
   assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs/);
   assert.match(html, /function buildTextImageRequest\(\)/);
-  assert.match(html, /task_type: controls\.optimizerTaskType\.value \|\| "text_image"/);
-  assert.match(html, /references: \[\]/);
+  assert.match(textBuilder, /task_type: "text_image"/);
+  assert.match(textBuilder, /references: \[\]/);
+  assert.doesNotMatch(textBuilder, /optimizerTaskType/);
+  assertNoForbiddenRequestFieldSource(textBuilder);
   assert.match(html, /function buildImageReferenceRequest\(\)/);
+  assertNoForbiddenRequestFieldSource(imageBuilder);
   assert.match(html, /\.\.\.manualReferences/);
   assert.match(html, /uploadedReferencesFromSlots\(refList, manualReferences\)/);
-  assert.match(html, /图生图模式不能使用 text_image，请切换 task_type。/);
   assert.match(html, /图生图模式请先上传参考图，且参考图必须已得到 http\(s\) URL。/);
   assert.match(gateway, /url\.pathname === "\/api\/v1\/image-generations"/);
   assert.match(gateway, /legacyImageJobsDisabledPayload/);
@@ -324,6 +442,51 @@ function assertNoForbiddenFields(payload) {
   for (const token of FORBIDDEN_TOKENS) {
     assert.equal(text.includes(token), false, `forbidden token leaked: ${token}`);
   }
+}
+
+function assertV36BackendRequestWhitelist(payload) {
+  assert.deepEqual(Object.keys(payload).sort(), ["output", "prompt", "reference_policy", "references", "task_type"]);
+  assert.deepEqual(Object.keys(payload.output).sort(), ["aspect_ratio", "count", "language", "quality", "return_format"]);
+  assert.equal(payload.output.return_format, "url");
+  assert.equal(payload.output.language, "zh-CN");
+  assert.equal("return_format" in payload, false, "forbidden top-level return_format forwarded");
+  for (const field of FORBIDDEN_REQUEST_FIELDS) {
+    assert.equal(field in payload, false, `forbidden backend request field forwarded: ${field}`);
+    assert.equal(field in payload.output, false, `forbidden backend output field forwarded: ${field}`);
+  }
+  const text = JSON.stringify(payload);
+  assert.equal(text.includes("data:image"), false);
+  assert.equal(text.includes("raw provider"), false);
+  assert.equal(text.includes("secret-api-key"), false);
+  assert.equal(text.includes("secret-token"), false);
+}
+
+function assertNoForbiddenRequestFieldSource(source) {
+  for (const field of ["model", "mode", "size", "output_format"]) {
+    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets ${field}`);
+  }
+  for (const field of ["resolution", "format"]) {
+    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets top-level ${field}`);
+  }
+  assert.doesNotMatch(source, /return_format:\s*"png"/, "frontend request builder still sets top-level return_format=png");
+}
+
+function extractFunctionBody(source, name) {
+  const signature = `function ${name}(`;
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `${name} not found`);
+  const open = source.indexOf("{", start);
+  assert.notEqual(open, -1, `${name} body not found`);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, index + 1);
+    }
+  }
+  throw new Error(`${name} body not closed`);
 }
 
 async function postJson(url, body) {

@@ -2810,13 +2810,7 @@
       const prompt = getPromptValue();
       return {
         prompt,
-        model: DEFAULT_MODEL,
-        task_type: controls.optimizerTaskType.value || "text_image",
-        mode: "text",
-        size: computeSize(),
-        quality: controls.quality.value || "high",
-        output_format: controls.outputFormat.value || "png",
-        n: clampNumber(Number(controls.n.value || 1), 1, 4),
+        task_type: "text_image",
         reference_policy: {
           unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
         },
@@ -2842,13 +2836,7 @@
       const selectedTaskType = controls.optimizerTaskType.value || "image_reference";
       return {
         prompt,
-        model: DEFAULT_MODEL,
         task_type: selectedTaskType,
-        mode: "image",
-        size: computeSize(),
-        quality: controls.quality.value || "high",
-        output_format: controls.outputFormat.value || "png",
-        n: clampNumber(Number(controls.n.value || 1), 1, 4),
         reference_policy: {
           unbound_entity: controls.optimizerUnboundEntity.value === "block" ? "block" : "warn"
         },
@@ -2864,15 +2852,17 @@
     }
 
     function buildJobFillSnapshot(request) {
+      const isImageMode = request.task_type !== "text_image"
+        || (Array.isArray(request.references) && request.references.length > 0);
       return {
         prompt: request.prompt,
-        mode: request.mode,
+        mode: isImageMode ? "image" : "text",
         aspectRatio: controls.aspectRatio.value,
         sizeControl: controls.size.value,
-        size: request.size,
-        quality: request.quality,
-        output_format: request.output_format,
-        n: request.n,
+        size: computeSize(),
+        quality: request.output?.quality || controls.quality.value || "high",
+        output_format: controls.outputFormat.value || "png",
+        n: request.output?.count || clampNumber(Number(controls.n.value || 1), 1, 4),
         references: Array.isArray(request.references) ? request.references.map((reference) => ({
           reference_id: reference.reference_id || "",
           entity_name: reference.entity_name || "",
@@ -2899,10 +2889,7 @@
       if (request.task_type === "text_image" && urlReferences.length) {
         throw new Error("text_image 不允许填写 references。");
       }
-      if (request.mode === "image" && request.task_type === "text_image") {
-        throw new Error("图生图模式不能使用 text_image，请切换 task_type。");
-      }
-      if (request.mode === "image" && !urlReferences.length) {
+      if (request.task_type !== "text_image" && !urlReferences.length) {
         throw new Error("图生图模式请先上传参考图，且参考图必须已得到 http(s) URL。");
       }
       if (Array.isArray(request.references) && request.references.some((reference) => reference.url && !/^https?:\/\//i.test(reference.url))) {

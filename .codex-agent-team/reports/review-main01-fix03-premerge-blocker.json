@@ -1,0 +1,89 @@
+{
+  "taskId": "main01-fix03-premerge-blocker",
+  "task_id": "main01-fix03-premerge-blocker",
+  "status": "PASS_FIX03_READY_FOR_MERGE",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-17T02:55:00+08:00",
+  "summary": "main01-fix03 repairs the remaining ai-tu gateway V3.6 blockers. Code, contract, security, test, and real Browser QA evidence all pass. No high or critical findings remain.",
+  "findings": [],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "context_capsule_before_edit": "PASS_EVIDENCE",
+    "frontend_text_builder_fixed_text_image": "PASS_CONTRACT",
+    "frontend_final_request_no_legacy_knobs": "PASS_CONTRACT",
+    "gateway_non_text_requires_references": "PASS_CONTRACT",
+    "gateway_text_image_references_rejected": "PASS_CONTRACT",
+    "gateway_reference_url_absolute_http": "PASS_CONTRACT",
+    "gateway_backend_forwarding_whitelist": "PASS_SECURITY",
+    "gateway_response_whitelist": "PASS_SECURITY",
+    "legacy_image_jobs_disabled": "PASS_CONTRACT",
+    "fix02_regressions_not_reintroduced": "PASS_CONTRACT",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "ai_tu_gateway_contract_test": "PASS_TESTED",
+    "git_diff_check": "PASS_STATIC",
+    "browser_text_image_live_config": "PASS_BROWSER",
+    "browser_image_reference_live_config": "PASS_BROWSER_USER_ASSISTED_UPLOAD"
+  },
+  "evidence": [
+    {
+      "command": "code-map skill pipeline refresh before work",
+      "status": "PASS_STATIC",
+      "details": "CodeGraph initialized with 26 files, 706 nodes, 1737 edges, pending changes 0."
+    },
+    {
+      "command": "git checkout -b main01-fix03 main01",
+      "status": "PASS_BRANCH",
+      "details": "Work isolated on fix branch main01-fix03."
+    },
+    {
+      "command": "node api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "13 pass; covers gateway route, whitelist forwarding, reference validation, legacy 410, response whitelist, and frontend static contract."
+    },
+    {
+      "command": "node --test tests/unit/ai-tu-prompt-optimizer.test.js",
+      "status": "PASS_TESTED",
+      "details": "23 pass; covers frontend V3.6 builders and prompt optimizer regressions."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "135 pass."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=.codex-agent-team/state/runtime-config.toapis.json node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS before report creation."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "In-app Browser text-image UI submit",
+      "status": "PASS_BROWSER",
+      "details": "Product page title matched. Browser submitted to /api/v1/image-generations with no legacy image job call. Trace trace_bb42a68a8a984a5388 succeeded with task_type text_image, reference_count 0, image_count 1. Result image img_e1ff06d6312244389ed8f602b2bf6881 returned GET 200 image/png no-store."
+    },
+    {
+      "command": "In-app Browser image-reference UI submit",
+      "status": "PASS_BROWSER_USER_ASSISTED_UPLOAD",
+      "details": "User uploaded one reference image through the product page. Browser submitted to /api/v1/image-generations with no legacy image job call. Trace trace_db05d7c182e04916aa succeeded with task_type image_reference, reference_count 1, image_count 1. Result image img_ee5d31b534364b19a2f0ce593a0ea3f8 returned GET 200 image/png no-store."
+    }
+  ],
+  "blocking_items": []
+}

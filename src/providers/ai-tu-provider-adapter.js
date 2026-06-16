@@ -1,4 +1,4 @@
-import { ImageApiError, providerConfigMissing, providerTimeout, providerUnsupported } from "../core/errors.js";
+import { ImageApiError, providerConfigMissing, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
 import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "../core/url-security.js";
 import {
@@ -350,13 +350,28 @@ export async function fetchUpstreamOnce(kind, init, fetchImpl = globalThis.fetch
     }
     return json;
   } catch (error) {
-    if (error && error.name === "AbortError") providerTimeout();
+    if (error && error.name === "AbortError") {
+      throw new ImageApiError({
+        statusCode: 504,
+        status: "failed",
+        errorCode: "IMAGE_PROVIDER_TIMEOUT",
+        message: "图片生成超时，请稍后重试。",
+        details: {
+          backend_call_summary: {
+            stage: "provider_submit",
+            endpoint_kind: providerEndpointKind(kind),
+            provider_error_code: "request_timeout",
+            retryable: true
+          }
+        }
+      });
+    }
     if (error instanceof ImageApiError) throw error;
     if (String(error?.message || "").toLowerCase() === "terminated") {
-      throw upstreamSyntheticError(502, "upstream_terminated", "上游图片生成连接提前中断。");
+      throw upstreamSyntheticError(502, "upstream_terminated", "上游图片生成连接提前中断。", kind);
     }
     if (String(error?.message || "").toLowerCase() === "fetch failed") {
-      throw upstreamSyntheticError(502, "upstream_unreachable", "上游图片生成连接失败。");
+      throw upstreamSyntheticError(502, "upstream_unreachable", "上游图片生成连接失败。", kind);
     }
     throw error;
   } finally {
@@ -449,13 +464,22 @@ export function extractImageUrls(json, format = "png") {
 }
 
 export async function normalizeProviderResult(json, format = "png", fetchImpl = globalThis.fetch, config = defaultProviderConfig()) {
-  const immediate = extractImageUrlsAllowEmpty(json, format);
-  if (immediate.status === "ok") return immediate.images;
-  if (immediate.status === "unsupported") providerUnsupported();
+  try {
+    const immediate = extractImageUrlsAllowEmpty(json, format);
+    if (immediate.status === "ok") return immediate.images;
+    if (immediate.status === "unsupported") providerUnsupported();
 
-  const asyncHandle = findAsyncHandle(json);
-  if (!asyncHandle) extractImageUrls(json, format);
-  return pollProviderResult(asyncHandle, format, fetchImpl, config);
+    const asyncHandle = findAsyncHandle(json);
+    if (!asyncHandle) extractImageUrls(json, format);
+    return pollProviderResult(asyncHandle, format, fetchImpl, config);
+  } catch (error) {
+    throw withBackendCallSummary(error, {
+      stage: "provider_normalize",
+      endpoint_kind: "unknown",
+      provider_error_code: error instanceof ImageApiError ? error.errorCode : "provider_normalize_failed",
+      retryable: false
+    });
+  }
 }
 
 function extractImageUrlsAllowEmpty(json, format) {
@@ -494,7 +518,20 @@ async function pollProviderResult(handle, format, fetchImpl, config = defaultPro
     if (result.status === "ok") return result.images;
     if (result.status === "unsupported") providerUnsupported();
   }
-  providerTimeout();
+  throw new ImageApiError({
+    statusCode: 504,
+    status: "failed",
+    errorCode: "IMAGE_PROVIDER_TIMEOUT",
+    message: "图片生成超时，请稍后重试。",
+    details: {
+      backend_call_summary: {
+        stage: "provider_poll",
+        endpoint_kind: "poll",
+        provider_error_code: "poll_timeout",
+        retryable: true
+      }
+    }
+  });
 }
 
 function resolveProviderPollEndpoint(handle, config) {
@@ -612,6 +649,8 @@ export function sanitizeProviderConfig(source) {
   const value = source && typeof source === "object" ? source : {};
   const baseUrl = normalizeGenerationsEndpoint(value.baseUrl || AI_TU_DEFAULT_GENERATIONS_URL);
   const imageEditUrl = normalizeEditsEndpoint(value.imageEditUrl || editsEndpointFor(baseUrl));
+  assertNotSelfRecursiveProviderEndpoint(baseUrl);
+  assertNotSelfRecursiveProviderEndpoint(imageEditUrl);
   const keyMode = value.keyMode === "multi" ? "multi" : "single";
   const apiKeys = parseApiKeys(value.apiKeys, value.apiKey);
   const singleKey = stringValue(value.apiKey).trim() || apiKeys[0] || "";
@@ -729,28 +768,88 @@ function parseApiKeys(...values) {
 function upstreamHttpError(response, json, text, kind) {
   const error = upstreamSyntheticError(response.status, "upstream_failed", `请求失败 ${response.status}：${upstreamErrorDetail(json, text, response.statusText)}`);
   error.upstreamEndpoint = kind;
+  error.providerErrorCode = upstreamProviderErrorCode(json) || "upstream_failed";
   error.retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   return error;
 }
 
-function upstreamSyntheticError(status, code, message) {
+function upstreamSyntheticError(status, code, message, kind = "") {
   const error = new Error(message);
   error.status = status;
   error.code = code;
+  error.upstreamEndpoint = kind;
+  error.providerErrorCode = code;
   return error;
 }
 
 function mapProviderError(error) {
   if (error instanceof ImageApiError) return error;
   if (error?.status === 504) {
-    return new ImageApiError({ statusCode: 504, status: "failed", errorCode: "IMAGE_PROVIDER_TIMEOUT", message: "图片生成超时，请稍后重试。" });
+    return new ImageApiError({
+      statusCode: 504,
+      status: "failed",
+      errorCode: "IMAGE_PROVIDER_TIMEOUT",
+      message: "图片生成超时，请稍后重试。",
+      details: { backend_call_summary: redactedBackendCallSummary(error) }
+    });
   }
   return new ImageApiError({
     statusCode: error?.status && error.status >= 400 ? 502 : 500,
     status: "failed",
     errorCode: "IMAGE_PROVIDER_CALL_FAILED",
-    message: "图片生成 provider 调用失败。"
+    message: "图片生成 provider 调用失败。",
+    details: { backend_call_summary: redactedBackendCallSummary(error) }
   });
+}
+
+function redactedBackendCallSummary(error) {
+  const upstreamStatus = Number(error?.status);
+  const retryAfterMs = Number(error?.retryAfterMs);
+  const endpointKind = providerEndpointKind(error?.upstreamEndpoint);
+  const summary = {
+    stage: endpointKind === "poll" ? "provider_poll" : "provider_submit",
+    endpoint_kind: endpointKind,
+    provider_error_code: safeProviderErrorCode(error?.providerErrorCode || error?.code),
+    retryable: isRetryableUpstreamError(error)
+  };
+  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) {
+    summary.upstream_status = upstreamStatus;
+  }
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    summary.retry_after_ms = Math.min(3_600_000, Math.floor(retryAfterMs));
+  }
+  return Object.fromEntries(Object.entries(summary).filter(([, value]) => value !== "" && value != null));
+}
+
+function withBackendCallSummary(error, summary) {
+  if (!(error instanceof ImageApiError)) return error;
+  const existing = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details.backend_call_summary
+    : null;
+  if (existing && typeof existing === "object") return error;
+  return new ImageApiError({
+    statusCode: error.statusCode,
+    status: error.status,
+    errorCode: error.errorCode,
+    message: error.message,
+    details: { backend_call_summary: summary }
+  });
+}
+
+function providerEndpointKind(value) {
+  const text = stringValue(value).toLowerCase();
+  if (text.endsWith("/v1/images/generations") || text === "generations") return "generations";
+  if (text.endsWith("/v1/images/edits") || text === "edits") return "edits";
+  if (text) return "poll";
+  return "unknown";
+}
+
+function safeProviderErrorCode(value) {
+  const text = stringValue(value).trim();
+  if (!text || text.length > 80) return "";
+  if (!/^[a-zA-Z0-9_.:-]+$/.test(text)) return "";
+  if (/https?:|bearer|token|secret|key|base64|data:image/i.test(text)) return "";
+  return text;
 }
 
 function unsafeProviderPollUrl() {
@@ -771,6 +870,29 @@ function unsafeProviderEndpointUrl() {
   });
 }
 
+function assertNotSelfRecursiveProviderEndpoint(value) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    return;
+  }
+  const currentPort = String(process.env.PORT || 8787);
+  const parsedPort = parsed.port || (parsed.protocol === "http:" ? "80" : "443");
+  if (parsedPort !== currentPort) return;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const configuredHost = stringValue(process.env.HOST || "127.0.0.1").toLowerCase();
+  const selfHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (configuredHost && configuredHost !== "0.0.0.0" && configuredHost !== "::") selfHosts.add(configuredHost.replace(/^\[|\]$/g, ""));
+  if (!selfHosts.has(host)) return;
+  throw new ImageApiError({
+    statusCode: 502,
+    status: "failed",
+    errorCode: "PROVIDER_ENDPOINT_UNSAFE",
+    message: "provider endpoint 不能指向当前图片服务自身，避免递归调用。"
+  });
+}
+
 function upstreamErrorDetail(json, text, statusText) {
   const candidates = [
     json?.error?.message,
@@ -780,6 +902,21 @@ function upstreamErrorDetail(json, text, statusText) {
     text && text.slice(0, 200)
   ].filter(Boolean);
   return stringValue(candidates[0] || "unknown upstream error").slice(0, 300);
+}
+
+function upstreamProviderErrorCode(json) {
+  const candidates = [
+    json?.error?.code,
+    json?.error?.type,
+    json?.code,
+    json?.type,
+    json?.status
+  ];
+  for (const candidate of candidates) {
+    const safe = safeProviderErrorCode(candidate);
+    if (safe) return safe;
+  }
+  return "";
 }
 
 async function mapWithConcurrency(items, limit, mapper) {

@@ -76,7 +76,8 @@ export async function handleImageGeneration(body, { provider = generateWithAiTuP
       reference_count: referenceCount,
       callback_present: Boolean(body && (body.callback_url || body.callback)),
       image_count: 0,
-      warning_count: 0
+      warning_count: 0,
+      backend_call_summary: payload.error.backend_call_summary || null
     });
     return { statusCode, payload };
   }

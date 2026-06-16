@@ -20,8 +20,43 @@ export async function appendTrace(record) {
     image_count: Number(record.image_count || 0),
     status: record.status,
     error_code: record.error_code || "",
-    warning_count: Number(record.warning_count || 0)
+    warning_count: Number(record.warning_count || 0),
+    backend_call_summary: sanitizeBackendCallSummary(record.backend_call_summary)
   };
   await mkdir(dirname(TRACE_FILE), { recursive: true });
   await appendFile(TRACE_FILE, `${JSON.stringify(safeRecord)}\n`, "utf8");
+}
+
+function sanitizeBackendCallSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const summary = {};
+  const stage = safeEnum(value.stage, ["provider_submit", "provider_poll", "provider_normalize", "generated_store", "reference_fetch"]);
+  if (stage) summary.stage = stage;
+  const endpointKind = safeEnum(value.endpoint_kind, ["generations", "edits", "poll", "unknown"]);
+  if (endpointKind) summary.endpoint_kind = endpointKind;
+  const upstreamStatus = Number(value.upstream_status);
+  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) {
+    summary.upstream_status = upstreamStatus;
+  }
+  const providerErrorCode = safeProviderErrorCode(value.provider_error_code);
+  if (providerErrorCode) summary.provider_error_code = providerErrorCode;
+  if (typeof value.retryable === "boolean") summary.retryable = value.retryable;
+  const retryAfterMs = Number(value.retry_after_ms);
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    summary.retry_after_ms = Math.min(3_600_000, Math.floor(retryAfterMs));
+  }
+  return Object.keys(summary).length ? summary : null;
+}
+
+function safeEnum(value, allowed) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return allowed.includes(text) ? text : "";
+}
+
+function safeProviderErrorCode(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > 80) return "";
+  if (!/^[a-zA-Z0-9_.:-]+$/.test(text)) return "";
+  if (/https?:|bearer|token|secret|key|base64|data:image/i.test(text)) return "";
+  return text;
 }

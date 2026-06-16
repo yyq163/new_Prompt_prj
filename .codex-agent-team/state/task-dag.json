@@ -138,6 +138,50 @@
         "npm-test-118-pass-2026-06-16",
         "codegraph-pendingChanges-0-2026-06-16"
       ]
+    },
+    {
+      "id": "T1-live-provider-browser-path-repair",
+      "title": "Repair live provider browser path through ai-tu gateway, prompt-image backend, provider, and Generated Image Store",
+      "status": "blocked",
+      "dependsOn": [
+        "T1-provider-edits-debug-base64-fix"
+      ],
+      "filesExpected": [
+        "ai-tu/**",
+        "src/**",
+        "server.js",
+        "tests/**",
+        ".codex-agent-team/context/T1-live-provider-browser-path-repair.md",
+        ".codex-agent-team/reports/review-T1-live-provider-browser-path-repair.json",
+        ".codex-agent-team/reports/final-integrator-live-provider-browser-path-repair-20260616.md"
+      ],
+      "acceptance": [
+        "Text-to-image browser flow submits through UI to ai-tu gateway, prompt-image backend POST /api/v1/image-generations, provider generations, Generated Image Store, and returns public images[].url",
+        "Image-to-image browser flow uploads a real reference image and submits through UI to provider edits, Generated Image Store, and returns public images[].url",
+        "Generated public image URLs GET 200 with Cache-Control: no-store",
+        "Gateway avoids recursive backend base URL and does not route live generation through legacy /api/image-jobs",
+        "Provider adapter and normalizer do not fake success, change models, expose raw provider payloads, raw prompts, credentials, raw base64, or data URLs",
+        "Required tests, reviews, security checks, codegraph sync, and browser evidence are fresh"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "AI_TU_RUNTIME_CONFIG_FILE=真实配置.json node tests/integration/provider-config.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-T1-live-provider-browser-path-repair.json",
+        "codegraph sync . && codegraph status --json",
+        "git status --short --untracked-files=all"
+      ],
+      "blocker": "Live Browser text-to-image reached provider submit but upstream terminated with 502 and no images[].url; Browser image-to-image file upload remains unverified in this session.",
+      "evidence": [
+        ".codex-agent-team/context/T1-live-provider-browser-path-repair.md",
+        ".codex-agent-team/reports/final-integrator-live-provider-browser-path-repair-20260616.md",
+        ".codex-agent-team/reports/review-T1-live-provider-browser-path-repair.json",
+        "npm-test-124-pass-2026-06-16",
+        "browser-text-image-provider-submit-upstream-terminated-2026-06-16",
+        "codegraph-pendingChanges-0-2026-06-16"
+      ]
     }
   ]
 }

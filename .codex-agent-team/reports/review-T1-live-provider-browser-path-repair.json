@@ -1,0 +1,114 @@
+{
+  "taskId": "T1-live-provider-browser-path-repair",
+  "task_id": "T1-live-provider-browser-path-repair",
+  "status": "FAIL_LIVE_PROVIDER_PATH_BLOCKED",
+  "verdict": "fail",
+  "reviewed_at": "2026-06-16T06:39:50Z",
+  "summary": "Local code path was repaired and hardened, but required live browser success did not pass. Real Browser text-to-image reached provider submit and failed with sanitized upstream_terminated summary; image-to-image browser upload remains unverified due browser-control file input limitations.",
+  "findings": [
+    {
+      "severity": "high",
+      "status": "FAIL",
+      "area": "Browser QA",
+      "message": "Real browser text-to-image did not return images[].url or a Generated Image Store URL.",
+      "evidence": "Browser UI showed public backend unavailable message; sanitized diagnostic returned provider_submit/generations/upstream_status 502/provider_error_code upstream_terminated."
+    },
+    {
+      "severity": "high",
+      "status": "UNVERIFIED",
+      "area": "Browser QA",
+      "message": "Real browser image-to-image could not be verified with local file upload in this session.",
+      "evidence": "Codex Browser lacks file input setter; Computer Use could read Safari but refused click actions after state read."
+    }
+  ],
+  "requirements": {
+    "main01_only": "PASS_STATIC",
+    "main_not_pushed": "PASS_STATIC",
+    "ui_fresh_submit_uses_api_v1_image_generations": "PASS_TESTED",
+    "legacy_api_image_jobs_not_used_for_fresh_submit": "PASS_TESTED",
+    "backend_route_reached": "PASS_EVIDENCE",
+    "provider_submit_reached": "PASS_EVIDENCE",
+    "provider_generations_contract": "PASS_TESTED",
+    "provider_edits_contract": "PASS_TESTED",
+    "self_recursive_base_url_guard": "PASS_TESTED",
+    "generated_store_strict_validation": "PASS_TESTED",
+    "public_response_url_only": "PASS_TESTED",
+    "redacted_backend_call_summary": "PASS_SECURITY",
+    "runtime_config_loader": "PASS_CONTRACT",
+    "browser_text_image": "FAIL",
+    "browser_image_reference": "UNVERIFIED"
+  },
+  "reviewers": {
+    "browser_qa": "FAIL",
+    "gateway_reviewer": "PASS_STATIC",
+    "backend_reviewer": "PASS_STATIC",
+    "provider_integration_reviewer": "FAIL",
+    "generated_store_reviewer": "PASS_TESTED",
+    "security_reviewer": "PASS_SECURITY",
+    "test_reviewer": "PASS_TESTED",
+    "final_integrator": "FAIL"
+  },
+  "evidence": [
+    {
+      "command": "git fetch origin --prune && git checkout main01 && git pull --ff-only origin main01 && git ls-remote origin refs/heads/main01 && git status --short --untracked-files=all",
+      "status": "PASS_STATIC",
+      "details": "main01 was current before repair; initial status clean."
+    },
+    {
+      "command": "grep -R \"生图服务暂时不可用\\|暂时不可用\\|PROMPT_IMAGE_BACKEND_UNAVAILABLE\\|BACKEND_UNAVAILABLE\\|image-generations\\|/api/image-jobs\" -n . --exclude-dir=node_modules --exclude-dir=.git",
+      "status": "PASS_STATIC",
+      "details": "Public text originates from V3.6 error mapping; fresh UI submit endpoint is /api/v1/image-generations."
+    },
+    {
+      "command": "node --test tests/unit/image-api.test.js tests/unit/ai-tu-prompt-optimizer.test.js",
+      "status": "PASS_TESTED",
+      "details": "112/112 tests passed after imageEditUrl self-recursion coverage."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "124/124 tests passed"
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=真实配置.json node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT"
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS"
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "codegraph sync . && codegraph status --json",
+      "status": "PASS_STATIC",
+      "details": "pendingChanges added 0 modified 0 removed 0"
+    },
+    {
+      "command": "Codex Browser text-to-image UI submission",
+      "status": "FAIL",
+      "details": "No images[].url; sanitized backend_call_summary indicates provider_submit/generations/upstream_status 502/provider_error_code upstream_terminated."
+    },
+    {
+      "command": "Safari Computer Use image-to-image upload attempt",
+      "status": "UNVERIFIED",
+      "details": "Computer Use could read Safari UI but refused click actions; file upload could not be completed."
+    }
+  ],
+  "blocking_items": [
+    "Browser text-to-image did not produce images[].url or Generated Image Store GET 200.",
+    "Browser image-to-image did not complete local file upload verification."
+  ],
+  "evidence_debt": [],
+  "decision": "FAIL_LIVE_PROVIDER_PATH_BLOCKED. Continue development on main01 only; do not merge main."
+}

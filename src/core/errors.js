@@ -69,14 +69,18 @@ export function publicErrorPayload(error, fallbackRequestId = "") {
 
 export function v36ImageGenerationErrorPayload(error) {
   const mapped = mapV36ImageGenerationError(error);
+  const errorPayload = {
+    code: mapped.code,
+    message: mapped.message
+  };
+  if (mapped.backendCallSummary) {
+    errorPayload.backend_call_summary = mapped.backendCallSummary;
+  }
   return {
     statusCode: mapped.statusCode,
     payload: {
       status: mapped.status,
-      error: {
-        code: mapped.code,
-        message: mapped.message
-      },
+      error: errorPayload,
       images: [],
       warnings: []
     }
@@ -146,6 +150,48 @@ export function mapV36ImageGenerationError(error) {
     statusCode: statusByCode[code] || (sourceStatus >= 400 ? sourceStatus : 502),
     status: "failed",
     code,
-    message
+    message,
+    backendCallSummary: safeBackendCallSummary(error)
   };
+}
+
+function safeBackendCallSummary(error) {
+  if (!(error instanceof ImageApiError)) return null;
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details
+    : null;
+  if (!details) return null;
+  const source = details.backend_call_summary && typeof details.backend_call_summary === "object" && !Array.isArray(details.backend_call_summary)
+    ? details.backend_call_summary
+    : details;
+  const summary = {};
+  const stage = safeEnum(source.stage, ["provider_submit", "provider_poll", "provider_normalize", "generated_store", "reference_fetch"]);
+  if (stage) summary.stage = stage;
+  const endpointKind = safeEnum(source.endpoint_kind, ["generations", "edits", "poll", "unknown"]);
+  if (endpointKind) summary.endpoint_kind = endpointKind;
+  const upstreamStatus = Number(source.upstream_status);
+  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) {
+    summary.upstream_status = upstreamStatus;
+  }
+  const providerErrorCode = safeProviderErrorCode(source.provider_error_code);
+  if (providerErrorCode) summary.provider_error_code = providerErrorCode;
+  if (typeof source.retryable === "boolean") summary.retryable = source.retryable;
+  const retryAfterMs = Number(source.retry_after_ms);
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    summary.retry_after_ms = Math.min(3_600_000, Math.floor(retryAfterMs));
+  }
+  return Object.keys(summary).length ? summary : null;
+}
+
+function safeEnum(value, allowed) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return allowed.includes(text) ? text : "";
+}
+
+function safeProviderErrorCode(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > 80) return "";
+  if (!/^[a-zA-Z0-9_.:-]+$/.test(text)) return "";
+  if (/https?:|bearer|token|secret|key|base64|data:image/i.test(text)) return "";
+  return text;
 }

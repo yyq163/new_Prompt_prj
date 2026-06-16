@@ -54,6 +54,14 @@ test("frontend image job request includes structured references", () => {
   assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
 });
 
+test("frontend does not persist temporary pending jobs into legacy restore polling", () => {
+  assert.match(html, /function isRestorableJobId\(jobId\)/);
+  assert.match(html, /startsWith\("pending_"\)/);
+  assert.match(html, /isRestorableJobId\(job\.jobId\) && \(job\.status === "queued" \|\| job\.status === "running"\)/);
+  assert.match(html, /if \(!isRestorableJobId\(jobId\)\) return;/);
+  assert.doesNotMatch(html, /if \(job\.status === "queued" \|\| job\.status === "running"\) addPendingJob\(job\.jobId\);/);
+});
+
 test("frontend formats structured final image errors without object placeholders", () => {
   assert.match(html, /function jobErrorMessage\(job\)/);
   assert.match(html, /function normalizeErrorMessage\(error\)/);

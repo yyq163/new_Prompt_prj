@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleImageGeneration } from "../../src/routes/image-generations.js";
@@ -35,6 +35,7 @@ import {
   putGeneratedImage
 } from "../../src/core/generated-image-store.js";
 import { generatedImageHttpResponse } from "../../src/core/generated-image-response.js";
+import { appendTrace } from "../../src/storage/trace-store.js";
 
 const imageUrl = "https://provider.example.com/generated.png";
 
@@ -1084,6 +1085,32 @@ test("provider direct binary HTTP image response is accepted by postLiveJson", a
   assert.equal(getGeneratedImage(images[0].image_id).mime, "image/png");
 });
 
+test("text generation provider JSON uses documented gpt-image-2 format contract", async () => {
+  const calls = [];
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => generateWithAiTuProvider({
+    request: normalizeRequest({
+      task_type: "text_image",
+      prompt: "生成山间晨雾。",
+      references: [],
+      output: { count: 1, aspect_ratio: "1:1", quality: "high", return_format: "url", language: "zh-CN" }
+    }),
+    compiledPrompt: "compiled prompt",
+    fetchImpl: providerFetchRecorder(calls)
+  }));
+
+  const submit = calls.find((call) => call.kind === "submit");
+  assert.equal(submit.url, "https://provider.example.com/v1/images/generations");
+  assert.equal(submit.body.model, "gpt-image-2");
+  assert.equal(submit.body.format, "png");
+  assert.equal("output_format" in submit.body, false);
+  assert.equal("image" in submit.body, false);
+  assertNoForbiddenModel(submit.body);
+});
+
 test("generated image store supports put get delete cleanup and TTL", () => {
   clearGeneratedImagesForTest();
   const stored = putGeneratedImage({ bytes: samplePngBytes(), mime: "image/png", ttlMs: 1000 });
@@ -1618,6 +1645,34 @@ test("configured provider submit endpoints are separated from provider-returned 
   assert.throws(() => resolveAuthorizedFetchUrl("http://127.0.0.1:18080/v1/tasks/task_001", localSubmitConfig), /provider poll url/);
 });
 
+test("provider submit endpoints reject self-recursive base URLs", () => {
+  const oldHost = process.env.HOST;
+  const oldPort = process.env.PORT;
+  process.env.HOST = "127.0.0.1";
+  process.env.PORT = "8787";
+  try {
+    for (const baseUrl of [
+      "http://127.0.0.1:8787/v1/images/generations",
+      "http://localhost:8787/v1/images/generations",
+      "http://[::1]:8787/v1/images/generations"
+    ]) {
+      assert.throws(() => sanitizeProviderConfig({
+        baseUrl,
+        imageEditUrl: "https://provider.example.com/v1/images/edits",
+        apiKey: "test-key"
+      }), /provider endpoint|自身服务|递归/);
+    }
+    assert.throws(() => sanitizeProviderConfig({
+      baseUrl: "https://provider.example.com/v1/images/generations",
+      imageEditUrl: "http://127.0.0.1:8787/v1/images/edits",
+      apiKey: "test-key"
+    }), /provider endpoint|自身服务|递归/);
+  } finally {
+    restoreEnv("HOST", oldHost);
+    restoreEnv("PORT", oldPort);
+  }
+});
+
 test("real provider adapter fixes text generation endpoint and model regardless of config models", async () => {
   const calls = [];
   const result = await withTempProviderConfig({
@@ -1906,6 +1961,14 @@ test("Final API exposes text provider failures without mock success or internals
 
   assert.equal(result.statusCode, 502);
   assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
+  assert.deepEqual(result.payload.error.backend_call_summary, {
+    stage: "provider_submit",
+    endpoint_kind: "generations",
+    upstream_status: 502,
+    provider_error_code: "upstream_failed",
+    retryable: true
+  });
+  assertNoUnsafeBackendCallSummary(result.payload);
 });
 
 test("Final API exposes image provider failures without mock success or internals", async () => {
@@ -1963,11 +2026,97 @@ test("Final API exposes image provider failures without mock success or internal
     assert.equal(submitCount, 1);
     assert.equal(result.statusCode, 502);
     assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
+    assert.deepEqual(result.payload.error.backend_call_summary, {
+      stage: "provider_submit",
+      endpoint_kind: "edits",
+      upstream_status: 502,
+      provider_error_code: "upstream_failed",
+      retryable: true
+    });
+    assertNoUnsafeBackendCallSummary(result.payload);
   } finally {
     restoreEnv("HOST", oldHost);
     restoreEnv("PORT", oldPort);
     clearGeneratedImagesForTest();
   }
+});
+
+test("provider 200 error object maps to redacted backend-call-summary", async () => {
+  const result = await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    apiKey: "test-key"
+  }, () => handleImageGeneration({
+    task_type: "text_image",
+    prompt: "生成山间晨雾。",
+    references: [],
+    output: { count: 1, aspect_ratio: "1:1", quality: "high" }
+  }, {
+    provider: generateWithAiTuProvider,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ error: { code: "rate_limit_exceeded", message: "secret token raw endpoint" } }),
+      headers: { get: () => "application/json" }
+    })
+  }));
+
+  assert.equal(result.statusCode, 502);
+  assertV36Error(result, "PROMPT_IMAGE_BACKEND_UNAVAILABLE");
+  assert.deepEqual(result.payload.error.backend_call_summary, {
+    stage: "provider_normalize",
+    endpoint_kind: "unknown",
+    provider_error_code: "IMAGE_PROVIDER_CALL_FAILED",
+    retryable: false
+  });
+  assertNoUnsafeBackendCallSummary(result.payload);
+});
+
+test("trace store records only redacted backend-call-summary fields", async () => {
+  const traceFile = join(process.cwd(), ".codex-agent-team/state/trace-store.jsonl");
+  const before = safeReadLines(traceFile).length;
+  await appendTrace({
+    endpoint: "/api/v1/image-generations",
+    method: "POST",
+    trace_id: "trace_unit",
+    request_id: "req_unit",
+    task_type: "text_image",
+    generation_mode: "text_to_image",
+    prompt: "must be hashed",
+    reference_count: 0,
+    callback_present: false,
+    image_count: 0,
+    status: "failed",
+    error_code: "PROMPT_IMAGE_BACKEND_UNAVAILABLE",
+    warning_count: 0,
+    backend_call_summary: {
+      stage: "provider_submit",
+      endpoint_kind: "generations",
+      upstream_status: 502,
+      provider_error_code: "upstream_terminated",
+      retryable: true,
+      raw_url: "https://provider.example.com/v1/images/generations?token=secret",
+      api_key: "test-key",
+      raw_body: samplePngBase64()
+    }
+  });
+  const after = safeReadLines(traceFile);
+  assert.equal(after.length, before + 1);
+  const record = JSON.parse(after[after.length - 1]);
+  assert.deepEqual(record.backend_call_summary, {
+    stage: "provider_submit",
+    endpoint_kind: "generations",
+    upstream_status: 502,
+    provider_error_code: "upstream_terminated",
+    retryable: true
+  });
+  assert.equal(record.prompt_sha256_16.length, 16);
+  const publicText = JSON.stringify(record);
+  assert.equal(publicText.includes("must be hashed"), false);
+  assert.equal(publicText.includes("provider.example.com"), false);
+  assert.equal(publicText.includes("secret"), false);
+  assert.equal(publicText.includes("test-key"), false);
+  assert.equal(publicText.includes(samplePngBase64()), false);
 });
 
 test("missing provider config returns PROVIDER_CONFIG_MISSING through real adapter", async () => {
@@ -2375,6 +2524,33 @@ function assertNoForbidden(payload) {
   const text = JSON.stringify(payload);
   for (const field of FORBIDDEN_PUBLIC_FIELDS) {
     assert.equal(text.includes(field), false, `forbidden public field leaked: ${field}`);
+  }
+}
+
+function assertNoUnsafeBackendCallSummary(payload) {
+  const text = JSON.stringify(payload);
+  for (const forbidden of [
+    "provider.example.com",
+    "Authorization",
+    "Bearer",
+    "test-key",
+    "token",
+    "secret",
+    "raw endpoint",
+    "data:image",
+    "b64_json",
+    samplePngBase64()
+  ]) {
+    assert.equal(text.includes(forbidden), false, `unsafe backend-call-summary leaked: ${forbidden}`);
+  }
+}
+
+function safeReadLines(filePath) {
+  try {
+    return readFileSync(filePath, "utf8").trim().split("\n").filter(Boolean);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
   }
 }
 

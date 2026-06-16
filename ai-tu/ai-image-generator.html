@@ -2978,8 +2978,8 @@
       const index = jobs.findIndex((item) => item.jobId === job.jobId);
       if (index === -1) jobs.unshift(job);
       else jobs[index] = { ...jobs[index], ...job, fill: job.fill || jobs[index].fill || null };
-      if (job.status === "queued" || job.status === "running") addPendingJob(job.jobId);
-      persistJob(job.jobId);
+      if (isRestorableJobId(job.jobId) && (job.status === "queued" || job.status === "running")) addPendingJob(job.jobId);
+      if (isRestorableJobId(job.jobId)) persistJob(job.jobId);
     }
 
     function removeJob(jobId) {
@@ -2999,7 +2999,7 @@
       job.status = "failed";
       job.error = message;
       job.updatedAt = Date.now();
-      persistJob(job.jobId);
+      if (isRestorableJobId(job.jobId)) persistJob(job.jobId);
       if (activePreview && activePreview.kind === "job" && activePreview.jobId === jobId) previewJob(jobId);
       renderJobs();
     }
@@ -3757,11 +3757,14 @@
     }
 
     function persistPendingJobs() {
-      const ids = jobs.filter((job) => job.status === "queued" || job.status === "running").map((job) => job.jobId);
+      const ids = jobs
+        .filter((job) => isRestorableJobId(job.jobId) && (job.status === "queued" || job.status === "running"))
+        .map((job) => job.jobId);
       localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify([...new Set(ids)]));
     }
 
     function addPendingJob(jobId) {
+      if (!isRestorableJobId(jobId)) return;
       const ids = new Set(readPendingJobIds());
       ids.add(jobId);
       localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify([...ids]));
@@ -3770,6 +3773,10 @@
     function removePendingJob(jobId) {
       const ids = readPendingJobIds().filter((id) => id !== jobId);
       localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(ids));
+    }
+
+    function isRestorableJobId(jobId) {
+      return !String(jobId || "").startsWith("pending_");
     }
 
     function statusLabel(status) {

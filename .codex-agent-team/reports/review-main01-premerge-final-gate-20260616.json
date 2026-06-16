@@ -1,0 +1,122 @@
+{
+  "taskId": "main01-premerge-final-gate",
+  "task_id": "main01-premerge-final-gate",
+  "status": "PASS_EVIDENCE",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-16T09:42:30Z",
+  "summary": "main01 pre-merge final gate passed after main01-fix01 was merged back. The gate used refreshed code-map skill output, branch isolation repair, tests, security/evidence scans, review gate, and real browser text-image and image-reference QA. Historical evidence-debt reports remain superseded by this report.",
+  "findings": [],
+  "requirements": {
+    "code_map_skill_initial_refresh": "PASS_STATIC",
+    "code_map_skill_post_merge_refresh": "PASS_STATIC",
+    "branch_isolation_fix_branch": "PASS_BRANCH",
+    "fix_branch_repaired_and_merged_to_main01": "PASS_BRANCH",
+    "main_not_merged_or_pushed": "PASS_BRANCH",
+    "origin_main01_push_allowed": "PASS_BRANCH",
+    "provider_fixed_gpt_image_2": "PASS_CONTRACT",
+    "text_without_refs_uses_generations": "PASS_CONTRACT",
+    "image_with_refs_uses_edits": "PASS_CONTRACT",
+    "upstream_terminated_no_fake_success": "PASS_EVIDENCE",
+    "normalizer_public_url_only": "PASS_SECURITY",
+    "generated_store_mime_no_store_path_safety": "PASS_SECURITY",
+    "poll_url_and_authorization_origin_security": "PASS_SECURITY",
+    "ragflow_json_enhancement_only": "PASS_CONTRACT",
+    "ai_tu_gateway_does_not_use_legacy_provider_route": "PASS_CONTRACT",
+    "legacy_image_jobs_disabled": "PASS_CONTRACT",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "git_diff_check": "PASS_STATIC",
+    "review_gate": "PASS_EVIDENCE",
+    "browser_text_image": "PASS_BROWSER",
+    "browser_image_reference": "PASS_BROWSER"
+  },
+  "subagents": {
+    "Branch Auditor": "PASS_BRANCH",
+    "Code Reviewer": "PASS_STATIC",
+    "Contract Reviewer": "PASS_CONTRACT",
+    "Provider Integration Reviewer": "PASS_CONTRACT",
+    "Security Reviewer": "PASS_SECURITY",
+    "Generated Store Reviewer": "PASS_SECURITY",
+    "Test Reviewer": "PASS_TESTED",
+    "Browser QA": "PASS_BROWSER",
+    "Evidence Auditor": "PASS_EVIDENCE",
+    "Final Integrator": "PASS_EVIDENCE"
+  },
+  "evidence": [
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root .",
+      "status": "PASS_STATIC",
+      "details": "Code map skill refreshed before preparation on main01 and again after merging main01-fix01. Latest post-merge CodeGraph: initialized true, fileCount 25, nodeCount 635, edgeCount 1546, pendingChanges added 0 modified 0 removed 0."
+    },
+    {
+      "command": "git fetch origin --prune; git checkout main01; git pull --ff-only origin main01; git ls-remote origin refs/heads/main01; git rev-parse main01 origin/main01 origin/main main; git status --short --untracked-files=all; git diff --stat origin/main...origin/main01; git diff --name-status origin/main...origin/main01; git branch --list main01-fix*; git branch -r --list origin/main01-fix*",
+      "status": "PASS_BRANCH",
+      "details": "main01 and origin/main01 started at ded59b05c1c3d6cdf5d32e740577c8eeca8660f1. origin/main remained 751b3013a0526f031c04d08946516d5e46cb6a01. No direct main merge or main push occurred."
+    },
+    {
+      "command": "git checkout -b main01-fix01; git commit -m repair premerge legacy image job contract; git checkout main01; git merge --no-ff main01-fix01",
+      "status": "PASS_BRANCH",
+      "details": "Required fix branch was created because code review found contract blockers. main01-fix01 commit d8d9d97 was merged back to main01 as 43ca97f before final gate reruns."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "Post-merge main01 check exited 0."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "Post-merge main01 unit suite passed: 132/132."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=<local ignored config> node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix01-premerge-gate-20260616.json",
+      "status": "PASS_EVIDENCE",
+      "details": "review_gate passed with blockingCount 0 before this final report was written."
+    },
+    {
+      "command": "In-app Browser image_reference QA",
+      "status": "PASS_BROWSER",
+      "details": "User uploaded a local reference image through the in-app browser. The page reached 1 / 16 reference images, generated successfully, and the generated image opened in a real browser and returned GET 200 image/png with Cache-Control no-store."
+    },
+    {
+      "command": "Playwright Browser text_image QA",
+      "status": "PASS_BROWSER",
+      "details": "Clean browser session on post-merge main01 submitted text_image with 0 / 16 references. POST /api/v1/image-generations returned 200; final generated image GET returned 200 image/png with Cache-Control no-store; console error count was 0."
+    },
+    {
+      "command": "Safe failure probes",
+      "status": "PASS_EVIDENCE",
+      "details": "Observed upstream_terminated 502 attempts returned images empty and did not fake success. A text_image attempt with leftover references was correctly rejected by contract rather than silently routing to edits."
+    }
+  ],
+  "blocking_items": [],
+  "evidence_debt": [
+    {
+      "status": "EVIDENCE_DEBT",
+      "details": "Older reports in .codex-agent-team/reports contain historical fail or blocked conclusions; this final report supersedes them for the current main01 head."
+    },
+    {
+      "status": "EVIDENCE_DEBT",
+      "details": "Local main was observed diverging from origin/main during the branch audit; neither local nor remote main was merged or pushed by this run."
+    }
+  ],
+  "decision": "READY_FOR_MAIN_MERGE_REVIEW_WITH_EVIDENCE_DEBT",
+  "allowed_to_merge_main_now": "no"
+}

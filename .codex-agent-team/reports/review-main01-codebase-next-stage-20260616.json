@@ -1,0 +1,90 @@
+{
+  "taskId": "main01-codebase-next-stage-20260616",
+  "task_id": "main01-codebase-next-stage-20260616",
+  "status": "FAIL_CODE_REVIEW_BLOCKED",
+  "verdict": "fail",
+  "reviewed_at": "2026-06-16T03:56:36Z",
+  "summary": "Security/code/contract/test review is repaired and passing, but required Browser QA failed because the real browser UI submission reported backend unavailable and returned no generated image.",
+  "findings": [
+    {
+      "severity": "blocking",
+      "status": "FAIL",
+      "area": "Browser QA",
+      "message": "Real browser UI text-image generation did not produce an image; public UI reported backend unavailable.",
+      "evidence": "Codex browser UI submission on http://127.0.0.1:8794/ returned feedback: 生图服务暂时不可用，请稍后重试。"
+    }
+  ],
+  "requirements": {
+    "main01_only": "PASS_STATIC",
+    "main_not_pushed": "PASS_STATIC",
+    "model_fixed_gpt_image_2": "PASS_STATIC",
+    "text_endpoint_generations": "PASS_TESTED",
+    "image_endpoint_edits": "PASS_TESTED",
+    "provider_normalizer_generated_store": "PASS_TESTED",
+    "public_response_url_only": "PASS_TESTED",
+    "poll_url_ssrf_authorization": "PASS_SECURITY",
+    "references_contract": "PASS_CONTRACT",
+    "ragflow_fallback_contract": "PASS_CONTRACT",
+    "generated_image_store_get_no_store": "PASS_TESTED",
+    "fake_image_rejection": "PASS_SECURITY",
+    "ai_tu_gateway_boundary": "PASS_STATIC",
+    "minimal_evidence": "PASS_EVIDENCE",
+    "browser_text_image": "FAIL",
+    "browser_image_reference": "UNVERIFIED"
+  },
+  "reviewers": {
+    "code_reviewer": "PASS_STATIC",
+    "contract_reviewer": "PASS_CONTRACT",
+    "security_reviewer": "PASS_SECURITY",
+    "provider_integration_reviewer": "PASS_STATIC",
+    "test_reviewer": "EVIDENCE_DEBT",
+    "browser_qa": "FAIL",
+    "evidence_auditor": "PASS_EVIDENCE",
+    "final_integrator": "EVIDENCE_DEBT"
+  },
+  "evidence": [
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "119 tests passed"
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=[redacted-config] node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT"
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS"
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "codegraph sync . && codegraph status --json",
+      "status": "PASS_STATIC",
+      "details": "pendingChanges added 0 modified 0 removed 0"
+    },
+    {
+      "command": "Codex Browser text-image UI submission",
+      "status": "FAIL",
+      "details": "UI reported backend unavailable and no generated image URL was available for GET 200 validation."
+    }
+  ],
+  "blocking_items": [
+    "Browser QA live provider path failed; cannot claim PASS_BROWSER."
+  ],
+  "evidence_debt": [
+    "Historical reports and old hash/cache/screenshot wording remain superseded evidence debt.",
+    "Integration scripts are not part of npm test, but were run explicitly in this review."
+  ],
+  "decision": "FAIL_CODE_REVIEW_BLOCKED. Continue development is blocked until Browser QA live provider path passes. Do not merge main."
+}

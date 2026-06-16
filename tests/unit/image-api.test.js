@@ -1031,7 +1031,7 @@ test("provider binary buffer response is converted to generated image URL", () =
   assert.equal(getGeneratedImage(direct.image_id).mime, "image/png");
 
   for (const value of [
-    samplePngBytes().buffer.slice(samplePngBytes().byteOffset, samplePngBytes().byteOffset + samplePngBytes().byteLength),
+    samplePngArrayBuffer(),
     new Uint8Array(samplePngBytes()),
     new Int8Array(samplePngBytes())
   ]) {
@@ -1052,10 +1052,7 @@ test("provider direct binary HTTP image response is converted to generated image
       ok: true,
       status: 200,
       headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null },
-      arrayBuffer: async () => samplePngBytes().buffer.slice(
-        samplePngBytes().byteOffset,
-        samplePngBytes().byteOffset + samplePngBytes().byteLength
-      )
+      arrayBuffer: async () => samplePngArrayBuffer()
     };
   }, {
     baseUrl: "https://provider.example.com/v1/images/generations",
@@ -1080,10 +1077,7 @@ test("provider direct binary HTTP image response is accepted by postLiveJson", a
     status: 200,
     text: async () => "",
     headers: { get: (name) => name.toLowerCase() === "content-type" ? "image/png" : null },
-    arrayBuffer: async () => samplePngBytes().buffer.slice(
-      samplePngBytes().byteOffset,
-      samplePngBytes().byteOffset + samplePngBytes().byteLength
-    )
+    arrayBuffer: async () => samplePngArrayBuffer()
   }), providerPollConfig());
   assert.equal(images.length, 1);
   assert.match(images[0].url, /^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/);
@@ -1117,6 +1111,34 @@ test("generated image route response metadata returns correct content headers an
   const missing = generatedImageHttpResponse("img_missing");
   assert.equal(missing.statusCode, 404);
   assert.equal(missing.headers["Cache-Control"], "no-store");
+});
+
+test("generated image store rejects fake image headers", () => {
+  clearGeneratedImagesForTest();
+  assert.throws(() => putGeneratedImage({
+    bytes: fakePngHeaderBytes(),
+    mime: "image/png"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: fakePngSkeletonBytes(),
+    mime: "image/png"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: fakeJpegHeaderBytes(),
+    mime: "image/jpeg"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: fakeJpegSoiEoiBytes(),
+    mime: "image/jpeg"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: fakeWebpHeaderBytes(),
+    mime: "image/webp"
+  }), /不是支持的图片格式/);
+  assert.throws(() => putGeneratedImage({
+    bytes: fakeWebpEmptyVp8Bytes(),
+    mime: "image/webp"
+  }), /不是支持的图片格式/);
 });
 
 test("provider encoded image payloads return PROVIDER_RESPONSE_UNSUPPORTED", () => {
@@ -2391,15 +2413,57 @@ function samplePngBase64() {
 }
 
 function samplePngBytes() {
-  return Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-    0x89
-  ]);
+  return Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64"
+  );
+}
+
+function samplePngArrayBuffer() {
+  const bytes = samplePngBytes();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
 function sampleGifBytes() {
   return Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00]);
+}
+
+function fakePngHeaderBytes() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x70, 0x6e, 0x67
+  ]);
+}
+
+function fakePngSkeletonBytes() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+    0x00, 0x00, 0x00, 0x00
+  ]);
+}
+
+function fakeJpegHeaderBytes() {
+  return Buffer.from([0xff, 0xd8, 0xff, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x6a, 0x70, 0x65, 0x67]);
+}
+
+function fakeJpegSoiEoiBytes() {
+  return Buffer.from([0xff, 0xd8, 0x6e, 0x6f, 0x74, 0x2d, 0x61, 0x2d, 0x6a, 0x70, 0x65, 0x67, 0xff, 0xd9]);
+}
+
+function fakeWebpHeaderBytes() {
+  return Buffer.from("RIFFzzzzWEBPnot-a-webp");
+}
+
+function fakeWebpEmptyVp8Bytes() {
+  return Buffer.from([
+    0x52, 0x49, 0x46, 0x46,
+    0x0c, 0x00, 0x00, 0x00,
+    0x57, 0x45, 0x42, 0x50,
+    0x56, 0x50, 0x38, 0x20,
+    0x00, 0x00, 0x00, 0x00
+  ]);
 }

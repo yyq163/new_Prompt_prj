@@ -4,14 +4,14 @@
   "status": "BLOCKED_BROWSER_UNVERIFIED",
   "verdict": "blocked",
   "reviewed_at": "2026-06-16T14:25:53Z",
-  "summary": "The ai-tu gateway V3.6 generation contract repair is implemented on main01-fix02 and the code/test/security gates pass. The pre-merge gate remains blocked because Browser QA with the user-specified live config reached the new generation endpoint but timed out without a generated image.",
+  "summary": "The ai-tu gateway V3.6 generation contract repair is implemented on main01-fix02 and the code/test/security gates pass. Browser QA with the user-specified live config now proves text_image end-to-end, but the reference-backed image flow still fails at the live provider with HTTP 502 and no generated image.",
   "findings": [
     {
-      "id": "BROWSER-LIVE-CONFIG-TIMEOUT",
+      "id": "BROWSER-LIVE-IMAGE-REFERENCE-UPSTREAM-502",
       "severity": "high",
       "status": "open",
       "area": "Browser QA",
-      "details": "In-app Browser text generation against ai-tu gateway using the user-specified local runtime config reached POST /api/v1/image-generations and returned HTTP 504 with Cache-Control no-store after the configured timeout. No generated image was loaded, so this branch is not eligible to merge back to main01 yet."
+      "details": "In-app Browser image-reference generation against ai-tu gateway using the user-specified local runtime config kept five uploaded HTTPS reference images, reached POST /api/v1/image-generations, and returned HTTP 502 with Cache-Control no-store. No generated image was loaded, so this branch is not eligible to merge back to main01 yet."
     }
   ],
   "requirements": {
@@ -35,7 +35,7 @@
     "final_v1_4_evidence_scan": "PASS_EVIDENCE",
     "ai_tu_gateway_contract_test": "PASS_TESTED",
     "git_diff_check": "PASS_STATIC",
-    "browser_text_image_live_config": "BLOCKED_BROWSER_UNVERIFIED",
+    "browser_text_image_live_config": "PASS_BROWSER",
     "browser_image_reference_live_config": "BLOCKED_BROWSER_UNVERIFIED"
   },
   "evidence": [
@@ -81,19 +81,19 @@
     },
     {
       "command": "In-app Browser text_image UI submit through ai-tu product page",
-      "status": "BLOCKED_BROWSER_UNVERIFIED",
-      "details": "The product page title was the expected fast edition title, the browser reached POST /api/v1/image-generations through ai-tu gateway using the requested local config, no legacy image job request was observed, and the response was HTTP 504 no-store without a generated image."
+      "status": "PASS_BROWSER",
+      "details": "The product page title was the expected fast edition title, the browser reached POST /api/v1/image-generations through ai-tu gateway using the requested local config, no legacy image job request was observed, and a generated image loaded from the final API generated-image route."
     },
     {
       "command": "In-app Browser image_reference UI submit through ai-tu product page",
       "status": "BLOCKED_BROWSER_UNVERIFIED",
-      "details": "A prior contract Browser pass proved uploaded http references are sent through /api/v1/image-generations with no legacy image job request, but the live-config rerun was not completed after the text path timed out without an image."
+      "details": "Five local reference images from the requested test-image directory were uploaded through the product page and converted to HTTPS reference URLs. The browser submitted the reference-backed request to POST /api/v1/image-generations with no legacy image job request observed, but the live provider path returned HTTP 502 no-store without a generated image."
     }
   ],
   "blocking_items": [
     {
       "status": "BLOCKED_BROWSER_UNVERIFIED",
-      "details": "Retry Browser QA with the requested local config after the live provider path returns a generated image within the gateway timeout, then merge the fix branch into main01 and rerun the total gate."
+      "details": "Retry reference-backed Browser QA with the requested local config after the live provider path returns a generated image, then merge the fix branch into main01 and rerun the total gate."
     }
   ]
 }

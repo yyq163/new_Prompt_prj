@@ -1,0 +1,128 @@
+{
+  "taskId": "main01-fix01-premerge-gate",
+  "task_id": "main01-fix01-premerge-gate",
+  "status": "PASS_EVIDENCE",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-16T09:11:50Z",
+  "summary": "main01-fix01 repaired the pre-merge gate blockers found on main01: legacy /api/image-jobs provider execution is disabled, ai-tu frontend renders/downloads only public HTTP(S) image URLs, and fresh code/test/Browser/security/evidence checks passed on the fix branch.",
+  "findings": [],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "code_map_skill_refresh_after_fix": "PASS_STATIC",
+    "legacy_api_image_jobs_disabled": "PASS_CONTRACT",
+    "ai_tu_frontend_public_url_only": "PASS_CONTRACT",
+    "provider_fixed_gpt_image_2_and_endpoint_routing": "PASS_CONTRACT",
+    "upstream_terminated_safe_failure_no_fake_success": "PASS_EVIDENCE",
+    "generated_store_mime_no_store_and_no_fake_image": "PASS_SECURITY",
+    "public_response_url_only": "PASS_SECURITY",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "git_diff_check": "PASS_STATIC",
+    "browser_text_image": "PASS_BROWSER",
+    "browser_image_reference": "PASS_BROWSER"
+  },
+  "reviewers": {
+    "Branch Auditor": "PASS_BRANCH",
+    "Code Reviewer": "PASS_STATIC",
+    "Contract Reviewer": "PASS_CONTRACT",
+    "Provider Integration Reviewer": "PASS_CONTRACT",
+    "Security Reviewer": "PASS_SECURITY",
+    "Generated Store Reviewer": "PASS_SECURITY",
+    "Test Reviewer": "PASS_TESTED",
+    "Browser QA": "PASS_BROWSER",
+    "Evidence Auditor": "PASS_EVIDENCE",
+    "Final Integrator": "PASS_EVIDENCE"
+  },
+  "evidence": [
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root .",
+      "status": "PASS_STATIC",
+      "details": "Code map skill refreshed before preparation on main01: CodeGraph initialized, pendingChanges added 0 modified 0 removed 0."
+    },
+    {
+      "command": "git fetch origin --prune; git checkout main01; git pull --ff-only origin main01; git ls-remote origin refs/heads/main01; git rev-parse main01 origin/main01 origin/main; git status --short --untracked-files=all; git diff --stat origin/main...origin/main01; git diff --name-status origin/main...origin/main01; git branch --list main01-fix*; git branch -r --list origin/main01-fix*",
+      "status": "PASS_BRANCH",
+      "details": "main01 and origin/main01 matched ded59b05c1c3d6cdf5d32e740577c8eeca8660f1 before repair; origin/main was separate; no main merge or main push occurred."
+    },
+    {
+      "command": "git checkout -b main01-fix01",
+      "status": "PASS_BRANCH",
+      "details": "No local or remote main01-fix* branch existed, so main01-fix01 was created from main01 before code edits."
+    },
+    {
+      "command": "python3 /Users/yyq/.codex/.codex-agent-team/scripts/context_pack.py --root . --task T1-live-provider-browser-path-repair --out .codex-agent-team/context/main01-fix01-premerge-gate-repair.md",
+      "status": "PASS_EVIDENCE",
+      "details": "Context capsule was created before editing on the fix branch."
+    },
+    {
+      "command": "node --test tests/unit/http-invalid-body.test.js; node --test tests/unit/ai-tu-prompt-optimizer.test.js",
+      "status": "PASS_TESTED",
+      "details": "Focused TDD regression passed after repair: legacy image jobs disabled and frontend public URL only contract covered."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "132/132 tests passed."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=<local ignored config> node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT"
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS before writing this report."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0"
+    },
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root .",
+      "status": "PASS_STATIC",
+      "details": "Code map skill refreshed after fix on main01-fix01: CodeGraph initialized, fileCount 25, nodeCount 635, edgeCount 1546, pendingChanges added 0 modified 0 removed 0."
+    },
+    {
+      "command": "Playwright Browser text_image UI submit",
+      "status": "PASS_BROWSER",
+      "details": "Fresh visible browser submission reached POST /api/v1/image-generations 200 and final generated image GET 200 image/png with Cache-Control no-store."
+    },
+    {
+      "command": "Playwright Browser image_reference UI upload and submit",
+      "status": "PASS_BROWSER",
+      "details": "A local reference image from /Volumes/App_Dev/test-image was uploaded through browser file input; POST /api/reference-images returned 200; POST /api/v1/image-generations returned 200; final generated image GET returned 200 image/png with Cache-Control no-store."
+    },
+    {
+      "command": "Playwright Browser image_reference first attempt",
+      "status": "PASS_EVIDENCE",
+      "details": "One prior image_reference attempt returned provider_submit edits upstream_status 502 provider_error_code upstream_terminated with images empty; no fake success or repeated consumption was observed, and a subsequent browser image_reference run passed."
+    },
+    {
+      "command": "Local configuration hygiene check",
+      "status": "PASS_SECURITY",
+      "details": "Local provider config files used for live checks are untracked and ignored; no secret value is recorded in this report."
+    }
+  ],
+  "blocking_items": [],
+  "evidence_debt": [
+    {
+      "status": "EVIDENCE_DEBT",
+      "details": "Historical reports still contain older failed or blocked review conclusions; this report records the fresh fix-branch evidence for the current pass."
+    },
+    {
+      "status": "EVIDENCE_DEBT",
+      "details": "Local main was observed diverging from origin/main during branch audit; origin/main was not merged or pushed."
+    }
+  ],
+  "decision": "PASS_EVIDENCE"
+}

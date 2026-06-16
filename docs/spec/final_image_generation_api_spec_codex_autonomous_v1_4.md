@@ -244,7 +244,7 @@ Generated Image Store requirements:
 
 ## Legacy Route
 
-`/api/image-jobs` is deprecated and exists only for compatibility with old page/client behavior. It sends deprecation headers and is not part of Final API V1.4 acceptance. It must not bypass the strict structured reference contract.
+`/api/image-jobs` is deprecated and exists only for compatibility with old page/client cleanup behavior. `POST /api/image-jobs` returns `410 LEGACY_IMAGE_JOBS_DISABLED`, sends deprecation headers, and never creates a provider job. `GET /api/image-jobs/:id` is retained only as a deprecated 404 cleanup surface for old pending-job polling. It is not part of Final API V1.4 acceptance and cannot bypass the strict structured reference contract.
 
 ## Concurrency Status
 

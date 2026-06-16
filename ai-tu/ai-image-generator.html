@@ -3017,7 +3017,7 @@
         const card = document.createElement("article");
         card.className = ["history-card", job.status, selected ? "selected" : ""].filter(Boolean).join(" ");
         const images = Array.isArray(job.images) ? job.images : [];
-        const image = images[0];
+        const image = images.find((item) => imageToSrc(item));
         const thumb = image
           ? `<img alt="生成图片" src="${imageToSrc(image)}">`
           : `<span>${escapeHtml(statusLabel(job.status))}</span>`;
@@ -3187,24 +3187,12 @@
         return;
       }
 
-      if (/^https?:\/\//i.test(source)) {
+      if (isPublicImageUrl(source)) {
         triggerDownload(source, filename, { external: true });
         return;
       }
 
-      if (/^data:/i.test(source)) {
-        try {
-          const objectUrl = dataUrlToObjectUrl(source);
-          triggerDownload(objectUrl, filename);
-          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-          return;
-        } catch (error) {
-          setStatus(`下载准备失败：${errorToMessage(error)}`, "bad");
-          return;
-        }
-      }
-
-      triggerDownload(source, filename);
+      setStatus("当前预览没有可下载的公开图片 URL。", "bad");
     }
 
     function triggerDownload(href, filename, options = {}) {
@@ -3218,26 +3206,6 @@
       document.body.appendChild(link);
       link.click();
       link.remove();
-    }
-
-    function dataUrlToObjectUrl(dataUrl) {
-      const match = String(dataUrl).match(/^data:([^;,]+)?(;base64)?,(.*)$/);
-      if (!match) throw new Error("图片数据格式无效。");
-      const mime = match[1] || "application/octet-stream";
-      const isBase64 = Boolean(match[2]);
-      const payload = match[3] || "";
-      let bytes;
-      if (isBase64) {
-        const binary = atob(payload.replace(/\s/g, ""));
-        bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index += 1) {
-          bytes[index] = binary.charCodeAt(index);
-        }
-      } else {
-        const decoded = decodeURIComponent(payload);
-        bytes = new TextEncoder().encode(decoded);
-      }
-      return URL.createObjectURL(new Blob([bytes], { type: mime }));
     }
 
     async function togglePreviewFullscreen() {
@@ -3737,9 +3705,11 @@
 
     function imageToSrc(image) {
       if (!image) return "";
-      if (image.b64_json) return `data:${image.mime || mimeFromFormat(controls.outputFormat.value)};base64,${image.b64_json}`;
-      if (image.base64) return `data:${image.mime || mimeFromFormat(controls.outputFormat.value)};base64,${image.base64}`;
-      return image.url || "";
+      return isPublicImageUrl(image.url) ? image.url : "";
+    }
+
+    function isPublicImageUrl(value) {
+      return /^https?:\/\//i.test(String(value || "").trim());
     }
 
     function imageName(job, imageIndex, image) {

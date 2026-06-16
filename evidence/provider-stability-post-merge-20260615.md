@@ -6,7 +6,7 @@ Older provider-stability evidence is superseded by the `main01` protection
 branch repair. Any earlier visual success wording must not be used to claim
 current edits-chain PASS.
 
-This file was refreshed during the evidence-chain security contradiction repair
+This file was refreshed during the main01 HEAD, gitignore, and report repair
 cycle.
 
 Current protected contracts:
@@ -23,12 +23,19 @@ Current protected contracts:
   all passed.
 
 This is protection-branch evidence only; `main` is not pushed or merged.
+`main01` is a clean protection branch candidate, not a `main` release. The final
+remote branch head must be verified by final command output.
 
 ## Screenshot Policy
 
 - `screenshots_policy`: `sanitized_png_retained`
 - `screenshots_tracked`: `true`
 - `screenshots_ignored`: `false`
+- `.codex-agent-team/reports/**`: trackable formal evidence
+- `.codex-agent-team/reports/browser-artifacts/`: ignored runtime artifact
+  storage
+- `.codex-agent-team` runtime directories: ignored
+- `evidence/screenshots/**`: retained and trackable
 
 Retained screenshots under `evidence/screenshots/` are sanitized UI captures. They
 do not contain API keys, Authorization headers, Cookies, raw provider bodies,

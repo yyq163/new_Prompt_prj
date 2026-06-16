@@ -4,7 +4,7 @@ Status: MAIN01_PROTECTION_SUMMARY
 
 This redacted artifact is part of the `main01` protection branch. It supersedes
 older final-api evidence paths that are not present on the pushable branch. This
-version was refreshed after the evidence-chain security contradiction repair
+version was refreshed during the main01 HEAD, gitignore, and report repair
 cycle.
 
 ## Provider Boundary
@@ -28,6 +28,24 @@ cycle.
   type, and no-store cache control.
 - This file does not claim main release PASS or authorize pushing `main`.
 - Screenshots are retained as sanitized PNG files and tracked.
+- Browser evidence source for this repair is reused 2026-06-15 browser evidence;
+  the browser main flow was not rerun in this repair cycle.
+- `main01` is a clean protection branch candidate only.
+- Pushed `main`: no.
+- Allowed to merge `main`: no.
+- `origin/main` is outside the mutation scope.
+- Final remote branch head must be verified by final command output.
+
+## Evidence Policy
+
+- `screenshots_policy=sanitized_png_retained`
+- `screenshots_tracked=true`
+- `screenshots_ignored=false`
+- `.codex-agent-team/reports/**` is formal evidence and trackable.
+- `.codex-agent-team/reports/browser-artifacts/` is ignored runtime artifact
+  storage.
+- `.codex-agent-team` runtime directories are ignored.
+- `evidence/screenshots/**` is retained and trackable.
 
 ## Screenshot Security
 

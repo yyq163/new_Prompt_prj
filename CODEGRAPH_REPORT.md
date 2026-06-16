@@ -1,14 +1,14 @@
 # CodeGraph Main01 Protection Report
 
-Date: 2026-06-15
+Date: 2026-06-16
 
 Project root: `/Volumes/App_Dev/new_Prompt_prj`
 
 This report describes the current `main01` protection branch only. It is not a
 claim that `main` has passed release review.
 
-This version was refreshed during the evidence-chain security contradiction
-repair cycle.
+This version was refreshed during the main01 HEAD, gitignore, and report repair
+cycle.
 
 ## Branch State
 
@@ -16,7 +16,10 @@ repair cycle.
 - Remote main base: `751b3013a0526f031c04d08946516d5e46cb6a01`.
 - Local `main`: ahead of `origin/main` and intentionally untouched.
 - Push target for this run: `origin/main01` only.
-- Push target for `main`: no.
+- Pushed `main`: no.
+- Allowed to merge `main`: no.
+- Current `origin/main01` HEAD must be verified by final command output,
+  especially `git ls-remote origin refs/heads/main01`.
 
 ## Current Contracts
 
@@ -69,6 +72,18 @@ keys, Authorization headers, Cookies, raw provider request/response bodies, raw
 base64 or inline image data payloads, runtime config files, or `真实配置.json`
 content.
 
+Policy fields:
+
+- `screenshots_policy=sanitized_png_retained`
+- `screenshots_tracked=true`
+- `screenshots_ignored=false`
+- `.codex-agent-team/reports/**` is formal evidence and trackable.
+- `.codex-agent-team/reports/browser-artifacts/` is ignored runtime artifact
+  storage.
+- `.codex-agent-team` context, state, tmp, logs, cache, ledger, and raw
+  directories are ignored runtime artifacts.
+- `evidence/screenshots/**` is retained and trackable.
+
 Trace files, network captures, logs, complete generated-image links,
 credentials, raw provider bodies, and encoded image data are not part of the
 pushable evidence set.
@@ -77,7 +92,7 @@ pushable evidence set.
 tracked as controlled evidence-chain files. `.codex-agent-team/reports/browser-artifacts/`
 and other `.codex-agent-team/` runtime artifacts are ignored.
 
-Latest redacted browser result:
+Latest redacted browser result, reused as evidence for this repair:
 
 - Text generation: real browser rerun returned HTTP 200, public status
   succeeded, one public image URL, and generated-image GET HTTP 200 with image
@@ -114,6 +129,5 @@ covers:
 
 ## Known Risk
 
-Provider availability is still upstream-dependent. This report records the
-latest real browser success for `main01`. It does not authorize pushing or
-merging `main`.
+Provider availability is still upstream-dependent. This report records reused
+browser evidence for `main01`. It does not authorize pushing or merging `main`.

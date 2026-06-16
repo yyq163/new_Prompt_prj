@@ -2,10 +2,14 @@
   "status": "MAIN01_REDACTED_NETWORK_SUMMARY",
   "checked_at": "2026-06-15",
   "branch": "main01",
-  "cycle": "evidence-security-contradiction-repair",
+  "cycle": "main01-head-gitignore-report-repair",
   "pushable_evidence_policy": {
     "screenshots_tracked": true,
     "screenshots_policy": "sanitized_png_retained",
+    "screenshots_ignored": false,
+    "reports_trackable": true,
+    "reports_browser_artifacts_ignored": true,
+    "runtime_artifact_dirs_ignored": true,
     "trace_files_tracked": false,
     "network_captures_tracked": false,
     "complete_generated_image_links_recorded": false,
@@ -29,5 +33,12 @@
     "screenshots_saved": true,
     "trace_saved": false,
     "network_capture_saved": false
+  },
+  "branch_policy": {
+    "main01_role": "clean_protection_branch_candidate",
+    "pushed_main": false,
+    "allowed_to_merge_main": false,
+    "origin_main_untouched": true,
+    "final_remote_head_source": "git ls-remote origin refs/heads/main01"
   }
 }

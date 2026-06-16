@@ -1,18 +1,34 @@
+# Node/runtime
 node_modules/
 .DS_Store
-runtime-config.json
+
+# Local/runtime config
 .env
 .env.*
 !.env.example
+runtime-config.json
+真实配置.json
+ai-tu/runtime-config.json
+ai-tu/runtime-config.example.json
+
+# Local indexes and tool output
 .code-index/
 .codegraph/
 .understand-anything/
-# Codex agent team: keep reports tracked as evidence chain; ignore runtime artifacts
+.playwright-cli/
+.visual-review*/
+output/
+test-image/
+.server.pid
+.server.log
+.server-*.pid
+.server-*.log
+
+# Codex agent evidence policy
 .codex-agent-team/*
 !.codex-agent-team/
 !.codex-agent-team/reports/
 !.codex-agent-team/reports/**
-.codex-agent-team/reports/browser-artifacts/
 .codex-agent-team/context/
 .codex-agent-team/state/
 .codex-agent-team/tmp/
@@ -20,23 +36,15 @@ runtime-config.json
 .codex-agent-team/cache/
 .codex-agent-team/ledger/
 .codex-agent-team/raw/
-.playwright-cli/
-output/
-test-image/
-ai-tu/runtime-config.json
-ai-tu/runtime-config.example.json
-真实配置.json
-.server.pid
-.server.log
-.server-*.pid
-.server-*.log
-.visual-review*/
+.codex-agent-team/reports/browser-artifacts/
+
+# Raw browser/runtime artifacts
+*.trace
+*.har
+*.network.json
+*.log
 evidence/visual-6task-results.json
-evidence/**/*.trace
 evidence/**/*.network
-evidence/**/*.network.json
-evidence/**/*.har
-evidence/**/*.log
 evidence/trace/
 evidence/har/
 evidence/network/

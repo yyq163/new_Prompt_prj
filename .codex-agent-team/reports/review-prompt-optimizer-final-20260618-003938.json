@@ -19,9 +19,7 @@
     "p2_hardening": [
       "Add deployment-tier allowlist or policy validation for RAGFlow base URL configuration."
     ],
-    "evidence_debt": [
-      "Post-merge main01 evidence pending until merge is performed."
-    ]
+    "evidence_debt": []
   },
   "verification": {
     "npm_run_check": "PASS_TESTED",
@@ -38,6 +36,9 @@
   "decision": {
     "prompt_optimizer_complete": true,
     "fix_branch_required": true,
+    "fix_branch_merged_to_main01": true,
+    "final_status": "FIX_BRANCH_REPAIRED_AND_MERGED_TO_MAIN01",
+    "pass_status": "PASS_PROMPT_OPTIMIZER_WITH_P2_HARDENING",
     "allowed_to_continue_dev": true,
     "allowed_to_merge_main_now": false
   }

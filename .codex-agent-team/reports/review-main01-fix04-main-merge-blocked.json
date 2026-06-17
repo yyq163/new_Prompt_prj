@@ -1,0 +1,95 @@
+{
+  "taskId": "main01-fix04-main-merge-review",
+  "task_id": "main01-fix04-main-merge-review",
+  "status": "READY_FOR_MAIN_MERGE_APPROVAL",
+  "verdict": "approved",
+  "reviewed_at": "2026-06-17T14:36:39.624385+08:00",
+  "summary": "fix04 repairs code/contract/runtime path and Browser QA。文生图和图生图已真实走 /api/v1/image-generations，通过本地参考图路径完成图生图生成并成功返回 public 图片，未再使用 /api/image-jobs。",
+  "findings": [
+    {
+      "severity": "info",
+      "status": "PASS",
+      "title": "Image-to-image Browser QA local upload verified",
+      "details": "图生图本地上传验证完成，生成返回返图并可下载。"
+    }
+  ],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "context_capsule_before_edit": "PASS_EVIDENCE",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "ai_tu_gateway_contract_test": "PASS_TESTED",
+    "git_diff_check": "PASS_STATIC",
+    "provider_reference_url_transport_uses_edits": "PASS_CONTRACT",
+    "gateway_no_mock_no_provider_direct": "PASS_CONTRACT",
+    "gateway_public_images_url_only": "PASS_CONTRACT",
+    "legacy_post_get_410": "PASS_CONTRACT",
+    "api_contracts_gateway_refs_and_legacy_get": "PASS_CONTRACT",
+    "final_api_spec_browser_gateway_refs": "PASS_CONTRACT",
+    "browser_text_image": "PASS_BROWSER",
+    "browser_image_reference_upload": "PASS_BROWSER"
+  },
+  "evidence": [
+    {
+      "command": "code-map skill pipeline refresh before work",
+      "status": "PASS_STATIC",
+      "details": "CodeGraph initialized and clean at task start."
+    },
+    {
+      "command": "git checkout -b main01-fix04 main01",
+      "status": "PASS_BRANCH",
+      "details": "Repair branch created from main01."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "139 pass."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=./真实配置_toapis.md node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "node api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "13 pass."
+    },
+    {
+      "command": "Contract/code reviewer follow-up",
+      "status": "PASS_CONTRACT",
+      "details": "API_CONTRACTS.md and Final API spec now document root API compatibility rules separately from the stricter ai-tu browser gateway reference requirement; legacy GET is documented as 410."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "Codex Browser text-image product-page QA",
+      "status": "PASS_BROWSER",
+      "details": "Title matched; POST /api/v1/image-generations; task_type text_image; reference_count 0; no legacy call; generated image GET 200 image/png no-store."
+    },
+    {
+      "command": "Codex Browser image-to-image local upload QA",
+      "status": "PASS_BROWSER",
+      "details": "本地参考图成功上传并触发生成，最终返回任务完成并产出返图，GET 成功返回 image/png/no-store。"
+    }
+  ],
+  "blocking_items": [],
+  "allowed_to_merge_main_now": "no",
+  "allowed_to_merge_main01_now": "yes"
+}

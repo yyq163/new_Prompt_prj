@@ -101,7 +101,7 @@ test("HTTP reference image upload returns structured local image URL for browser
   assert.equal(image.headers.get("cache-control"), "no-store");
 });
 
-test("HTTP legacy image job POST is disabled and cannot create provider jobs", async (t) => {
+test("HTTP legacy image job POST and GET are disabled and cannot create provider jobs", async (t) => {
   const app = await startTestServer();
   t.after(async () => {
     await app.stop();
@@ -123,6 +123,16 @@ test("HTTP legacy image job POST is disabled and cannot create provider jobs", a
   assert.equal("jobId" in payload, false);
   assert.equal("fill" in payload, false);
   assertNoForbiddenFields(payload);
+
+  const getResponse = await fetch(`${app.baseUrl}/api/image-jobs/legacy-job`, { cache: "no-store" });
+  const getPayload = await getResponse.json();
+  assert.equal(getResponse.status, 410);
+  assert.match(getResponse.headers.get("warning") || "", /Deprecated legacy image job API/);
+  assert.equal(getPayload.status, "failed");
+  assert.equal(getPayload.error_code, "LEGACY_IMAGE_JOBS_DISABLED");
+  assert.equal("jobId" in getPayload, false);
+  assert.equal("fill" in getPayload, false);
+  assertNoForbiddenFields(getPayload);
 });
 
 async function assertFinalInvalidBody({ url, body }) {

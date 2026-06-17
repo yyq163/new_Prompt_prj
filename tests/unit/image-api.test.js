@@ -202,11 +202,19 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
     }, {
       provider: async () => ({
         status: "succeeded",
-        images: [{ image_id: "img_public_base", url: "/api/v1/generated-images/img_public_base", width: 1, height: 1, format: "png" }]
+        images: [{ image_id: "img_1234567890abcdef1234567890abcdef", url: "/api/v1/generated-images/img_1234567890abcdef1234567890abcdef", width: 1, height: 1, format: "png" }]
       })
     });
-    assert.match(result.payload.images[0].url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_public_base/);
+    assert.equal(result.payload.images[0].url, "https://img.example.com/api/v1/generated-images/img_1234567890abcdef1234567890abcdef");
     assert.doesNotMatch(result.payload.images[0].url, /\/\/api\/v1/);
+    for (const unsafeGeneratedPath of [
+      "/api/v1/generated-images/../x",
+      "/api/v1/generated-images/%2e%2e%2fx",
+      "/api/v1/generated-images/not_img",
+      "/api/v1/generated-images/img_1234567890abcdef1234567890abcdef/extra"
+    ]) {
+      assert.throws(() => publicImageUrl(unsafeGeneratedPath), /provider image url/);
+    }
 
     process.env.PUBLIC_BASE_URL = "ftp://bad.example.com";
     assert.throws(() => resolveGeneratedImagePublicBaseUrl(), /PUBLIC_BASE_URL/);
@@ -221,7 +229,7 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
     }, {
       provider: async () => ({
         status: "succeeded",
-        images: [{ image_id: "img_requires_public_base", url: "/api/v1/generated-images/img_requires_public_base", width: 1, height: 1, format: "png" }]
+        images: [{ image_id: "img_abcdefabcdefabcdefabcdefabcdefab", url: "/api/v1/generated-images/img_abcdefabcdefabcdefabcdefabcdefab", width: 1, height: 1, format: "png" }]
       })
     });
     assertV36Error(missingBaseResult, "PUBLIC_BASE_URL_REQUIRED", 500);
@@ -832,7 +840,7 @@ test("gpt-image-2 edits b64_json response becomes URL and provider error without
   clearGeneratedImagesForTest();
   const config = longRunningSubmitConfig(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
     model: "gpt-image-2",
     imageModel: "gpt-image-2",
     apiKey: "test-key",
@@ -1384,7 +1392,7 @@ test("public API converts provider base64 to generated URL and never exposes enc
 test("long-running image submit waits beyond relay completion time and does not retry non-idempotent generation", async () => {
   const config = longRunningSubmitConfig(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
     model: "gpt-image-2",
     imageModel: "gpt-image-2",
     apiKey: "test-key",
@@ -1522,10 +1530,10 @@ test("image edit multipart sends every valid reference as image array file", asy
   assert.deepEqual(submittedBody.imageMimeTypes, ["image/png", "image/png"]);
 });
 
-test("image URL transport uses ToAPIs generations reference_images contract", async () => {
+test("image URL transport uses configured generation endpoint reference_images contract", async () => {
   const config = longRunningSubmitConfig(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
     imageTransport: "url",
     apiKey: "test-key",
     requestTimeoutSeconds: 10
@@ -1560,12 +1568,37 @@ test("image URL transport uses ToAPIs generations reference_images contract", as
   assert.equal("client_business_id" in calls[0].body, false);
 });
 
+test("real provider adapter keeps reference-backed URL transport on configured generation endpoint", async () => {
+  const calls = [];
+  await withTempProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageTransport: "url",
+    apiKey: "test-key"
+  }, () => generateWithAiTuProvider({
+    request: normalizeRequest({
+      task_type: "image_reference",
+      prompt: "参考 @海报 生成新图。",
+      references: [sceneRef({ entity_name: "海报" })],
+      output: { count: 1, aspect_ratio: "1:1", quality: "high", return_format: "url", language: "zh-CN" }
+    }),
+    compiledPrompt: "compiled prompt",
+    fetchImpl: providerFetchRecorder(calls)
+  }));
+  const submitCalls = calls.filter((call) => call.kind === "submit");
+  assert.equal(submitCalls.length, 1);
+  assert.equal(submitCalls[0].url, "https://provider.example.com/v1/images/generations");
+  assert.equal(submitCalls[0].body.model, "gpt-image-2");
+  assert.deepEqual(submitCalls[0].body.reference_images, ["https://example.com/camp.png"]);
+  assert.equal(calls.some((call) => call.kind === "provider-image"), true);
+});
+
 test("real provider adapter uses ToAPIs URL transport payload for text generations", async () => {
   clearGeneratedImagesForTest();
   const calls = [];
   const result = await withTempProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
     imageTransport: "url",
     apiKey: "test-key"
   }, () => generateWithAiTuProvider({
@@ -1914,7 +1947,7 @@ test("real provider adapter ignores forbidden configured model names in payload"
   }
 });
 
-test("real provider adapter fixes reference-backed tasks to edits endpoint and gpt-image-2", async () => {
+test("real provider adapter keeps reference-backed URL transport on generations endpoint and gpt-image-2", async () => {
   const cases = [
     ["image_reference", "参考 @萧昭宁 生成新图。", [characterRef()]],
     ["character_multiview", "生成 @萧昭宁 的角色设定。", [characterRef()]],
@@ -1927,7 +1960,8 @@ test("real provider adapter fixes reference-backed tasks to edits endpoint and g
     const calls = [];
     const result = await withTempProviderConfig({
       baseUrl: "https://provider.example.com/v1/images/generations",
-      imageEditUrl: "https://provider.example.com/v1/images/edits",
+      imageEditUrl: "https://provider.example.com/v1/images/generations",
+      imageTransport: "url",
       model: "gpt-image-2",
       imageModel: "gpt-image-2",
       apiKey: "test-key"
@@ -1943,10 +1977,11 @@ test("real provider adapter fixes reference-backed tasks to edits endpoint and g
 
     assert.equal(result.status, "succeeded");
     const submit = calls.find((call) => call.kind === "submit");
-    assert.equal(submit.url, "https://provider.example.com/v1/images/edits", `${task_type} used wrong endpoint`);
+    assert.equal(submit.url, "https://provider.example.com/v1/images/generations", `${task_type} used wrong endpoint`);
     assert.equal(submit.body.model, "gpt-image-2", `${task_type} used wrong model`);
-    assert.equal(submit.body.imageCount, references.length);
-    assert.equal(submit.headers["Content-Type"], undefined);
+    assert.deepEqual(submit.body.reference_images, references.map((item) => item.url));
+    assert.equal("imageCount" in submit.body, false);
+    assert.match(submit.headers["Content-Type"], /application\/json/);
     assertNoForbiddenModel(submit.body);
   }
 });
@@ -2030,11 +2065,12 @@ test("real provider adapter keeps storyboard without references on generations e
   assertNoForbiddenModel(calls[0].body);
 });
 
-test("real provider adapter derives endpoint from references instead of trusting generation_mode", async () => {
+test("real provider adapter derives reference payload from references instead of trusting generation_mode", async () => {
   const withReferencesCalls = [];
   await withTempProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageTransport: "url",
     apiKey: "test-key"
   }, () => generateWithAiTuProvider({
     request: {
@@ -2048,7 +2084,9 @@ test("real provider adapter derives endpoint from references instead of trusting
     compiledPrompt: "compiled prompt",
     fetchImpl: providerFetchRecorder(withReferencesCalls)
   }));
-  assert.equal(withReferencesCalls.find((call) => call.kind === "submit").url, "https://provider.example.com/v1/images/edits");
+  const withReferencesSubmit = withReferencesCalls.find((call) => call.kind === "submit");
+  assert.equal(withReferencesSubmit.url, "https://provider.example.com/v1/images/generations");
+  assert.deepEqual(withReferencesSubmit.body.reference_images, ["https://example.com/xzn.png"]);
 
   const noReferenceCalls = [];
   await withTempProviderConfig({
@@ -2434,15 +2472,15 @@ test("provider config fixes endpoints and model and requires at least one key", 
     imageEditUrl: "https://provider.example.com/v1/images/edits",
     apiKey: "test-key"
   }), /generations/);
-  const providerSpecificEdit = sanitizeProviderConfig({
+  const configuredReferenceEndpoint = sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
     imageEditUrl: "https://provider.example.com/v1/images/generations",
     apiKey: "test-key"
   });
-  assert.equal(providerSpecificEdit.imageEditUrl, "https://provider.example.com/v1/images/generations");
+  assert.equal(configuredReferenceEndpoint.imageEditUrl, "https://provider.example.com/v1/images/generations");
   assert.equal(sanitizeProviderConfig({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
     pollBaseUrl: "https://provider.example.com/v1/tasks",
     apiKey: "test-key"
   }).pollBaseUrl, "https://provider.example.com/v1/tasks");
@@ -2482,7 +2520,8 @@ test("provider config can be read from ai-tu runtime config file while fixing mo
   const configFile = join(dir, "runtime-config.json");
   writeFileSync(configFile, JSON.stringify({
     baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageTransport: "url",
     model: "gpt-image-2",
     imageModel: "gpt-image-2",
     keyMode: "single",
@@ -2506,13 +2545,55 @@ test("provider config can be read from ai-tu runtime config file while fixing mo
     const config = defaultProviderConfig();
     assert.equal(hasRequiredProviderConfig(config), true);
     assert.equal(config.baseUrl, "https://provider.example.com/v1/images/generations");
-    assert.equal(config.imageEditUrl, "https://provider.example.com/v1/images/edits");
+    assert.equal(config.imageEditUrl, "https://provider.example.com/v1/images/generations");
+    assert.equal(config.imageTransport, "url");
     assert.equal(config.model, "gpt-image-2");
     assert.equal(config.imageModel, "gpt-image-2");
   } finally {
     restoreEnv("AI_TU_RUNTIME_CONFIG_FILE", oldConfigFile);
     restoreEnv("IMAGE_API_BASE", oldBase);
     restoreEnv("IMAGE_MODEL", oldModel);
+    restoreEnv("IMAGE_API_KEY", oldKey);
+    restoreEnv("IMAGE_API_KEYS", oldKeys);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("provider config can be read from markdown runtime config notes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ai-tu-config-md-"));
+  const configFile = join(dir, "runtime-config.md");
+  writeFileSync(configFile, `${JSON.stringify({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/generations",
+    imageTransport: "url",
+    apiKey: "test-key"
+  }, null, 2)}
+
+Provider notes below this line are ignored by the runtime config parser.
+https://provider.example.com/v1/images/generations
+`, "utf8");
+
+  const oldConfigFile = process.env.AI_TU_RUNTIME_CONFIG_FILE;
+  const oldBase = process.env.IMAGE_API_BASE;
+  const oldEditBase = process.env.IMAGE_EDIT_BASE;
+  const oldKey = process.env.IMAGE_API_KEY;
+  const oldKeys = process.env.IMAGE_API_KEYS;
+  delete process.env.IMAGE_API_BASE;
+  delete process.env.IMAGE_EDIT_BASE;
+  delete process.env.IMAGE_API_KEY;
+  delete process.env.IMAGE_API_KEYS;
+  process.env.AI_TU_RUNTIME_CONFIG_FILE = configFile;
+
+  try {
+    const config = defaultProviderConfig();
+    assert.equal(hasRequiredProviderConfig(config), true);
+    assert.equal(config.baseUrl, "https://provider.example.com/v1/images/generations");
+    assert.equal(config.imageEditUrl, "https://provider.example.com/v1/images/generations");
+    assert.equal(config.imageTransport, "url");
+  } finally {
+    restoreEnv("AI_TU_RUNTIME_CONFIG_FILE", oldConfigFile);
+    restoreEnv("IMAGE_API_BASE", oldBase);
+    restoreEnv("IMAGE_EDIT_BASE", oldEditBase);
     restoreEnv("IMAGE_API_KEY", oldKey);
     restoreEnv("IMAGE_API_KEYS", oldKeys);
     rmSync(dir, { recursive: true, force: true });
@@ -2557,10 +2638,10 @@ test("provider config normalizes legacy edits baseUrl into the fixed text endpoi
   }
 });
 
-test("provider config allows provider-specific image edit endpoint paths", () => {
+test("provider config allows provider-specific reference endpoint paths", () => {
   const config = sanitizeProviderConfig({
     baseUrl: "https://toapis.com/v1/images/generations",
-    imageEditUrl: "https://toapis.com/v1/images/edits",
+    imageEditUrl: "https://toapis.com/v1/images/generations",
     imageTransport: "url",
     keyMode: "single",
     apiKey: "test-key",
@@ -2568,7 +2649,7 @@ test("provider config allows provider-specific image edit endpoint paths", () =>
     pollTimeoutSeconds: 900
   });
   assert.equal(config.baseUrl, "https://toapis.com/v1/images/generations");
-  assert.equal(config.imageEditUrl, "https://toapis.com/v1/images/edits");
+  assert.equal(config.imageEditUrl, "https://toapis.com/v1/images/generations");
   assert.equal(config.imageTransport, "url");
   assert.equal(config.pollBaseUrl, "https://toapis.com/v1/images/generations");
   assert.equal(config.requestTimeoutSeconds, 900);
@@ -2582,6 +2663,17 @@ test("provider config allows provider-specific image edit endpoint paths", () =>
     apiKey: "test-key"
   });
   assert.equal(sameEndpoint.imageEditUrl, "https://toapis.com/v1/images/generations");
+});
+
+test("provider config maps URL transport imageEditUrl edits path to generations", () => {
+  const urlTransported = sanitizeProviderConfig({
+    baseUrl: "https://provider.example.com/v1/images/generations",
+    imageEditUrl: "https://provider.example.com/v1/images/edits",
+    imageTransport: "url",
+    keyMode: "single",
+    apiKey: "test-key"
+  });
+  assert.equal(urlTransported.imageEditUrl, "https://provider.example.com/v1/images/generations");
 });
 
 test("provider config infers fixed generations and edits endpoints but not model from imageModel", () => {

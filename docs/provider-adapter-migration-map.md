@@ -14,14 +14,15 @@ The final service does not import or require the ai-tu gateway at runtime.
 
 | ai-tu source | Final API target | Migration reason | Allowed | Notes |
 | --- | --- | --- | --- | --- |
-| provider base URL / endpoint config | `defaultProviderConfig`, `normalizeGenerationsEndpoint`, `normalizeEditsEndpoint` | Reuse real upstream host while enforcing Final API endpoint paths | yes | Text endpoint must end with `/v1/images/generations`; image endpoint must end with `/v1/images/edits`; reads env or runtime config without printing values. |
+| provider base URL / endpoint config | `defaultProviderConfig`, `normalizeGenerationsEndpoint`, `normalizeEditsEndpoint` | Reuse real upstream host while enforcing Final API endpoint paths | yes | Text endpoint must end with `/v1/images/generations`; URL-transport references use the configured ToAPIs generations endpoint with `reference_images`; reads env or runtime config without printing values. |
 | provider auth headers / key selection | `activeKeys`, `nextImageApiCredential`, provider request builders | Keep Bearer auth behavior | yes | Key values never enter public response, evidence, or trace. |
 | fixed provider model | `generateWithAiTuProvider`, `sanitizeProviderConfig` | Final API hard rule | yes | Provider payload always uses `gpt-image-2`; config `model` / `imageModel` values are ignored. |
-| `runLiveUpstream` | `generateWithAiTuProvider` | Dispatch text-to-image JSON calls and reference-backed image edits calls | yes | Mock branch excluded. |
+| `runLiveUpstream` | `generateWithAiTuProvider` | Dispatch text-to-image JSON calls and configured reference-backed calls | yes | Mock branch excluded. |
 | `baseUpstreamPayload` | `baseUpstreamPayload` | Preserve provider JSON payload fields | yes | Internal payload is never exposed. |
 | `postLiveJson` | `postLiveJson` | Real text-to-image JSON upstream call | yes | Always posts to configured `/v1/images/generations` endpoint with model `gpt-image-2`. |
-| `postLiveImageEditMultipart` | `postLiveImageEditMultipart` | Real reference-backed image edit upstream call | yes | Always posts to configured `/v1/images/edits` endpoint with model `gpt-image-2`; fetches structured `references[].url` and submits image parts to provider. |
-| `postSingleLiveImageEditMultipart` | `postSingleLiveImageEditMultipart` | One provider edit request for references | yes | Cannot fall back to `gpt-image-2-all`; provider payload is never exposed. |
+| `postLiveImageUrlJson` | `postLiveImageUrlJson` | Current ToAPIs URL-transport reference upstream call | yes | Posts to the configured generations endpoint with model `gpt-image-2` and `reference_images`; provider payload is never exposed. |
+| `postLiveImageEditMultipart` | `postLiveImageEditMultipart` | Explicit multipart reference compatibility path | yes | Uses the configured multipart reference endpoint only when `imageTransport` is not `url`; fetches structured `references[].url` and submits image parts to provider. |
+| `postSingleLiveImageEditMultipart` | `postSingleLiveImageEditMultipart` | One provider multipart request for references | yes | Cannot fall back to `gpt-image-2-all`; provider payload is never exposed. |
 | `fetchUpstream` | `fetchUpstream` | Retry loop and credential rotation | yes | No Authorization or raw payload logging. |
 | `fetchUpstreamOnce` | `fetchUpstreamOnce` | Timeout, HTTP error handling, JSON/binary response parsing | yes | Binary image responses are wrapped for normalization. |
 | `isRetryableUpstreamError` | `isRetryableUpstreamError` | Retry status policy | yes | 429/502/503/504 only. |

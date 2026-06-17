@@ -318,6 +318,25 @@ test("RAGFlow config can be read from ai-tu runtime config file", () => {
   }
 });
 
+test("RAGFlow config can be read from markdown runtime config notes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rf-config-md-"));
+  const configFile = join(dir, "runtime-config.md");
+  writeFileSync(configFile, `${JSON.stringify({
+    ragflowBaseUrl: "http://ragflow.local",
+    ragflowApiKey: "test-key",
+    ragflowChatId: "chat_001"
+  }, null, 2)}
+
+Local notes below the JSON object are ignored.
+`, "utf8");
+  try {
+    const config = ragflowConfig({ AI_TU_RUNTIME_CONFIG_FILE: configFile });
+    assert.equal(config.endpoint, "http://ragflow.local/api/v1/openai/chat_001/chat/completions");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("RAGFlow environment variables override runtime config file", () => {
   const dir = mkdtempSync(join(tmpdir(), "rf-config-override-"));
   const configFile = join(dir, "runtime-config.json");
@@ -406,12 +425,14 @@ test("prompt optimizer failure does not return optimized_prompt", async () => {
   assertNoPublicLeaks(result.payload);
 });
 
-test("gateway maps references url into existing URL image request path only", () => {
-  assert.match(gateway, /rawReferences = Array\.isArray\(body\.references\)/);
-  assert.match(gateway, /activeRawReferences = rawReferences\.filter/);
-  assert.match(gateway, /normalizeStructuredReferenceImage/);
-  assert.match(gateway, /item\.url/);
-  assert.doesNotMatch(gateway, /references[\s\S]{0,400}uploadReferenceToImgbb/);
+test("gateway proxies final image requests without legacy provider direct mapping", () => {
+  assert.match(gateway, /handlePromptBackendImageGeneration/);
+  assert.match(gateway, /normalizeFinalImageRequest/);
+  assert.match(gateway, /postPromptImageBackend/);
+  assert.doesNotMatch(gateway, /normalizeStructuredReferenceImage/);
+  assert.doesNotMatch(gateway, /runMockUpstream/);
+  assert.doesNotMatch(gateway, /postLiveImageUrlJson/);
+  assert.doesNotMatch(gateway, /postLiveImageEditMultipart/);
 });
 
 test("new frontend does not expose forbidden internal labels", () => {

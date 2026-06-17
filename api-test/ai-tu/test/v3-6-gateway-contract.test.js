@@ -65,7 +65,7 @@ test("ai-tu gateway POST /api/v1/image-generations calls prompt-image backend", 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body, {
     status: "succeeded",
-    images: [{ url: "https://cdn.example.com/generated/text.png", width: 1024, height: 768, format: "png" }],
+    images: [{ url: "https://cdn.example.com/generated/text.png" }],
     warnings: [{ code: "SAFE_WARNING", message: "safe warning" }]
   });
   assert.equal(backendCalls.length, 1);
@@ -75,6 +75,39 @@ test("ai-tu gateway POST /api/v1/image-generations calls prompt-image backend", 
   assert.deepEqual(backendCalls[0].body.references, []);
   assertV36BackendRequestWhitelist(backendCalls[0].body);
   assertNoForbiddenFields(response.body);
+});
+
+test("ai-tu gateway loads prompt backend from markdown runtime config notes", async (t) => {
+  const backend = await startBackend(async (_request, response) => {
+    sendJson(response, 200, {
+      status: "succeeded",
+      images: [{ url: "https://cdn.example.com/generated/runtime-md.png" }],
+      warnings: []
+    });
+  });
+  t.after(backend.stop);
+
+  const configFile = join(mkdtempSync(join(tmpdir(), "ai-tu-gateway-md-config-")), "runtime-config.md");
+  writeFileSync(configFile, `${JSON.stringify({
+    promptImageBackendBaseUrl: backend.baseUrl,
+    promptImageBackendGenerationPath: "/api/v1/image-generations",
+    imageHostMode: "local"
+  }, null, 2)}
+
+Runtime config notes below the JSON object are ignored.
+`, "utf8");
+  t.after(() => rmSync(resolve(configFile, ".."), { recursive: true, force: true }));
+
+  const gateway = await startGateway({ RUNTIME_CONFIG_FILE: configFile });
+  t.after(gateway.stop);
+
+  const runtime = await getJson(`${gateway.baseUrl}/api/runtime`);
+  assert.equal(runtime.status, 200);
+  assert.equal(runtime.body.promptImageBackendConfigured, true);
+
+  const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, textImageRequest());
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.images, [{ url: "https://cdn.example.com/generated/runtime-md.png" }]);
 });
 
 test("ai-tu gateway forwards only V3.6 whitelist fields to prompt-image backend", async (t) => {
@@ -162,8 +195,8 @@ test("ai-tu gateway proxies legal http and https backend image URLs", async (t) 
   assert.deepEqual(response.body, {
     status: "succeeded",
     images: [
-      { url: "https://cdn.example.com/generated/https.png", width: 1024, height: 768, format: "png" },
-      { url: "http://cdn.example.com/generated/http.png", width: 512, height: 512, format: "png" }
+      { url: "https://cdn.example.com/generated/https.png" },
+      { url: "http://cdn.example.com/generated/http.png" }
     ],
     warnings: []
   });
@@ -313,7 +346,7 @@ test("ai-tu gateway does not forward backend internals in public response", asyn
   const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, textImageRequest());
   assert.equal(response.status, 200);
   assert.deepEqual(Object.keys(response.body).sort(), ["images", "status", "warnings"]);
-  assert.deepEqual(Object.keys(response.body.images[0]).sort(), ["format", "height", "url", "width"]);
+  assert.deepEqual(Object.keys(response.body.images[0]).sort(), ["url"]);
   assert.deepEqual(response.body.warnings, [{ code: "VISIBLE", message: "visible warning" }]);
   assertNoForbiddenFields(response.body);
 });
@@ -332,6 +365,12 @@ test("ai-tu gateway legacy /api/image-jobs no longer creates or enqueues jobs", 
   assert.equal(response.status, 410);
   assertV36Error(response.body, "LEGACY_IMAGE_JOBS_DISABLED");
   assert.equal("jobId" in response.body, false);
+
+  const getResponse = await fetch(`${gateway.baseUrl}/api/image-jobs/legacy-job`, { cache: "no-store" });
+  const getBody = await getResponse.json();
+  assert.equal(getResponse.status, 410);
+  assertV36Error(getBody, "LEGACY_IMAGE_JOBS_DISABLED");
+  assert.equal("jobId" in getBody, false);
   assert.equal(backendCalls.length, 0);
 });
 
@@ -341,33 +380,34 @@ test("ai-tu gateway /api/config does not expose configured key values", async (t
   });
   t.after(gateway.stop);
   const saved = await postJson(`${gateway.baseUrl}/api/config`, {
-    upstreamMode: "live",
-    baseUrl: "https://provider.example.com/v1/images/generations",
-    imageEditUrl: "https://provider.example.com/v1/images/edits",
-    keyMode: "single",
-    apiKey: "legacy-image-secret",
+    promptImageBackendBaseUrl: "https://backend.example.com",
+    promptImageBackendGenerationPath: "/api/v1/image-generations",
+    promptImageBackendApiKey: "backend-secret",
+    promptImageBackendTimeoutSeconds: 120,
     imageHostMode: "imgbb",
     imageHostUploadUrl: "https://api.imgbb.com/1/upload",
     imageHostApiKey: "imgbb-secret",
-    requestTimeoutSeconds: 900
+    requestTimeoutSeconds: 120
   });
   assert.equal(saved.status, 200);
   assertConfigDoesNotLeakSecrets(saved.body);
-  assert.equal(saved.body.config.requestTimeoutSeconds, 900);
+  assert.equal(saved.body.config.promptImageBackendApiKeyConfigured, true);
+  assert.equal(saved.body.config.promptImageBackendTimeoutSeconds, 120);
 
   const response = await fetch(`${gateway.baseUrl}/api/config`, { cache: "no-store" });
   const payload = await response.json();
   assert.equal(response.status, 200);
   assertConfigDoesNotLeakSecrets(payload);
-  assert.equal(payload.config.apiKeyConfigured, true);
+  assert.equal(payload.config.promptImageBackendApiKeyConfigured, true);
   assert.equal(payload.config.imageHostApiKeyConfigured, true);
-  assert.equal(payload.config.requestTimeoutSeconds, 900);
+  assert.equal(payload.config.promptImageBackendTimeoutSeconds, 120);
 });
 
 function assertConfigDoesNotLeakSecrets(payload) {
   const text = JSON.stringify(payload);
-  assert.equal(text.includes("legacy-image-secret"), false);
+  assert.equal(text.includes("backend-secret"), false);
   assert.equal(text.includes("imgbb-secret"), false);
+  assert.equal("promptImageBackendApiKey" in payload.config, false);
   assert.equal("apiKey" in payload.config, false);
   assert.equal("apiKeys" in payload.config, false);
   assert.equal("imageHostApiKey" in payload.config, false);
@@ -395,6 +435,11 @@ test("ai-tu page uses /api/v1/image-generations and V3.6 builders", () => {
   assert.match(html, /图生图模式请先上传参考图，且参考图必须已得到 http\(s\) URL。/);
   assert.match(gateway, /url\.pathname === "\/api\/v1\/image-generations"/);
   assert.match(gateway, /legacyImageJobsDisabledPayload/);
+  assert.doesNotMatch(gateway, /runMockUpstream/);
+  assert.doesNotMatch(gateway, /postLiveImageUrlJson/);
+  assert.doesNotMatch(gateway, /postLiveImageEditMultipart/);
+  assert.doesNotMatch(gateway, /fetchUpstream/);
+  assert.doesNotMatch(gateway, /option value="mock"/);
   assert.doesNotMatch(gateway, /url\.pathname === "\/api\/image-jobs"[\s\S]{0,240}createJob/);
   assert.doesNotMatch(gateway, /url\.pathname === "\/api\/image-jobs"[\s\S]{0,240}enqueue/);
 });
@@ -495,6 +540,15 @@ async function postJson(url, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : {}
+  };
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
   const text = await response.text();
   return {
     status: response.status,

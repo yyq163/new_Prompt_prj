@@ -92,7 +92,7 @@ export function publicImageUrl(url) {
       errorCode: "PROVIDER_IMAGE_URL_UNSAFE"
     });
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || !url.startsWith("/api/v1/generated-images/")) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || !/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(url)) {
     throw new ImageApiError({
       statusCode: 502,
       status: "failed",

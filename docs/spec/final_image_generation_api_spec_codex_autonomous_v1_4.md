@@ -60,6 +60,12 @@ shape. These failures do not enter request normalization or provider execution.
 - no references: `text_to_image`
 - one or more references: `image_to_image`
 
+Browser gateway note: the `ai-tu` product gateway is a stricter browser
+submission layer than the root Final API. The product page's image mode must
+upload or provide at least one valid http(s) reference before it forwards any
+non-`text_image` request. This keeps browser image-to-image workflows explicit
+while preserving root API compatibility for direct callers.
+
 ## references[]
 
 References are strict structured objects. The service does not support URL-only references, empty-entity global references, or a generic catch-all role.
@@ -132,6 +138,10 @@ Task rules:
 - `prop_multiview`: references are optional; missing prop/material/ornament reference may produce a warning.
 - `storyboard`: references are optional.
 
+For the `ai-tu` browser gateway only, every non-`text_image` submission is
+blocked with `REFERENCE_REQUIRED` until at least one valid http(s) reference is
+present. This is a product gateway guard, not a root Final API rejection rule.
+
 ## output
 
 - `count`: integer 1-4
@@ -177,13 +187,17 @@ The provider model is fixed to `gpt-image-2` for every Final API image
 generation request. Runtime configuration may provide endpoint host/base and
 keys, but must not select or fall back to any other model.
 
-Route selection is derived from `generation_mode`:
+Provider payload selection is derived from references and the configured
+transport:
 
 - `text_to_image` / no references: POST the provider `/v1/images/generations`
   endpoint with `model: "gpt-image-2"`.
-- `image_to_image` / one or more references: POST the provider
-  `/v1/images/edits` endpoint with `model: "gpt-image-2"` and the structured
-  reference URLs in the provider `image` array.
+- `image_to_image` / one or more references / URL transport: POST the configured
+  ToAPIs generation endpoint with `model: "gpt-image-2"` and the structured
+  reference URLs in `reference_images`.
+- `image_to_image` / one or more references / multipart edit transport: POST
+  the configured edit endpoint with `model: "gpt-image-2"` and the structured
+  reference images as provider file parts.
 
 Forbidden provider routing/model behavior:
 
@@ -191,8 +205,8 @@ Forbidden provider routing/model behavior:
 - `gpt-image-1`
 - `dall-e-*`
 - fallback model selection
-- text-to-image requests using `/v1/images/edits`
-- reference-backed requests using `/v1/images/generations`
+- text-to-image requests using an edit/multipart-only payload
+- reference-backed requests that omit the configured reference payload field
 - mock success after provider failure
 
 Provider result forms supported:
@@ -244,7 +258,7 @@ Generated Image Store requirements:
 
 ## Legacy Route
 
-`/api/image-jobs` is deprecated and exists only for compatibility with old page/client cleanup behavior. `POST /api/image-jobs` returns `410 LEGACY_IMAGE_JOBS_DISABLED`, sends deprecation headers, and never creates a provider job. `GET /api/image-jobs/:id` is retained only as a deprecated 404 cleanup surface for old pending-job polling. It is not part of Final API V1.4 acceptance and cannot bypass the strict structured reference contract.
+`/api/image-jobs` is deprecated and exists only for compatibility with old page/client cleanup behavior. `POST /api/image-jobs` and `GET /api/image-jobs/:id` return `410 LEGACY_IMAGE_JOBS_DISABLED`, send deprecation headers, and never create or read a provider job. It is not part of Final API V1.4 acceptance and cannot bypass the strict structured reference contract.
 
 ## Concurrency Status
 

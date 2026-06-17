@@ -1,16 +1,16 @@
 {
   "taskId": "main01-fix05-main-merge-review",
   "task_id": "main01-fix05-main-merge-review",
-  "status": "BLOCKED_BROWSER_UNVERIFIED",
+  "status": "FAIL_MAIN_MERGE_REVIEW_BLOCKED",
   "verdict": "blocked",
   "reviewed_at": "2026-06-17T17:15:00+08:00",
-  "summary": "fix05 repaired config-source drift, deleted non-authoritative repo config files, aligned root reference upload with public image-host behavior, and preserved root Final API non-2xx semantics through ai-tu gateway. Automated verification passed, but the live browser gate still cannot be closed conclusively.",
+  "summary": "fix05 repaired config-source drift, deleted non-authoritative repo config files, aligned root reference upload with public image-host behavior, preserved root Final API non-2xx semantics through ai-tu gateway, and was committed locally as 2e98d54. Automated verification passed and fresh live success traces exist, but the product-page browser gate still did not settle into a clean completed-success proof.",
   "findings": [
     {
       "severity": "high",
       "status": "BLOCKED",
-      "title": "Live browser completion proof remains unresolved",
-      "details": "The current browser request entered real pending image-generation state, but the tab did not settle into an unambiguous completed success state tied to the same request before the turn ended."
+      "title": "Product-page browser completion proof remains unresolved",
+      "details": "The current browser request entered real pending image-generation state and fresh live success traces exist, but the tab did not settle into a clear completed-success UI state tied unambiguously to the same request."
     }
   ],
   "requirements": {
@@ -25,8 +25,8 @@
     "authoritative_runtime_config_only": "PASS_CONTRACT",
     "root_reference_upload_public_url_alignment": "PASS_CONTRACT",
     "gateway_non_2xx_semantics_preserved": "PASS_CONTRACT",
-    "browser_text_image": "BLOCKED_BROWSER_UNVERIFIED",
-    "browser_image_reference_upload": "BLOCKED_BROWSER_UNVERIFIED"
+    "browser_text_image": "EVIDENCE_DEBT",
+    "browser_image_reference_upload": "EVIDENCE_DEBT"
   },
   "evidence": [
     {
@@ -61,15 +61,20 @@
     },
     {
       "command": "Live browser upload-assisted image_reference run",
-      "status": "BLOCKED_BROWSER_UNVERIFIED",
-      "details": "The page showed 1/16 references and entered pending generation state, but the same tab did not settle to a conclusively attributable completed success state before the turn ended."
+      "status": "EVIDENCE_DEBT",
+      "details": "The page showed 1/16 references, displayed the uploaded preview image, and entered pending generation state."
+    },
+    {
+      "command": "Fresh live trace-store evidence during fix05 browser rerun",
+      "status": "PASS_EVIDENCE",
+      "details": "Current-turn traces include text_image success and image_reference success with image_count=1, but those successes were not mirrored back into a clean completed-success browser surface."
     }
   ],
   "blocking_items": [
     {
-      "code": "BROWSER_LIVE_COMPLETION_UNRESOLVED",
-      "status": "BLOCKED_BROWSER_UNVERIFIED",
-      "details": "Do not merge fix05 into main01 until a fresh live browser request is tied to a completed success state with the required product-page evidence."
+      "code": "BROWSER_PRODUCT_SURFACE_NOT_CLEANLY_SETTLED",
+      "status": "BLOCKED",
+      "details": "Do not merge fix05 into main01 until a fresh live browser request reaches a clean completed-success product-page state with the required user-visible evidence."
     }
   ],
   "allowed_to_merge_main_now": "no",

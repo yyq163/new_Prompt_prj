@@ -60,7 +60,8 @@ async function route(request, response) {
   }
   const legacyJobMatch = url.pathname.match(/^\/api\/image-jobs\/([^/]+)$/);
   if (request.method === "GET" && legacyJobMatch) {
-    return sendJson(response, 404, { status: "failed", error: "任务不存在或已过期。" }, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
+    const result = disabledLegacyImageJob();
+    return sendJson(response, result.statusCode, result.payload, LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS);
   }
   const generatedImageMatch = url.pathname.match(/^\/api\/v1\/generated-images\/([^/]+)$/);
   if (request.method === "GET" && generatedImageMatch) {

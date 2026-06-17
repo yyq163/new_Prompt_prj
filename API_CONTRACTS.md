@@ -103,6 +103,14 @@ Reference task rules:
 - `image_reference`: at least one reference is required, otherwise `REFERENCE_REQUIRED`.
 - `character_multiview`, `scene_multiview`, `prop_multiview`, `storyboard`: references may be empty or non-empty. Missing task-specific reference types may produce warnings but do not block the request.
 
+Browser gateway rule:
+
+- The `ai-tu` product gateway is stricter than the root Final API compatibility
+  layer. It requires at least one valid absolute http(s) reference for every
+  non-`text_image` browser submission before forwarding to the backend. This
+  prevents unbound image-mode submissions from the product page while preserving
+  the root Final API's warning-compatible behavior for direct API callers.
+
 ### output
 
 - `count`: integer, 1-4
@@ -127,14 +135,19 @@ The Final API provider model is fixed to `gpt-image-2`. Runtime configuration
 must not change the model and must not fall back to `gpt-image-2-all`,
 `gpt-image-1`, `dall-e-*`, or any other model.
 
-Provider route selection is derived only from reference presence:
+Provider payload selection is derived from reference presence and the configured
+transport:
 
 - No references / `text_to_image`: `POST /v1/images/generations`, `model: "gpt-image-2"`
-- With references / `image_to_image`: `POST /v1/images/edits`, `model: "gpt-image-2"`
+- With references / URL transport: use the configured generation endpoint from
+  the active ToAPIs runtime config and send structured reference URLs as
+  `reference_images`.
+- With references / multipart edit transport: use the configured edit endpoint
+  and send structured reference images as provider file parts.
 
-`task_type` must not change the model. Text generation must not use the edits
-endpoint, and reference-backed generation must not use the generations endpoint.
-Provider failure is returned as failure; this API must not mock success.
+`task_type` must not change the model. The current ToAPIs runtime config is the
+source of truth for URL-transport reference endpoint selection. Provider failure
+is returned as failure; this API must not mock success.
 
 ## POST /api/reference-images
 
@@ -190,7 +203,7 @@ implementation language in any enhancement field.
 
 ### Legacy route
 
-`/api/image-jobs` is a deprecated compatibility route for old page/client behavior. `POST /api/image-jobs` returns `410 LEGACY_IMAGE_JOBS_DISABLED`, sends deprecation headers, and never creates a provider job. `GET /api/image-jobs/:id` is retained only as a deprecated 404 cleanup surface for old pending-job polling. It is not a Final API V1.4 acceptance endpoint and cannot bypass the structured `references[]` contract.
+`/api/image-jobs` is a deprecated compatibility route for old page/client behavior. `POST /api/image-jobs` and `GET /api/image-jobs/:id` return `410 LEGACY_IMAGE_JOBS_DISABLED`, send deprecation headers, and never create or read a provider job. It is not a Final API V1.4 acceptance endpoint and cannot bypass the structured `references[]` contract.
 
 ### Response
 

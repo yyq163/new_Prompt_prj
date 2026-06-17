@@ -1,5 +1,6 @@
 import { ImageApiError, providerConfigMissing, providerUnsupported } from "../core/errors.js";
 import { intRange, parseAspectSize, stringValue } from "../core/runtime.js";
+import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
 import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "../core/url-security.js";
 import {
   DEFAULT_GENERATED_IMAGE_MAX_BYTES,
@@ -16,7 +17,6 @@ import { resolve } from "node:path";
 const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
 const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
-const AI_TU_DEFAULT_EDITS_URL = "https://memefast.top/v1/images/edits";
 const FIXED_IMAGE_MODEL = "gpt-image-2";
 const PROVIDER_PROMPT_MAX_CHARS = 1000;
 const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 600;
@@ -41,13 +41,13 @@ export async function generateWithAiTuProvider({ request, compiledPrompt, fetchI
     images: references.map((item) => ({ image_url: item.url, url: item.url }))
   };
 
-  const images = config.imageTransport === "url"
-    ? hasReferenceImages
+  const images = hasReferenceImages
+    ? config.imageTransport === "url"
       ? await postLiveImageUrlJson(providerRequest, config, fetchImpl)
-      : await postLiveJson(config.baseUrl, toapisGenerationPayload(providerRequest), fetchImpl, config)
-    : hasReferenceImages
-      ? await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
-    : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
+      : await postLiveImageEditMultipart(providerRequest, config, fetchImpl)
+    : config.imageTransport === "url"
+      ? await postLiveJson(config.baseUrl, toapisGenerationPayload(providerRequest), fetchImpl, config)
+      : await postLiveJson(config.baseUrl, baseUpstreamPayload(providerRequest), fetchImpl, config);
 
   if (!images.length) {
     throw new ImageApiError({
@@ -179,7 +179,7 @@ export async function postLiveImageUrlJson(request, config = defaultProviderConf
     ...toapisGenerationPayload(request),
     reference_images: referenceUrls
   };
-  const json = await fetchUpstream(config.baseUrl, (credential) => ({
+  const json = await fetchUpstream(config.imageEditUrl, (credential) => ({
     method: "POST",
     headers: {
       "Accept": "application/json",
@@ -804,7 +804,9 @@ export function defaultProviderConfig() {
     || stringValue(fileConfig.baseUrl).trim()
     || AI_TU_DEFAULT_GENERATIONS_URL
   );
-  const imageEditUrl = stringValue(process.env.IMAGE_EDIT_BASE).trim() || stringValue(fileConfig.imageEditUrl).trim() || editsEndpointFor(baseUrl);
+  const imageEditUrl = stringValue(process.env.IMAGE_EDIT_BASE).trim()
+    || stringValue(fileConfig.imageEditUrl).trim()
+    || (imageTransport === "url" ? baseUrl : editsEndpointFor(baseUrl));
   return sanitizeProviderConfig({
     baseUrl,
     imageEditUrl,
@@ -829,7 +831,7 @@ export function loadAiTuRuntimeConfig() {
   for (const filePath of candidates) {
     try {
       if (!existsSync(filePath)) continue;
-      const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+      const parsed = parseRuntimeConfigText(readFileSync(filePath, "utf8"));
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
     } catch {
       return {};
@@ -842,7 +844,9 @@ export function sanitizeProviderConfig(source) {
   const value = source && typeof source === "object" ? source : {};
   const baseUrl = normalizeGenerationsEndpoint(value.baseUrl || AI_TU_DEFAULT_GENERATIONS_URL);
   const imageTransport = value.imageTransport === "url" ? "url" : "edit";
-  const imageEditUrl = normalizeEditsEndpoint(value.imageEditUrl || editsEndpointFor(baseUrl));
+  const imageEditUrl = imageTransport === "url"
+    ? generationsEndpointFor(value.imageEditUrl || baseUrl)
+    : normalizeEditsEndpoint(value.imageEditUrl || editsEndpointFor(baseUrl));
   assertNotSelfRecursiveProviderEndpoint(baseUrl);
   assertNotSelfRecursiveProviderEndpoint(imageEditUrl);
   const keyMode = value.keyMode === "multi" ? "multi" : "single";
@@ -910,7 +914,7 @@ function editsEndpointFor(baseUrl) {
   if (/\/v1\/images\/generations$/i.test(endpoint)) {
     return endpoint.replace(/\/v1\/images\/generations$/i, "/v1/images/edits");
   }
-  return AI_TU_DEFAULT_EDITS_URL;
+  return `${providerOrigin(endpoint) || providerOrigin(AI_TU_DEFAULT_GENERATIONS_URL)}/v1/images/edits`;
 }
 
 function generationsEndpointFor(baseUrl) {

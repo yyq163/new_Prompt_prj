@@ -1,6 +1,7 @@
 import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/errors.js";
 import { extractEntityMentions } from "../core/entity-mentions.js";
 import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, normalizeRequest, stringValue } from "../core/runtime.js";
+import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
 import { roleLabel, taskTypeLabel, VALID_REFERENCE_ROLES } from "../core/labels.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -291,7 +292,7 @@ function readRagflowRuntimeConfig(env = process.env) {
   for (const filePath of candidates) {
     try {
       if (!existsSync(filePath)) continue;
-      const json = JSON.parse(readFileSync(filePath, "utf8"));
+      const json = parseRuntimeConfigText(readFileSync(filePath, "utf8"));
       return {
         baseUrl: json.ragflowBaseUrl,
         apiKey: json.ragflowApiKey,

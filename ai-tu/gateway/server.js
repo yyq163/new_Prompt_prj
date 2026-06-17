@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const ROOT = resolve(join(import.meta.dirname, ".."));
 const HTML_FILE = resolve(ROOT, process.env.IMAGE_HTML_FILE || "ai-image-generator.html");
@@ -14,9 +14,6 @@ const OWNER_COOKIE = "ai_image_owner";
 const POLL_INTERVAL_SECONDS = 2;
 const MAX_BODY_BYTES = parseBytes(process.env.MAX_BODY_SIZE || "50mb");
 const REFERENCE_TTL_MS = clampInt(process.env.REFERENCE_TTL_MINUTES, 1, 240, 30) * 60 * 1000;
-const JOB_TTL_MS = clampInt(process.env.JOB_TTL_MINUTES, 1, 240, 30) * 60 * 1000;
-const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
-const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
 const PROMPT_IMAGE_BACKEND_DEFAULT_PATH = "/api/v1/image-generations";
 const PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS = 120;
 const VALID_V36_TASK_TYPES = new Set(["text_image", "image_reference", "character_multiview", "scene_multiview", "prop_multiview", "storyboard"]);
@@ -26,11 +23,7 @@ const VALID_V36_ASPECT_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4"]);
 const VALID_V36_QUALITIES = new Set(["standard", "high"]);
 const VALID_V36_LANGUAGES = new Set(["zh-CN"]);
 
-const jobs = new Map();
-const queue = [];
 const referenceImages = new Map();
-let runningCount = 0;
-let upstreamKeyCursor = 0;
 let runtimeConfig = await loadRuntimeConfig();
 
 const server = createServer(async (request, response) => {
@@ -59,7 +52,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   const config = getRuntimeConfig();
-  console.log(`[gateway] listening on http://${HOST}:${PORT} mode=${config.upstreamMode} maxConcurrency=${formatMaxConcurrency(config.maxConcurrency)} upstreamKeys=${activeKeys(config).length}`);
+  console.log(`[gateway] listening on http://${HOST}:${PORT} backend=${hasPromptImageBackendConfig(config) ? "configured" : "missing"}`);
   console.log(`[gateway] runtime config ${CONFIG_FILE}`);
 });
 
@@ -89,11 +82,9 @@ async function route(request, response) {
     const config = getRuntimeConfig();
     return sendJson(response, 200, {
       service: request.headers.host || `${HOST}:${PORT}`,
-      mode: config.upstreamMode,
-      model: config.model,
-      upstreamBase: config.baseUrl,
+      mode: "live",
       imageHostMode: config.imageHostMode,
-      upstreamKeyCount: activeKeys(config).length,
+      promptImageBackendConfigured: hasPromptImageBackendConfig(config),
       pollIntervalSeconds: POLL_INTERVAL_SECONDS
     });
   }
@@ -106,7 +97,6 @@ async function route(request, response) {
     const body = await readJson(request);
     runtimeConfig = sanitizeRuntimeConfig(body);
     await saveRuntimeConfig(runtimeConfig);
-    upstreamKeyCursor = 0;
     return sendJson(response, 200, {
       ok: true,
       message: "已保存并生效。",
@@ -116,7 +106,6 @@ async function route(request, response) {
 
   if (request.method === "POST" && url.pathname === "/api/reload-config") {
     runtimeConfig = await loadRuntimeConfig();
-    upstreamKeyCursor = 0;
     return sendJson(response, 200, {
       ok: true,
       message: "已重新加载。",
@@ -139,28 +128,7 @@ async function route(request, response) {
 
   const jobMatch = url.pathname.match(/^\/api\/image-jobs\/([^/]+)$/);
   if (request.method === "GET" && jobMatch) {
-    const { ownerToken, isNewOwner } = ensureOwner(request);
-    if (isNewOwner) setOwnerCookie(response, ownerToken);
-    const jobId = decodeURIComponent(jobMatch[1]);
-    const job = jobs.get(jobId);
-    if (!job) {
-      return sendJson(response, 404, {
-        error: {
-          code: "job_not_found",
-          message: "任务不存在或已过期。"
-        }
-      });
-    }
-    if (job.ownerToken !== ownerToken) {
-      return sendJson(response, 403, {
-        error: {
-          code: "forbidden",
-          message: "无权查看该任务。"
-        }
-      });
-    }
-    response.setHeader("Cache-Control", "no-store");
-    return sendJson(response, 200, publicJob(job));
+    return sendJson(response, 410, legacyImageJobsDisabledPayload());
   }
 
   if (request.method === "POST" && url.pathname === "/api/reference-images") {
@@ -189,108 +157,6 @@ async function serveHtml(response) {
     "Cache-Control": "no-store"
   });
   response.end(html);
-}
-
-function createJob(ownerToken, body) {
-  const request = normalizeImageRequest(body, ownerToken);
-  const job = {
-    jobId: makeJobId(),
-    ownerToken,
-    prompt: request.prompt,
-    request,
-    status: "queued",
-    images: [],
-    error: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-  jobs.set(job.jobId, job);
-  console.log("[gateway] job queued", {
-    jobId: job.jobId,
-    mode: request.mode,
-    imageCount: request.images.length
-  });
-  return job;
-}
-
-function normalizeImageRequest(body, ownerToken = "") {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw httpError(400, "invalid_json", "请求体不是合法 JSON 对象。");
-  }
-
-  const config = getRuntimeConfig();
-  const prompt = stringValue(body.prompt).trim();
-  if (!prompt) {
-    throw httpError(400, "invalid_prompt", "请填写提示词。");
-  }
-
-  const n = clampInt(body.n, 1, 4, 1);
-  const quality = enumValue(body.quality, ["auto", "low", "medium", "high"], "auto");
-  const outputFormat = enumValue(body.output_format || body.format, ["png", "jpeg", "webp"], "png");
-  const size = normalizeSize(body.size);
-  const rawImages = Array.isArray(body.images) ? body.images : [];
-  const rawReferences = Array.isArray(body.references) ? body.references : [];
-  const activeRawReferences = rawReferences.filter((item) => stringValue(item && item.url).trim());
-  const images = [
-    ...rawImages.map(normalizeReferenceImage),
-    ...activeRawReferences.map(normalizeStructuredReferenceImage)
-  ].filter(Boolean);
-  if (rawImages.length + activeRawReferences.length && images.length !== rawImages.length + activeRawReferences.length) {
-    throw httpError(400, "invalid_reference_image", "参考图必须使用可访问的 http 或 https URL。");
-  }
-  const mode = body.mode === "image" || images.length ? "image" : "text";
-
-  return {
-    prompt,
-    model: config.model || stringValue(body.model).trim() || "gpt-image-2",
-    ownerToken,
-    size,
-    quality,
-    output_format: outputFormat,
-    n,
-    mode,
-    images
-  };
-}
-
-function normalizeReferenceImage(item, index) {
-  if (!item || typeof item !== "object") return null;
-  const remoteUrl = stringValue(item.image_url || item.url).trim();
-  if (/^https?:\/\//i.test(remoteUrl)) {
-    return {
-      referenceId: stringValue(item.referenceId).trim(),
-      name: safeFilename(item.name || `reference-${index + 1}`),
-      type: stringValue(item.type || "image/*").toLowerCase(),
-      url: remoteUrl,
-      image_url: remoteUrl
-    };
-  }
-  return null;
-}
-
-function normalizeStructuredReferenceImage(item, index) {
-  if (!item || typeof item !== "object") return null;
-  const remoteUrl = stringValue(item.url).trim();
-  if (/^https?:\/\//i.test(remoteUrl)) {
-    return {
-      referenceId: stringValue(item.reference_id || item.referenceId).trim(),
-      entityName: stringValue(item.entity_name).trim(),
-      role: stringValue(item.role).trim(),
-      usage: stringValue(item.usage).trim(),
-      name: safeFilename(item.display_name || item.entity_name || `reference-${index + 1}`),
-      type: stringValue(item.mime_type || "image/*").toLowerCase(),
-      url: remoteUrl,
-      image_url: remoteUrl
-    };
-  }
-  return null;
-}
-
-function normalizeSize(value) {
-  const size = stringValue(value).trim();
-  if (!size || size === "auto") return "auto";
-  if (/^\d{2,5}x\d{2,5}$/.test(size)) return size;
-  return "auto";
 }
 
 async function handlePromptBackendImageGeneration(body, request) {
@@ -467,12 +333,20 @@ function invalidFinalRequest(code, message, statusCode = 400) {
 }
 
 function promptImageBackendConfig(request) {
-  const path = stringValue(process.env.PROMPT_IMAGE_BACKEND_GENERATION_PATH).trim() || PROMPT_IMAGE_BACKEND_DEFAULT_PATH;
+  const config = getRuntimeConfig();
+  const path = stringValue(
+    process.env.PROMPT_IMAGE_BACKEND_GENERATION_PATH || config.promptImageBackendGenerationPath
+  ).trim() || PROMPT_IMAGE_BACKEND_DEFAULT_PATH;
   return {
-    baseUrl: stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim().replace(/\/+$/, ""),
+    baseUrl: stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL || config.promptImageBackendBaseUrl).trim().replace(/\/+$/, ""),
     path: path.startsWith("/") ? path : `/${path}`,
-    apiKey: stringValue(process.env.PROMPT_IMAGE_BACKEND_API_KEY).trim(),
-    timeoutSeconds: clampInt(process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS, 1, 900, PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS),
+    apiKey: stringValue(process.env.PROMPT_IMAGE_BACKEND_API_KEY || config.promptImageBackendApiKey).trim(),
+    timeoutSeconds: clampInt(
+      process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS || config.promptImageBackendTimeoutSeconds,
+      1,
+      900,
+      PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS
+    ),
     requestHost: request.headers.host || `${HOST}:${PORT}`
   };
 }
@@ -670,14 +544,7 @@ function whitelistPromptBackendImage(image) {
   const url = stringValue(image.url).trim();
   if (!/^https?:\/\//i.test(url)) return null;
   if (!isAllowedBackendImageUrl(url)) return null;
-  const result = { url };
-  const width = Number(image.width);
-  const height = Number(image.height);
-  const format = stringValue(image.format).trim();
-  if (Number.isInteger(width) && width > 0) result.width = width;
-  if (Number.isInteger(height) && height > 0) result.height = height;
-  if (/^[a-z0-9.+-]{1,24}$/i.test(format)) result.format = format;
-  return result;
+  return { url };
 }
 
 function isAllowedBackendImageUrl(value) {
@@ -696,7 +563,7 @@ function isAllowedBackendImageUrl(value) {
 
 function isConfiguredBackendGeneratedImageUrl(parsed) {
   if (!/^\/api\/v1\/generated-images\/img_[a-f0-9]{32}$/i.test(parsed.pathname)) return false;
-  const backendBase = stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim();
+  const backendBase = stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL || getRuntimeConfig().promptImageBackendBaseUrl).trim();
   if (!backendBase) return false;
   let backend;
   try {
@@ -764,349 +631,6 @@ function legacyImageJobsDisabledPayload() {
   };
 }
 
-function enqueue(job) {
-  queue.push(job.jobId);
-  schedule();
-}
-
-function schedule() {
-  const maxConcurrency = getRuntimeConfig().maxConcurrency;
-  while (runningCount < maxConcurrency && queue.length) {
-    const jobId = queue.shift();
-    const job = jobs.get(jobId);
-    if (!job || job.status !== "queued") continue;
-    runningCount += 1;
-    runJob(job).finally(() => {
-      runningCount -= 1;
-      schedule();
-    });
-  }
-}
-
-async function runJob(job) {
-  job.status = "running";
-  job.updatedAt = Date.now();
-  console.log("[gateway] job running", { jobId: job.jobId });
-
-  try {
-    const images = getRuntimeConfig().upstreamMode === "live"
-      ? await runLiveUpstream(job.request)
-      : await runMockUpstream(job.request, job.jobId);
-    job.images = images;
-    job.status = "succeeded";
-    job.error = null;
-    job.updatedAt = Date.now();
-    console.log("[gateway] job succeeded", {
-      jobId: job.jobId,
-      images: images.length
-    });
-  } catch (error) {
-    job.images = [];
-    job.status = "failed";
-    job.error = errorToMessage(error);
-    job.updatedAt = Date.now();
-    console.error("[gateway] job failed", {
-      jobId: job.jobId,
-      message: job.error
-    });
-  }
-}
-
-async function runMockUpstream(request, jobId) {
-  await sleep(700 + Math.floor(Math.random() * 600));
-  if (/fail/i.test(request.prompt)) {
-    throw new Error("mock 失败：提示词触发失败路径。");
-  }
-
-  const count = Math.max(1, request.n);
-  return Array.from({ length: count }, (_, index) => {
-    const svg = mockSvg(request.prompt, jobId, index + 1, request.mode);
-    return {
-      mime: "image/svg+xml",
-      b64_json: Buffer.from(svg, "utf8").toString("base64"),
-      url: "",
-      revised_prompt: request.prompt
-    };
-  });
-}
-
-async function runLiveUpstream(request) {
-  const config = getRuntimeConfig();
-  if (!activeKeys(config).length) {
-    throw new Error("服务端未配置图片生成密钥。");
-  }
-
-  if (request.mode === "image" && request.images.length) {
-    return config.imageTransport === "edit"
-      ? postLiveImageEditMultipart(request, config)
-      : postLiveImageUrlJson(request, config);
-  }
-
-  return postLiveJson(config.baseUrl, baseUpstreamPayload(request));
-}
-
-function baseUpstreamPayload(request) {
-  const payload = {
-    model: request.model,
-    prompt: request.prompt,
-    n: request.n,
-    size: request.size,
-    format: request.output_format
-  };
-  if (payload.size === "auto") delete payload.size;
-  if (request.quality && request.quality !== "auto") payload.quality = request.quality;
-  return payload;
-}
-
-async function postLiveJson(kind, payload) {
-  const body = JSON.stringify(payload);
-  const json = await fetchUpstream(kind, (credential) => ({
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${credential.key}`,
-      "Content-Type": "application/json"
-    },
-    body
-  }));
-  return extractImages(json, payload.format);
-}
-
-async function postLiveImageUrlJson(request, config = getRuntimeConfig()) {
-  const referenceUrls = request.images
-    .map((image) => image.image_url || image.url)
-    .filter(Boolean);
-  if (!referenceUrls.length) {
-    throw httpError(400, "missing_reference_image_url", "图生图需要至少一张参考图 URL。");
-  }
-  const count = Math.max(1, Math.min(request.n || 1, 16));
-  const slots = Array.from({ length: count });
-  const batches = await mapWithConcurrency(slots, Math.min(2, count), () => (
-    postSingleLiveImageUrlJson(request, referenceUrls, config, 1)
-  ));
-  const images = batches.flat();
-  return images.slice(0, count);
-}
-
-async function postSingleLiveImageUrlJson(request, referenceUrls, config, count) {
-  const payload = {
-    ...baseUpstreamPayload({
-      ...request,
-      n: Math.max(1, Math.min(count || 1, 16)),
-      model: config.imageModel || "gpt-image-2"
-    }),
-    reference_images: referenceUrls
-  };
-  const body = JSON.stringify(payload);
-  const json = await fetchUpstream(config.baseUrl, (credential) => ({
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${credential.key}`,
-      "Content-Type": "application/json"
-    },
-    body
-  }));
-  return extractImages(json, request.output_format);
-}
-
-async function postLiveImageEditMultipart(request, config = getRuntimeConfig()) {
-  const count = Math.max(1, Math.min(request.n || 1, 16));
-  const images = [];
-  for (let index = 0; index < count; index += 1) {
-    images.push(...await postSingleLiveImageEditMultipart(request, config));
-  }
-  return images.slice(0, count);
-}
-
-async function postSingleLiveImageEditMultipart(request, config = getRuntimeConfig()) {
-  const form = new FormData();
-  form.append("model", config.imageModel || "gpt-image-2");
-  form.append("prompt", request.prompt);
-  form.append("n", "1");
-  if (request.size && request.size !== "auto") form.append("size", request.size);
-
-  for (const image of request.images) {
-    const stored = storedReferenceForRequest(image, request.ownerToken);
-    if (!stored) {
-      throw httpError(400, "missing_reference_file", "编辑接口需要重新上传参考图，历史记录里的图床 URL 不能直接转成文件。");
-    }
-    const blob = new Blob([stored.bytes], { type: stored.type || image.type || "image/png" });
-    form.append("image", blob, stored.name || image.name || "reference.png");
-  }
-
-  const json = await fetchUpstream(config.imageEditUrl, (credential) => ({
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${credential.key}`
-    },
-    body: form
-  }));
-  return extractImages(json, request.output_format);
-}
-
-async function fetchUpstream(kind, initFactory) {
-  const config = getRuntimeConfig();
-  let lastError = null;
-  for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
-    const credential = nextImageApiCredential();
-    try {
-      const init = typeof initFactory === "function" ? initFactory(credential) : initFactory;
-      if (!credential) {
-        throw new Error("服务端未配置图片生成密钥。");
-      }
-      return await fetchUpstreamOnce(kind, init);
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableUpstreamError(error) || attempt === config.retryAttempts) break;
-      const delayMs = retryDelayMs(error, attempt);
-      console.warn("[gateway] upstream retry", {
-        kind,
-        attempt,
-        nextAttempt: attempt + 1,
-        delayMs,
-        keyIndex: credential ? credential.index : 0,
-        keyCount: credential ? credential.total : 0,
-        status: error.status || 0,
-        message: error.message
-      });
-      await sleep(delayMs);
-    }
-  }
-  throw lastError;
-}
-
-async function fetchUpstreamOnce(kind, init) {
-  const config = getRuntimeConfig();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutSeconds * 1000);
-  try {
-    const response = await fetch(resolveUpstreamUrl(kind), {
-      ...init,
-      signal: controller.signal
-    });
-    const text = await response.text();
-    let json = {};
-    try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      json = { rawText: text.slice(0, 1000) };
-    }
-    if (!response.ok) {
-      const detail = upstreamErrorDetail(json, text, response.statusText);
-      throw httpError(response.status, "upstream_failed", `请求失败 ${response.status}：${detail}`, {
-        upstreamStatus: response.status,
-        upstreamEndpoint: kind,
-        upstreamError: detail,
-        retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after"))
-      });
-    }
-    return json;
-  } catch (error) {
-    if (error && error.name === "AbortError") {
-      throw httpError(504, "upstream_timeout", "上游图片生成请求超时。");
-    }
-    if (error && String(error.message || "").toLowerCase() === "terminated") {
-      throw httpError(502, "upstream_terminated", "上游图片生成连接提前中断。");
-    }
-    if (error && String(error.message || "").toLowerCase() === "fetch failed") {
-      throw httpError(502, "upstream_unreachable", "上游图片生成连接失败。");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function isRetryableUpstreamError(error) {
-  if (!error || typeof error.status !== "number") return false;
-  return error.status === 429 || error.status === 502 || error.status === 503 || error.status === 504;
-}
-
-function retryDelayMs(error, attempt) {
-  const retryAfterMs = Number(error && error.retryAfterMs);
-  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-    return Math.min(UPSTREAM_RETRY_MAX_DELAY_MS, Math.max(1000, retryAfterMs));
-  }
-  return Math.min(UPSTREAM_RETRY_MAX_DELAY_MS, UPSTREAM_RETRY_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1)));
-}
-
-async function mapWithConcurrency(items, limit, mapper) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(limit || 1, items.length));
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index], index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-function parseRetryAfterMs(value) {
-  if (!value) return 0;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return Math.max(0, Math.floor(seconds * 1000));
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return 0;
-  return Math.max(0, timestamp - Date.now());
-}
-
-function resolveUpstreamUrl(kind) {
-  if (/^https?:\/\//i.test(kind)) return kind;
-  return getRuntimeConfig().baseUrl;
-}
-
-function extractImages(json, format = "png") {
-  const found = [];
-  const seen = new Set();
-
-  if (Array.isArray(json && json.data)) {
-    json.data.forEach((item) => pushImage(item));
-  }
-
-  if (Array.isArray(json && json.output)) {
-    json.output.forEach((item) => {
-      if (item && item.type === "image_generation_call" && item.result) {
-        pushImage({ b64_json: item.result, revised_prompt: item.revised_prompt });
-      }
-      if (Array.isArray(item && item.content)) {
-        item.content.forEach((part) => pushImage(part));
-      }
-    });
-  }
-
-  walk(json, (node) => {
-    if (!node || typeof node !== "object") return;
-    if (node.b64_json || node.base64 || node.image_base64 || node.image || node.url || node.image_url || (node.type === "image_generation_call" && node.result)) {
-      pushImage(node.type === "image_generation_call" ? { b64_json: node.result, revised_prompt: node.revised_prompt } : node);
-    }
-  });
-
-  if (!found.length) {
-    throw new Error("接口返回里没有找到可预览的图片字段。");
-  }
-
-  return found;
-
-  function pushImage(item) {
-    if (!item || typeof item !== "object") return;
-    const imageValue = item.image && typeof item.image === "string" ? item.image : "";
-    const base64 = cleanBase64(item.b64_json || item.base64 || item.image_base64 || item.result || imageValue || "");
-    const url = [item.url, item.image_url, item.output_url].find((value) => typeof value === "string" && /^https?:\/\//i.test(value)) || "";
-    const key = base64 || url;
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    found.push({
-      mime: imageMime(item, format),
-      b64_json: base64,
-      url,
-      revised_prompt: stringValue(item.revised_prompt)
-    });
-  }
-}
-
 async function uploadReferenceFromRequest(request, ownerToken, host) {
   const { fields, files } = await readMultipartForm(request);
   const file = files.find((item) => item.fieldName === "image") || files[0];
@@ -1138,7 +662,7 @@ async function uploadReferenceFromRequest(request, ownerToken, host) {
 }
 
 function storeReferenceImage(file, ownerToken, rawName) {
-  const referenceId = makeJobId();
+  const referenceId = makeReferenceId();
   const item = {
     referenceId,
     ownerToken,
@@ -1245,37 +769,22 @@ function serveReferenceImage(response, referenceId) {
   response.end(item.bytes);
 }
 
-function publicJob(job) {
-  return {
-    jobId: job.jobId,
-    prompt: job.prompt,
-    status: job.status,
-    images: job.images,
-    error: job.error,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt
-  };
-}
-
 function defaultRuntimeConfig() {
-  const envKeys = parseApiKeys(process.env.IMAGE_API_KEYS, process.env.IMAGE_API_KEY);
   return {
-    upstreamMode: (process.env.UPSTREAM_MODE || "live").toLowerCase() === "mock" ? "mock" : "live",
-    baseUrl: normalizeEndpoint(process.env.IMAGE_API_BASE || "https://memefast.top/v1/images/generations"),
-    imageEditUrl: normalizeEndpoint(process.env.IMAGE_EDIT_BASE || "https://memefast.top/v1/images/edits"),
-    model: stringValue(process.env.IMAGE_MODEL).trim() || "gpt-image-2",
-    imageModel: stringValue(process.env.IMAGE_MODEL_IMAGE || process.env.IMAGE_MODEL_FOR_IMAGE).trim() || "gpt-image-2",
-    imageTransport: stringValue(process.env.IMAGE_TRANSPORT).trim() === "url" ? "url" : "edit",
-    keyMode: envKeys.length > 1 ? "multi" : "single",
-    apiKey: envKeys[0] || "",
-    apiKeys: envKeys,
+    promptImageBackendBaseUrl: optionalEndpoint(process.env.PROMPT_IMAGE_BACKEND_BASE_URL),
+    promptImageBackendGenerationPath: normalizePath(process.env.PROMPT_IMAGE_BACKEND_GENERATION_PATH || PROMPT_IMAGE_BACKEND_DEFAULT_PATH),
+    promptImageBackendApiKey: stringValue(process.env.PROMPT_IMAGE_BACKEND_API_KEY).trim(),
+    promptImageBackendTimeoutSeconds: clampInt(
+      process.env.PROMPT_IMAGE_BACKEND_TIMEOUT_SECONDS,
+      1,
+      900,
+      PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS
+    ),
     imageHostMode: (process.env.IMAGE_HOST_MODE || "imgbb").toLowerCase() === "local" ? "local" : "imgbb",
     imageHostUploadUrl: normalizeEndpoint(process.env.IMGBB_UPLOAD_URL || "https://api.imgbb.com/1/upload"),
     imageHostApiKey: stringValue(process.env.IMGBB_API_KEY || process.env.IMAGE_HOST_API_KEY).trim(),
     imageHostExpirationSeconds: clampInt(process.env.IMGBB_EXPIRATION_SECONDS, 0, 15552000, 0),
-    maxConcurrency: parseMaxConcurrency(process.env.MAX_CONCURRENCY, envKeys.length > 1 ? Math.min(envKeys.length, 5) : 1),
-    requestTimeoutSeconds: clampInt(process.env.REQUEST_TIMEOUT_SECONDS, 10, 900, 180),
-    retryAttempts: clampInt(process.env.UPSTREAM_RETRY_ATTEMPTS, 1, 5, 5)
+    requestTimeoutSeconds: clampInt(process.env.REQUEST_TIMEOUT_SECONDS, 10, 900, 180)
   };
 }
 
@@ -1283,7 +792,7 @@ async function loadRuntimeConfig() {
   const defaults = defaultRuntimeConfig();
   if (!existsSync(CONFIG_FILE)) return defaults;
   try {
-    const raw = JSON.parse(await readFile(CONFIG_FILE, "utf8"));
+    const raw = parseRuntimeConfigText(await readFile(CONFIG_FILE, "utf8"));
     return sanitizeRuntimeConfig(raw, defaults);
   } catch (error) {
     console.warn("[gateway] failed to load runtime config, using env/defaults", {
@@ -1294,6 +803,70 @@ async function loadRuntimeConfig() {
   }
 }
 
+function parseRuntimeConfigText(text) {
+  const source = String(text || "").trim();
+  if (!source) return {};
+
+  const direct = tryParseJsonObject(source);
+  if (direct) return direct;
+
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced) {
+    const parsed = tryParseJsonObject(fenced[1]);
+    if (parsed) return parsed;
+  }
+
+  const objectText = extractFirstJsonObject(source);
+  if (objectText) {
+    const parsed = tryParseJsonObject(objectText);
+    if (parsed) return parsed;
+  }
+
+  return {};
+}
+
+function tryParseJsonObject(text) {
+  try {
+    const parsed = JSON.parse(String(text || "").trim());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstJsonObject(text) {
+  const source = String(text || "");
+  const start = source.indexOf("{");
+  if (start === -1) return "";
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  return "";
+}
+
 async function saveRuntimeConfig(config) {
   await mkdir(dirname(CONFIG_FILE), { recursive: true });
   await writeFile(CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, "utf8");
@@ -1301,28 +874,21 @@ async function saveRuntimeConfig(config) {
 
 function sanitizeRuntimeConfig(value, defaults = defaultRuntimeConfig()) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const baseUrl = normalizeEndpoint(source.baseUrl || defaults.baseUrl);
-  const keyMode = source.keyMode === "multi" ? "multi" : "single";
-  const apiKeys = parseApiKeys(source.apiKeys, source.apiKey);
-  const singleKey = stringValue(source.apiKey).trim() || apiKeys[0] || "";
-  const maxConcurrencyFallback = keyMode === "multi" && apiKeys.length ? Math.min(apiKeys.length, 5) : 1;
   return {
-    upstreamMode: source.upstreamMode === "mock" ? "mock" : "live",
-    baseUrl,
-    imageEditUrl: normalizeEndpoint(source.imageEditUrl || defaults.imageEditUrl || "https://memefast.top/v1/images/edits"),
-    model: stringValue(source.model).trim() || defaults.model || "gpt-image-2",
-    imageModel: stringValue(source.imageModel).trim() || defaults.imageModel || "gpt-image-2",
-    imageTransport: source.imageTransport === "url" ? "url" : "edit",
-    keyMode,
-    apiKey: keyMode === "single" ? singleKey : "",
-    apiKeys: keyMode === "multi" ? apiKeys : singleKey ? [singleKey] : [],
+    promptImageBackendBaseUrl: optionalEndpoint(source.promptImageBackendBaseUrl || defaults.promptImageBackendBaseUrl),
+    promptImageBackendGenerationPath: normalizePath(source.promptImageBackendGenerationPath || defaults.promptImageBackendGenerationPath || PROMPT_IMAGE_BACKEND_DEFAULT_PATH),
+    promptImageBackendApiKey: stringValue(source.promptImageBackendApiKey).trim() || defaults.promptImageBackendApiKey || "",
+    promptImageBackendTimeoutSeconds: clampInt(
+      source.promptImageBackendTimeoutSeconds,
+      1,
+      900,
+      defaults.promptImageBackendTimeoutSeconds || PROMPT_IMAGE_BACKEND_DEFAULT_TIMEOUT_SECONDS
+    ),
     imageHostMode: source.imageHostMode === "local" ? "local" : "imgbb",
     imageHostUploadUrl: normalizeEndpoint(source.imageHostUploadUrl || defaults.imageHostUploadUrl || "https://api.imgbb.com/1/upload"),
     imageHostApiKey: stringValue(source.imageHostApiKey).trim() || defaults.imageHostApiKey || "",
     imageHostExpirationSeconds: clampInt(source.imageHostExpirationSeconds, 0, 15552000, defaults.imageHostExpirationSeconds || 0),
-    maxConcurrency: parseMaxConcurrency(source.maxConcurrency, maxConcurrencyFallback),
-    requestTimeoutSeconds: clampInt(source.requestTimeoutSeconds, 10, 900, defaults.requestTimeoutSeconds || 180),
-    retryAttempts: clampInt(source.retryAttempts, 1, 5, defaults.retryAttempts || 5)
+    requestTimeoutSeconds: clampInt(source.requestTimeoutSeconds, 10, 900, defaults.requestTimeoutSeconds || 180)
   };
 }
 
@@ -1334,25 +900,22 @@ function normalizeEndpoint(value) {
   return endpoint.replace(/\/+$/, "");
 }
 
+function optionalEndpoint(value) {
+  const endpoint = String(value || "").trim();
+  return endpoint ? normalizeEndpoint(endpoint) : "";
+}
+
+function normalizePath(value) {
+  const path = String(value || "").trim() || PROMPT_IMAGE_BACKEND_DEFAULT_PATH;
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
 function getRuntimeConfig() {
   return runtimeConfig || defaultRuntimeConfig();
 }
 
-function activeKeys(config = getRuntimeConfig()) {
-  if (config.keyMode === "multi") return parseApiKeys(config.apiKeys, "");
-  return config.apiKey ? [config.apiKey] : [];
-}
-
-function nextImageApiCredential() {
-  const keys = activeKeys();
-  if (!keys.length) return null;
-  const index = upstreamKeyCursor % keys.length;
-  upstreamKeyCursor = (upstreamKeyCursor + 1) % Number.MAX_SAFE_INTEGER;
-  return {
-    key: keys[index],
-    index: index + 1,
-    total: keys.length
-  };
+function hasPromptImageBackendConfig(config = getRuntimeConfig()) {
+  return Boolean(stringValue(config.promptImageBackendBaseUrl).trim() || stringValue(process.env.PROMPT_IMAGE_BACKEND_BASE_URL).trim());
 }
 
 function configResponse(request) {
@@ -1360,23 +923,17 @@ function configResponse(request) {
   const host = request.headers.host || `${HOST}:${PORT}`;
   return {
     config: {
-      upstreamMode: config.upstreamMode,
-      baseUrl: config.baseUrl,
-      imageEditUrl: config.imageEditUrl,
-      model: config.model,
-      imageModel: config.imageModel,
-      imageTransport: config.imageTransport,
-      keyMode: config.keyMode,
-      apiKeyConfigured: Boolean(config.apiKey),
-      apiKeysConfigured: Array.isArray(config.apiKeys) ? config.apiKeys.length : 0,
+      mode: "live",
+      promptImageBackendBaseUrl: config.promptImageBackendBaseUrl,
+      promptImageBackendGenerationPath: config.promptImageBackendGenerationPath,
+      promptImageBackendApiKeyConfigured: Boolean(config.promptImageBackendApiKey || process.env.PROMPT_IMAGE_BACKEND_API_KEY),
+      promptImageBackendTimeoutSeconds: config.promptImageBackendTimeoutSeconds,
+      promptImageBackendConfigured: hasPromptImageBackendConfig(config),
       imageHostMode: config.imageHostMode,
       imageHostUploadUrl: config.imageHostUploadUrl,
       imageHostApiKeyConfigured: Boolean(config.imageHostApiKey),
       imageHostExpirationSeconds: config.imageHostExpirationSeconds,
-      maxConcurrency: config.maxConcurrency,
-      requestTimeoutSeconds: config.requestTimeoutSeconds,
-      retryAttempts: config.retryAttempts,
-      upstreamKeyCount: activeKeys(config).length
+      requestTimeoutSeconds: config.requestTimeoutSeconds
     },
     paths: requestPaths(host, config),
     configFile: CONFIG_FILE
@@ -1386,12 +943,12 @@ function configResponse(request) {
 function requestPaths(host, config = getRuntimeConfig()) {
   return {
     createJob: `POST http://${host}/api/v1/image-generations`,
-    getJob: `GET http://${host}/api/image-jobs/<jobId>`,
     config: `GET/POST http://${host}/api/config`,
     uploadReference: `POST http://${host}/api/reference-images`,
     imageHost: config.imageHostMode === "local" ? `GET http://${host}/api/reference-images/<referenceId>` : config.imageHostUploadUrl,
-    textUpstream: `POST ${config.baseUrl}`,
-    imageUpstream: config.imageTransport === "edit" ? `POST ${config.imageEditUrl}` : `POST ${config.baseUrl}`,
+    promptImageBackend: config.promptImageBackendBaseUrl
+      ? `POST ${config.promptImageBackendBaseUrl}${config.promptImageBackendGenerationPath}`
+      : "",
     configFile: CONFIG_FILE
   };
 }
@@ -1529,49 +1086,21 @@ function httpError(status, code, message, details = {}) {
   return error;
 }
 
-function makeJobId() {
+function makeReferenceId() {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const id = typeof randomUUID === "function" ? randomUUID() : randomBytes(32).toString("base64url");
-    if (!jobs.has(id) && !referenceImages.has(id)) return id;
+    if (!referenceImages.has(id)) return id;
   }
   return randomBytes(32).toString("base64url");
 }
 
 function cleanExpiredRecords() {
   const now = Date.now();
-  for (const [jobId, job] of jobs.entries()) {
-    if ((job.status === "succeeded" || job.status === "failed") && now - job.updatedAt > JOB_TTL_MS) {
-      jobs.delete(jobId);
-    }
-  }
   for (const [referenceId, item] of referenceImages.entries()) {
     if (now - item.createdAt > REFERENCE_TTL_MS) {
       referenceImages.delete(referenceId);
     }
   }
-}
-
-function mockSvg(prompt, jobId, index, mode) {
-  const colors = mode === "image"
-    ? ["#f5efe7", "#b65f4b", "#264653"]
-    : ["#eef4ff", "#0057df", "#8f5700"];
-  const escapedPrompt = escapeXml(prompt).slice(0, 160);
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="${colors[0]}"/>
-      <stop offset="1" stop-color="#ffffff"/>
-    </linearGradient>
-  </defs>
-  <rect width="1280" height="720" rx="32" fill="url(#bg)"/>
-  <circle cx="1060" cy="148" r="92" fill="${colors[1]}" opacity=".16"/>
-  <circle cx="160" cy="590" r="136" fill="${colors[2]}" opacity=".12"/>
-  <rect x="126" y="116" width="1028" height="488" rx="34" fill="#ffffff" opacity=".72"/>
-  <text x="168" y="224" font-family="Arial, sans-serif" font-size="42" font-weight="700" fill="#2c2c31">Mock 返图预览 ${index}</text>
-  <text x="168" y="310" font-family="Arial, sans-serif" font-size="34" fill="#3f414a">${escapedPrompt}</text>
-  <text x="168" y="404" font-family="Arial, sans-serif" font-size="24" fill="#6f707d">任务 ${escapeXml(jobId.slice(0, 8))} · ${mode === "image" ? "图生图" : "文生图"} · 本地调试</text>
-</svg>`;
 }
 
 function walk(value, visitor, depth = 0) {
@@ -1584,32 +1113,10 @@ function walk(value, visitor, depth = 0) {
   }
 }
 
-function cleanBase64(value) {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (trimmed.startsWith("data:image/")) return trimmed.split(",")[1] || "";
-  if (/^[A-Za-z0-9+/=\r\n]+$/.test(trimmed) && trimmed.length > 100) {
-    return trimmed.replace(/\s/g, "");
-  }
-  return "";
-}
-
 function errorToMessage(error) {
   if (!error) return "未知错误。";
   if (error.message) return error.message;
   return String(error);
-}
-
-function upstreamErrorDetail(json, rawText, fallback) {
-  const candidates = [];
-  collectErrorText(json && json.error, candidates);
-  collectErrorText(json && json.message, candidates);
-  collectErrorText(json && json.detail, candidates);
-  collectErrorText(json && json.rawText, candidates);
-  collectErrorText(rawText, candidates);
-  collectErrorText(fallback, candidates);
-  return sanitizeErrorText(candidates.find(Boolean) || "上游请求失败。");
 }
 
 function imageHostErrorMessage(json) {
@@ -1649,10 +1156,6 @@ function sanitizeErrorText(value) {
     .slice(0, 1200);
 }
 
-function enumValue(value, options, fallback) {
-  return options.includes(value) ? value : fallback;
-}
-
 function stringValue(value) {
   return typeof value === "string" ? value : "";
 }
@@ -1672,38 +1175,6 @@ function clampInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, Math.floor(number)));
 }
 
-function parseApiKeys(listValue, singleValue) {
-  const keys = [];
-  const seen = new Set();
-  const add = (value) => {
-    const key = String(value || "").trim();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    keys.push(key);
-  };
-  add(singleValue);
-  if (Array.isArray(listValue)) {
-    listValue.forEach(add);
-  } else {
-    String(listValue || "").split(/[\s,;|]+/).forEach(add);
-  }
-  return keys;
-}
-
-function parseMaxConcurrency(value, fallback) {
-  const text = String(value || "").trim().toLowerCase();
-  if (text === "0" || text === "unlimited" || text === "infinite" || text === "infinity" || text === "none") {
-    return Number.POSITIVE_INFINITY;
-  }
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(1, Math.floor(number));
-}
-
-function formatMaxConcurrency(value) {
-  return Number.isFinite(value) ? String(value) : "unlimited";
-}
-
 function safeFilename(name) {
   return String(name || "image.png").replace(/[\\/:*?"<>|]+/g, "-");
 }
@@ -1715,41 +1186,6 @@ function safeUploadName(name) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
   return base || "";
-}
-
-function mimeFromFormat(format) {
-  if (format === "jpeg" || format === "jpg") return "image/jpeg";
-  if (format === "webp") return "image/webp";
-  if (format === "svg" || format === "image/svg+xml") return "image/svg+xml";
-  return "image/png";
-}
-
-function imageMime(item, fallbackFormat) {
-  if (typeof item.mime === "string" && /^image\//.test(item.mime)) return item.mime;
-  if (typeof item.type === "string" && /^image\//.test(item.type)) return item.type;
-  return mimeFromFormat(item.output_format || item.format || fallbackFormat);
-}
-
-function extensionFromMime(mime) {
-  if (mime === "image/jpeg") return "jpg";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/gif") return "gif";
-  if (mime === "image/svg+xml") return "svg";
-  return extname(mime).slice(1) || "png";
-}
-
-function escapeXml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&apos;"
-  }[char]));
-}
-
-function sleep(ms) {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 async function serveConfigPage(request, response) {
@@ -1967,33 +1403,31 @@ function configPageHtml(host) {
         <h1>生图网关配置</h1>
         <div class="sub">局域网可访问 · 无密码 · 保存后立即生效</div>
       </div>
-      <div class="status"><div id="modeText">live</div><div id="keyCount">0 key</div></div>
+      <div class="status"><div id="modeText">live</div><div id="backendStatus">backend missing</div></div>
     </header>
     <main>
-      <label>
-        Base URL
-        <input id="baseUrl" spellcheck="false" autocomplete="off">
-      </label>
-      <label>
-        图生图编辑 URL
-        <input id="imageEditUrl" spellcheck="false" autocomplete="off">
-      </label>
-      <label>
-        默认模型
-        <input id="model" spellcheck="false" autocomplete="off">
-      </label>
-      <label>
-        图生图模型
-        <input id="imageModel" spellcheck="false" autocomplete="off">
-      </label>
-      <label>
-        图生图通道
-        <select id="imageTransport">
-          <option value="edit">edits 文件上传</option>
-          <option value="url">generations URL 数组</option>
-        </select>
-      </label>
-      <p class="hint">文件上传模式按图生图编辑接口提交参考图；URL 数组模式按供应商 generations 合同提交 reference_images。</p>
+      <section class="panel">
+        <h2>最终生图后端</h2>
+        <label>
+          后端 Base URL
+          <input id="promptImageBackendBaseUrl" spellcheck="false" autocomplete="off">
+        </label>
+        <div class="grid-2">
+          <label>
+            生成接口路径
+            <input id="promptImageBackendGenerationPath" spellcheck="false" autocomplete="off">
+          </label>
+          <label>
+            请求超时秒数
+            <input id="promptImageBackendTimeoutSeconds" type="number" min="1" max="900" step="10">
+          </label>
+        </div>
+        <label>
+          后端 API Key
+          <input id="promptImageBackendApiKey" spellcheck="false" autocomplete="off">
+        </label>
+        <p class="hint">网关只转发到最终生图后端；供应商模型、generations/edits 分流与参考图绑定由后端合同处理。</p>
+      </section>
 
       <section class="panel">
         <h2>请求路径</h2>
@@ -2023,44 +1457,8 @@ function configPageHtml(host) {
           imgbb API Key
           <input id="imageHostApiKey" spellcheck="false" autocomplete="off">
         </label>
-        <p class="hint">edits 文件上传通道可用 local；URL 数组通道需要 imgbb 这类公网图床。</p>
+        <p class="hint">local 仅适合同机调试；需要公网访问参考图时使用 imgbb。</p>
       </section>
-
-      <div class="tabs">
-        <button id="singleTab" type="button">单 key</button>
-        <button id="multiTab" type="button">多 key</button>
-      </div>
-
-      <label id="singleKeyField">
-        API Key
-        <input id="apiKey" spellcheck="false" autocomplete="off">
-      </label>
-      <label id="multiKeyField" hidden>
-        API Keys
-        <textarea id="apiKeys" spellcheck="false" autocomplete="off" placeholder="一行一个 key，也支持逗号、分号或空格分隔"></textarea>
-      </label>
-
-      <div class="grid-2">
-        <label>
-          并发数
-          <input id="maxConcurrency" type="number" min="1" step="1">
-        </label>
-        <label>
-          请求超时秒数
-          <input id="requestTimeoutSeconds" type="number" min="10" max="900" step="10">
-        </label>
-        <label>
-          上游重试次数
-          <input id="retryAttempts" type="number" min="1" max="5" step="1">
-        </label>
-        <label>
-          请求模式
-          <select id="upstreamMode">
-            <option value="live">live</option>
-            <option value="mock">mock</option>
-          </select>
-        </label>
-      </div>
 
       <div class="actions">
         <button class="primary" id="saveBtn" type="button">保存</button>
@@ -2072,10 +1470,7 @@ function configPageHtml(host) {
 
   <script>
     const $ = (id) => document.getElementById(id);
-    let keyMode = "single";
 
-    $("singleTab").addEventListener("click", () => setKeyMode("single"));
-    $("multiTab").addEventListener("click", () => setKeyMode("multi"));
     $("saveBtn").addEventListener("click", saveConfig);
     $("reloadBtn").addEventListener("click", reloadConfig);
 
@@ -2105,22 +1500,15 @@ function configPageHtml(host) {
     async function saveConfig() {
       setFeedback("正在保存。");
       const payload = {
-        upstreamMode: $("upstreamMode").value,
-        baseUrl: $("baseUrl").value.trim(),
-        imageEditUrl: $("imageEditUrl").value.trim(),
-        model: $("model").value.trim(),
-        imageModel: $("imageModel").value.trim(),
-        imageTransport: $("imageTransport").value,
-        keyMode,
-        apiKey: $("apiKey").value.trim(),
-        apiKeys: $("apiKeys").value.split(/[\\n,;\\s]+/).map((item) => item.trim()).filter(Boolean),
+        promptImageBackendBaseUrl: $("promptImageBackendBaseUrl").value.trim(),
+        promptImageBackendGenerationPath: $("promptImageBackendGenerationPath").value.trim(),
+        promptImageBackendApiKey: $("promptImageBackendApiKey").value.trim(),
+        promptImageBackendTimeoutSeconds: Number($("promptImageBackendTimeoutSeconds").value || 120),
         imageHostMode: $("imageHostMode").value,
         imageHostUploadUrl: $("imageHostUploadUrl").value.trim(),
         imageHostApiKey: $("imageHostApiKey").value.trim(),
         imageHostExpirationSeconds: Number($("imageHostExpirationSeconds").value || 0),
-        maxConcurrency: Number($("maxConcurrency").value || 1),
-        requestTimeoutSeconds: Number($("requestTimeoutSeconds").value || 180),
-        retryAttempts: Number($("retryAttempts").value || 5)
+        requestTimeoutSeconds: Number($("promptImageBackendTimeoutSeconds").value || 120)
       };
       const response = await fetch("/api/config", {
         method: "POST",
@@ -2138,47 +1526,28 @@ function configPageHtml(host) {
 
     function renderConfig(payload) {
       const config = payload.config || {};
-      $("baseUrl").value = config.baseUrl || "";
-      $("imageEditUrl").value = config.imageEditUrl || "https://memefast.top/v1/images/edits";
-      $("model").value = config.model || "";
-      $("imageModel").value = config.imageModel || "gpt-image-2";
-      $("imageTransport").value = config.imageTransport || "edit";
-      $("upstreamMode").value = config.upstreamMode || "live";
-      $("apiKey").value = "";
-      $("apiKey").placeholder = config.apiKeyConfigured ? "已配置，留空将清除或覆盖" : "";
-      $("apiKeys").value = "";
-      $("apiKeys").placeholder = config.apiKeysConfigured ? "已配置 " + config.apiKeysConfigured + " 个 key，留空将清除或覆盖" : "一行一个 key，也支持逗号、分号或空格分隔";
+      $("promptImageBackendBaseUrl").value = config.promptImageBackendBaseUrl || "";
+      $("promptImageBackendGenerationPath").value = config.promptImageBackendGenerationPath || "/api/v1/image-generations";
+      $("promptImageBackendApiKey").value = "";
+      $("promptImageBackendApiKey").placeholder = config.promptImageBackendApiKeyConfigured ? "已配置，留空将清除或覆盖" : "";
+      $("promptImageBackendTimeoutSeconds").value = Number.isFinite(Number(config.promptImageBackendTimeoutSeconds)) ? Number(config.promptImageBackendTimeoutSeconds) : 120;
       $("imageHostMode").value = config.imageHostMode || "imgbb";
       $("imageHostUploadUrl").value = config.imageHostUploadUrl || "https://api.imgbb.com/1/upload";
       $("imageHostApiKey").value = "";
       $("imageHostApiKey").placeholder = config.imageHostApiKeyConfigured ? "已配置，留空将清除或覆盖" : "";
       $("imageHostExpirationSeconds").value = Number.isFinite(Number(config.imageHostExpirationSeconds)) ? Number(config.imageHostExpirationSeconds) : 0;
-      $("maxConcurrency").value = Number.isFinite(Number(config.maxConcurrency)) ? Number(config.maxConcurrency) : 1;
-      $("requestTimeoutSeconds").value = Number.isFinite(Number(config.requestTimeoutSeconds)) ? Number(config.requestTimeoutSeconds) : 180;
-      $("retryAttempts").value = Number.isFinite(Number(config.retryAttempts)) ? Number(config.retryAttempts) : 5;
-      $("modeText").textContent = config.upstreamMode || "live";
-      $("keyCount").textContent = (config.upstreamKeyCount || 0) + " key";
-      setKeyMode(config.keyMode === "multi" ? "multi" : "single");
+      $("modeText").textContent = config.mode || "live";
+      $("backendStatus").textContent = config.promptImageBackendConfigured ? "backend configured" : "backend missing";
       const paths = payload.paths || {};
       const rows = [
         ["创建任务", paths.createJob],
-        ["查询任务", paths.getJob],
         ["配置接口", paths.config],
         ["参考图上传", paths.uploadReference],
         ["图床", paths.imageHost],
-        ["文生图上游", paths.textUpstream],
-        ["图生图上游", paths.imageUpstream],
+        ["最终生图后端", paths.promptImageBackend],
         ["配置文件", payload.configFile]
       ];
       $("pathGrid").innerHTML = rows.map(([label, value]) => "<div>" + escapeHtml(label) + "</div><code>" + escapeHtml(value || "") + "</code>").join("");
-    }
-
-    function setKeyMode(mode) {
-      keyMode = mode === "multi" ? "multi" : "single";
-      $("singleTab").classList.toggle("active", keyMode === "single");
-      $("multiTab").classList.toggle("active", keyMode === "multi");
-      $("singleKeyField").hidden = keyMode !== "single";
-      $("multiKeyField").hidden = keyMode !== "multi";
     }
 
     function setFeedback(message, kind = "") {

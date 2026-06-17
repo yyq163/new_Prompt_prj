@@ -51,7 +51,7 @@ const publicResult = await withEnv({
     status: "succeeded",
     images: [{
       image_id: "img_probe",
-      url: "/api/v1/generated-images/img_probe",
+      url: "/api/v1/generated-images/img_1234567890abcdef1234567890abcdef",
       width: 1,
       height: 1,
       format: "png"

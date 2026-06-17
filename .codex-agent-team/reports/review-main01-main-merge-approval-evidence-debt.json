@@ -1,0 +1,76 @@
+{
+  "taskId": "main01-main-merge-review",
+  "task_id": "main01-main-merge-review",
+  "status": "READY_FOR_MAIN_MERGE_APPROVAL_WITH_EVIDENCE_DEBT",
+  "verdict": "approved",
+  "reviewed_at": "2026-06-17T17:40:00+08:00",
+  "summary": "main01 now includes fix05. Automated checks are green, product-page image_reference and text_image both completed successfully in the live browser, and the branch is ready to enter the later user-confirmed main merge execution task. Evidence debt remains around fresh browser header capture, local main divergence, historical superseded reports, and lack of an independent post-fix05 security re-review.",
+  "findings": [
+    {
+      "severity": "medium",
+      "status": "EVIDENCE_DEBT",
+      "title": "Fresh browser header capture not re-collected in the exact final rerun",
+      "details": "Current-run success was observed on the product page, while GET-200 / Content-Type / Cache-Control proof still relies on route tests plus earlier browser instrumentation history."
+    }
+  ],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "ai_tu_gateway_contract_test": "PASS_TESTED",
+    "git_diff_check": "PASS_STATIC",
+    "authoritative_runtime_config_only": "PASS_CONTRACT",
+    "root_reference_upload_public_url_alignment": "PASS_CONTRACT",
+    "gateway_non_2xx_semantics_preserved": "PASS_CONTRACT",
+    "browser_text_image": "PASS_BROWSER",
+    "browser_image_reference_upload": "PASS_BROWSER"
+  },
+  "evidence": [
+    {
+      "command": "git merge --ff-only main01-fix05",
+      "status": "PASS_BRANCH",
+      "details": "fix05 was fast-forward merged into main01."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "141 pass."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=真实配置_toapis.md node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "node api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "16 pass."
+    },
+    {
+      "command": "Live browser image-reference rerun on product page",
+      "status": "PASS_BROWSER",
+      "details": "The page showed 1/16 references, rendered the uploaded reference image, and later showed completed generated output in the product page history and preview."
+    },
+    {
+      "command": "Live browser text-image rerun on product page",
+      "status": "PASS_BROWSER",
+      "details": "A clean text-image rerun completed successfully in the product page and rendered generated output in the preview and history card."
+    }
+  ],
+  "blocking_items": [],
+  "allowed_to_merge_main_now": "no",
+  "allowed_to_merge_main01_now": "yes"
+}

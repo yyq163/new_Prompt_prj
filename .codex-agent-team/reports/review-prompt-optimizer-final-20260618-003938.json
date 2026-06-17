@@ -1,0 +1,44 @@
+{
+  "review_id": "prompt-optimizer-final-20260618-003938",
+  "scope": "prompt optimizer backend/API only",
+  "target_branch": "main01",
+  "fix_branch": "main01-fix07",
+  "taskId": "prompt-optimizer-final-review",
+  "status": "PASS_CONTRACT",
+  "verdict": "pass",
+  "browser_qa": "UNVERIFIED_NOT_APPLICABLE",
+  "start_code_map_refresh": "PASS_STATIC",
+  "final_code_map_refresh": "PASS_STATIC",
+  "latest_codegraph_used": true,
+  "findings": [],
+  "summary": {
+    "code_blockers": [],
+    "contract_blockers": [],
+    "security_blockers": [],
+    "test_blockers": [],
+    "p2_hardening": [
+      "Add deployment-tier allowlist or policy validation for RAGFlow base URL configuration."
+    ],
+    "evidence_debt": [
+      "Post-merge main01 evidence pending until merge is performed."
+    ]
+  },
+  "verification": {
+    "npm_run_check": "PASS_TESTED",
+    "npm_test": "PASS_TESTED",
+    "prompt_optimizer_tests": "PASS_TESTED",
+    "http_invalid_body_tests": "PASS_TESTED",
+    "image_api_tests": "PASS_TESTED",
+    "final_v1_4_evidence": "PASS_EVIDENCE",
+    "provider_config": "PASS_TESTED",
+    "git_diff_check": "PASS_TESTED",
+    "security_diff_scan": "PASS_SECURITY",
+    "gitleaks": "UNVERIFIED_NOT_INSTALLED"
+  },
+  "decision": {
+    "prompt_optimizer_complete": true,
+    "fix_branch_required": true,
+    "allowed_to_continue_dev": true,
+    "allowed_to_merge_main_now": false
+  }
+}

@@ -232,6 +232,19 @@ test("task_type is separated from generation_mode", async () => {
   assertScenePrompt(sceneImageToImage.payload.optimized_prompt, ["庭院"]);
 });
 
+test("prompt optimizer rejects text_image references like the final API contract", async () => {
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "生成 @山间晨雾。",
+    references: [reference("ref_scene", "山间晨雾", "scene", "scene_reference")]
+  }, offlineOptions());
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.status, "failed");
+  assert.equal(result.payload.error_code, "REFERENCES_NOT_ALLOWED");
+  assert.equal("optimized_prompt" in result.payload, false);
+  assertNoPublicLeaks(result.payload);
+});
+
 test("image_reference without references returns needs_clarification and does not include optimized_prompt", async () => {
   const result = await handlePromptOptimization({
     task_type: "image_reference",
@@ -266,6 +279,11 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
   const badCandidates = [
     { choices: [{ message: { content: "任务类型：text_image\n原始需求：雨后森林" } }] },
     { choices: [{ message: { content: JSON.stringify({ reference_id: "unknown_ref", visual_focus: "越权引用" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ asset_id: "asset_1", visual_focus: "越权资产" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "Authorization: Bearer token-123" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "Cookie: sid=secret" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "inline data:image/png;base64,abc" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ internal_prompt: "secret", visual_focus: "内部提示词" }) } }] },
     { code: 100, data: null, message: "internal failure" }
   ];
   for (const candidate of badCandidates) {
@@ -281,6 +299,11 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     assert.equal(result.payload.status, "succeeded");
     assertTextImagePrompt(result.payload.optimized_prompt);
     assert.equal(result.payload.optimized_prompt.includes("越权引用"), false);
+    assert.equal(result.payload.optimized_prompt.includes("越权资产"), false);
+    assert.equal(result.payload.optimized_prompt.includes("Authorization"), false);
+    assert.equal(result.payload.optimized_prompt.includes("Cookie"), false);
+    assert.equal(result.payload.optimized_prompt.includes("data:image"), false);
+    assert.equal(result.payload.optimized_prompt.includes("内部提示词"), false);
     assertNoPublicLeaks(result.payload);
   }
 });
@@ -290,16 +313,21 @@ test("validateRagflowEnhancement rejects internal and unauthorized content", () 
     binding: { resolved_references: [reference("ref_scene", "庭院", "scene", "scene_reference", "https://example.com/ref_scene.png")] }
   };
   assert.equal(validateRagflowEnhancement({ final_prompt: "x" }, context), null);
+  assert.equal(validateRagflowEnhancement({ internal_prompt: "x" }, context), null);
+  assert.equal(validateRagflowEnhancement({ visual_focus: "https://example.com/ref_scene.png" }, context), null);
   assert.equal(validateRagflowEnhancement({ visual_focus: "http://bad.example/x.png" }, context), null);
   assert.equal(validateRagflowEnhancement({ reference_id: "bad_ref", visual_focus: "x" }, context), null);
+  assert.equal(validateRagflowEnhancement({ shot_plan: [{ asset_id: "asset_1", text: "x" }] }, context), null);
+  assert.equal(validateRagflowEnhancement({ template_guidance: "旧字段" }, context), null);
+  assert.deepEqual(validateRagflowEnhancement({ missing_constraints: "补充用户未写明的可见约束" }, context), { missing_constraints: "补充用户未写明的可见约束" });
   assert.deepEqual(validateRagflowEnhancement({ visual_focus: "保留庭院空间层次" }, context), { visual_focus: "保留庭院空间层次" });
 });
 
-test("RAGFlow response parser treats natural language as template guidance, not final prompt", () => {
+test("RAGFlow response parser discards natural language instead of treating it as a prompt", () => {
   const parsed = parseRagflowOptimizedPrompt({
     choices: [{ message: { content: "加强冷色调现场光影和空间纵深。" } }]
   });
-  assert.deepEqual(parsed, { template_guidance: "加强冷色调现场光影和空间纵深。" });
+  assert.equal(parsed, null);
 });
 
 test("RAGFlow config can be read from ai-tu runtime config file", () => {
@@ -375,6 +403,44 @@ test("field-summary output is never returned as optimized_prompt", async () => {
   assert.equal(result.payload.status, "succeeded");
   assertScenePrompt(result.payload.optimized_prompt, ["营帐"]);
   assertNoPromptLeaks(result.payload.optimized_prompt);
+});
+
+test("local fallback does not inject full professional templates without user or knowledge source", async () => {
+  const cases = [
+    {
+      task_type: "character_multiview",
+      prompt: "生成 @云岚 的角色一致性参考图",
+      references: [reference("ref_char", "云岚", "character", "character_reference")],
+      forbidden: /4 格横向布局|正面全身|头部特写|侧面全身|背面全身|A 字站姿/
+    },
+    {
+      task_type: "scene_multiview",
+      prompt: "生成 @茶馆 的场景一致性参考图",
+      references: [reference("ref_scene", "茶馆", "scene", "scene_reference")],
+      forbidden: /3×3|等价多视图|全景镜头|中景镜头|俯视全景|平面布局图|分镜示意图/
+    },
+    {
+      task_type: "prop_multiview",
+      prompt: "生成 @铜铃 的道具一致性参考图",
+      references: [reference("ref_prop", "铜铃", "prop", "prop_reference")],
+      forbidden: /正面视图|侧面视图|背面视图|顶部 \/ 底部视图|结构拆解|材质特写|纹样 \/ 工艺特写/
+    },
+    {
+      task_type: "storyboard",
+      prompt: "少女推开门，看见远处灯塔亮起，随后奔向海岸。",
+      references: [],
+      forbidden: /左侧规划区|右侧剧情宫格区|剧情宫格区必须|宫格数量等于实际 shot 数量/
+    }
+  ];
+  for (const item of cases) {
+    const { forbidden, ...request } = item;
+    const result = await handlePromptOptimization(request, offlineOptions());
+    assert.equal(result.statusCode, 200, item.task_type);
+    assert.equal(result.payload.status, "succeeded", item.task_type);
+    assert.doesNotMatch(result.payload.optimized_prompt, forbidden, item.task_type);
+    assertNoPromptLeaks(result.payload.optimized_prompt);
+    assertNoPublicLeaks(result.payload);
+  }
 });
 
 test("scene_multiview dynamic fixtures do not bleed entities", async () => {
@@ -471,42 +537,31 @@ function assertImageReferencePrompt(prompt, names) {
 }
 
 function assertCharacterPrompt(prompt, name) {
-  assert.match(prompt, /人物多视角|四视图|角色设定图|人物一致性参考图/);
+  assert.match(prompt, /人物多视角|四视图|角色设定图|人物一致性参考图|角色一致性参考图|角色参考图/);
   assertIncludesEntity(prompt, name);
-  for (const word of ["4 格横向布局", "正面全身", "头部特写", "侧面全身", "背面全身", "头到脚", "鞋子", "A 字站姿", "手上无道具", "纯色背景"]) {
-    assert.match(prompt, new RegExp(word));
-  }
   assert.doesNotMatch(prompt, /场景设定参考板结构|道具多视图资产参考板|左侧规划区和右侧剧情宫格区/);
   assertNoPromptLeaks(prompt);
 }
 
 function assertScenePrompt(prompt, names) {
-  assert.match(prompt, /场景多视图|多机位|现场光影|场景设定参考板/);
+  assert.match(prompt, /场景多视图|多机位|现场光影|场景设定参考板|场景一致性参考图|场景参考提示词/);
   for (const name of names) assertIncludesEntity(prompt, name);
-  for (const word of ["全景", "中景", "特写", "俯视", "平面布局", "分镜", "材质", "光影"]) {
-    assert.match(prompt, new RegExp(word));
-  }
   assert.doesNotMatch(prompt, /4 格横向布局|道具多视图资产参考板|左侧规划区和右侧剧情宫格区/);
   assertNoPromptLeaks(prompt);
 }
 
 function assertPropPrompt(prompt, name) {
-  assert.match(prompt, /道具多视图|道具资产|多角度资产图|资产参考板/);
+  assert.match(prompt, /道具多视图|道具资产|多角度资产图|资产参考板|道具一致性参考图|道具资产提示词/);
   assertIncludesEntity(prompt, name);
-  for (const word of ["正面", "侧面", "背面", "结构", "材质", "比例", "特写"]) {
-    assert.match(prompt, new RegExp(word));
-  }
   assert.doesNotMatch(prompt, /角色四视图|场景设定参考板结构|左侧规划区和右侧剧情宫格区/);
   assertNoPromptLeaks(prompt);
 }
 
 function assertStoryboardPrompt(prompt) {
-  for (const word of ["故事板", "分镜", "剧情宫格", "左侧规划区", "右侧剧情宫格区"]) {
+  for (const word of ["故事板", "分镜"]) {
     assert.match(prompt, new RegExp(word));
   }
   assert.match(prompt, /不固定九宫格|不要固定九宫格/);
-  assert.match(prompt, /自适应|shot 数量|宫格数量等于实际 shot 数量/);
-  assert.match(prompt, /不限制 shot 数量|不限制总时长/);
   assert.doesNotMatch(prompt, /采用 3×3 或等价多视图/);
   assertNoPromptLeaks(prompt);
 }
@@ -531,14 +586,14 @@ function assertNoPromptLeaks(prompt) {
   ]) {
     assert.equal(prompt.includes(title), false, `field-summary title leaked: ${title}`);
   }
-  for (const token of ["final_prompt", "compiled_prompt", "enhancement", "RAGFlow", "fallback", "provider payload", "provider_internal_payload", "input_analysis", "storyboard_processing"]) {
+  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider payload", "provider_internal_payload", "input_analysis", "storyboard_processing", "Authorization", "Cookie", "Bearer", "token", "secret", "base64", "data:image"]) {
     assert.equal(prompt.includes(token), false, `internal token leaked: ${token}`);
   }
 }
 
 function assertNoPublicLeaks(payload) {
   const text = JSON.stringify(payload);
-  for (const token of ["final_prompt", "compiled_prompt", "enhancement", "RAGFlow", "fallback", "provider_internal_payload", "provider payload", "apiKey"]) {
+  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider_internal_payload", "provider payload", "apiKey", "Authorization", "Cookie", "Bearer", "token", "secret", "base64", "data:image"]) {
     assert.equal(text.includes(token), false, `forbidden token leaked: ${token}`);
   }
 }

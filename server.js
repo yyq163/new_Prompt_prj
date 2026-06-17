@@ -1,12 +1,14 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, normalize, resolve } from "node:path";
-import { handleImageGeneration } from "./src/routes/image-generations.js";
+import { handleImageGeneration, resolveGeneratedImagePublicBaseUrl } from "./src/routes/image-generations.js";
 import { handlePromptOptimization } from "./src/routes/prompt-optimizations.js";
 import { ImageApiError, v36ImageGenerationErrorPayload } from "./src/core/errors.js";
 import { generatedImageHttpResponse } from "./src/core/generated-image-response.js";
 import { putGeneratedImage } from "./src/core/generated-image-store.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "./src/core/legacy-api.js";
+import { loadAiTuRuntimeConfig } from "./src/providers/ai-tu-provider-adapter.js";
+import { normalizePublicHttpUrl } from "./src/core/url-security.js";
 
 const ROOT = resolve(import.meta.dirname);
 const AI_TU_HTML_FILE = resolve(ROOT, "ai-tu/ai-image-generator.html");
@@ -126,12 +128,34 @@ async function handleReferenceImageUpload(request) {
         message: "参考图只支持 png、jpeg 或 webp。"
       });
     }
+    const bytes = Buffer.from(await file.arrayBuffer());
     const stored = putGeneratedImage({
-      bytes: Buffer.from(await file.arrayBuffer()),
+      bytes,
       mime: mime.replace("image/jpg", "image/jpeg"),
       source: "browser_reference_upload"
     });
     const name = safeUploadName(String(form.get("name") || file.name || "reference.png"));
+    const imageHost = referenceImageHostConfig();
+    if (imageHost.imageHostMode === "imgbb") {
+      const uploaded = await uploadReferenceToImgbb({
+        bytes,
+        type: stored.mime,
+        filename: name
+      }, imageHost, stored.id);
+      return {
+        statusCode: 200,
+        payload: {
+          status: "succeeded",
+          referenceId: `ref_upload_${stored.id.replace(/^img_/, "").slice(0, 18)}`,
+          image_url: uploaded.image_url,
+          url: uploaded.url,
+          name,
+          type: stored.mime,
+          size: stored.size,
+          host: uploaded.host
+        }
+      };
+    }
     return {
       statusCode: 200,
       payload: {
@@ -156,6 +180,113 @@ async function handleReferenceImageUpload(request) {
       }
     };
   }
+}
+
+function referenceImageHostConfig() {
+  const fileConfig = loadAiTuRuntimeConfig();
+  const imageHostMode = stringValue(process.env.IMAGE_HOST_MODE || fileConfig.imageHostMode).trim().toLowerCase() === "imgbb"
+    ? "imgbb"
+    : "local";
+  return {
+    imageHostMode,
+    imageHostUploadUrl: normalizeHttpEndpoint(process.env.IMGBB_UPLOAD_URL || fileConfig.imageHostUploadUrl || "https://api.imgbb.com/1/upload"),
+    imageHostApiKey: stringValue(process.env.IMGBB_API_KEY || process.env.IMAGE_HOST_API_KEY || fileConfig.imageHostApiKey).trim(),
+    imageHostExpirationSeconds: clampInt(process.env.IMGBB_EXPIRATION_SECONDS || fileConfig.imageHostExpirationSeconds, 0, 15_552_000, 0),
+    requestTimeoutSeconds: clampInt(process.env.REQUEST_TIMEOUT_SECONDS || fileConfig.requestTimeoutSeconds, 10, 900, 180)
+  };
+}
+
+async function uploadReferenceToImgbb(file, config, referenceId) {
+  if (!config.imageHostApiKey) {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "IMAGE_HOST_CONFIG_MISSING",
+      message: "图床 API Key 未配置。"
+    });
+  }
+  const url = new URL(config.imageHostUploadUrl);
+  url.searchParams.set("key", config.imageHostApiKey);
+  if (config.imageHostExpirationSeconds >= 60) {
+    url.searchParams.set("expiration", String(config.imageHostExpirationSeconds));
+  }
+  const form = new FormData();
+  form.append("image", new Blob([file.bytes], { type: file.type || "image/png" }), safeUploadName(file.filename || "reference.png"));
+  const name = safeUploadName(file.filename || "");
+  if (name) form.append("name", name);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutSeconds * 1000);
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      body: form,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      throw new ImageApiError({
+        statusCode: 504,
+        status: "failed",
+        errorCode: "IMAGE_HOST_TIMEOUT",
+        message: "图床上传超时，请稍后重试。"
+      });
+    }
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "IMAGE_HOST_UNREACHABLE",
+      message: "图床连接失败。"
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  if (!response.ok || payload.success === false) {
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "IMAGE_HOST_FAILED",
+      message: imageHostErrorMessage(payload) || `图床上传失败，HTTP ${response.status}。`
+    });
+  }
+  const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+  const imageUrl = [
+    data.url,
+    data.display_url,
+    data.image && data.image.url,
+    data.medium && data.medium.url,
+    data.thumb && data.thumb.url
+  ].find((item) => typeof item === "string" && /^https?:\/\//i.test(item));
+  if (!imageUrl) {
+    throw new ImageApiError({
+      statusCode: 502,
+      status: "failed",
+      errorCode: "IMAGE_HOST_MISSING_URL",
+      message: "图床上传成功但没有返回图片 URL。"
+    });
+  }
+  return {
+    referenceId,
+    host: "imgbb",
+    url: normalizePublicHttpUrl(imageUrl, "image_host.url", {
+      allowLocal: false,
+      statusCode: 502,
+      errorCode: "IMAGE_HOST_UNSAFE_URL"
+    }),
+    image_url: normalizePublicHttpUrl(imageUrl, "image_host.url", {
+      allowLocal: false,
+      statusCode: 502,
+      errorCode: "IMAGE_HOST_UNSAFE_URL"
+    })
+  };
 }
 
 async function requestToFormData(request, contentType) {
@@ -183,14 +314,50 @@ async function requestToFormData(request, contentType) {
 }
 
 function publicGeneratedImageUrl(path) {
-  const configuredHost = process.env.HOST || "127.0.0.1";
-  const host = configuredHost === "0.0.0.0" || configuredHost === "::" ? "127.0.0.1" : configuredHost;
-  const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-  return `http://${formattedHost}:${process.env.PORT || 8787}${path}`;
+  const base = resolveGeneratedImagePublicBaseUrl();
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function imageHostErrorMessage(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const candidates = [
+    source.error && source.error.message,
+    source.message,
+    source.status_txt
+  ];
+  return candidates.find((item) => typeof item === "string" && item.trim()) || "";
 }
 
 function safeUploadName(name) {
   return String(name || "reference.png").replace(/[^\p{L}\p{N}._ -]+/gu, "_").slice(0, 120) || "reference.png";
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function clampInt(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
+}
+
+function normalizeHttpEndpoint(value) {
+  const text = stringValue(value).trim();
+  try {
+    const parsed = new URL(text);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("bad protocol");
+    if (parsed.username || parsed.password) throw new Error("bad auth");
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    throw new ImageApiError({
+      statusCode: 400,
+      status: "failed",
+      errorCode: "IMAGE_HOST_CONFIG_INVALID",
+      message: "图床上传地址必须是 http 或 https URL。"
+    });
+  }
 }
 
 function disabledLegacyImageJob() {

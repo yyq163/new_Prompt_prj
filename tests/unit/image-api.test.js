@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleImageGeneration } from "../../src/routes/image-generations.js";
@@ -2600,6 +2600,55 @@ https://provider.example.com/v1/images/generations
   }
 });
 
+test("provider config prefers workspace authoritative markdown over legacy ai-tu json fallback files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ai-tu-config-authoritative-md-"));
+  const previousCwd = process.cwd();
+  const oldConfigFile = process.env.AI_TU_RUNTIME_CONFIG_FILE;
+  const oldBase = process.env.IMAGE_API_BASE;
+  const oldEditBase = process.env.IMAGE_EDIT_BASE;
+  const oldKey = process.env.IMAGE_API_KEY;
+  const oldKeys = process.env.IMAGE_API_KEYS;
+
+  writeFileSync(join(dir, "真实配置_toapis.md"), `${JSON.stringify({
+    baseUrl: "https://toapis.example.com/v1/images/generations",
+    imageEditUrl: "https://toapis.example.com/v1/images/generations",
+    imageTransport: "url",
+    apiKey: "authoritative-key"
+  }, null, 2)}
+
+Authoritative markdown runtime config.
+`, "utf8");
+
+  mkdirSync(join(dir, "ai-tu"), { recursive: true });
+  writeFileSync(join(dir, "ai-tu", "runtime-config.json"), JSON.stringify({
+    baseUrl: "https://legacy.example.com/v1/images/generations",
+    imageEditUrl: "https://legacy.example.com/v1/images/edits",
+    apiKey: "legacy-key"
+  }), "utf8");
+
+  delete process.env.AI_TU_RUNTIME_CONFIG_FILE;
+  delete process.env.IMAGE_API_BASE;
+  delete process.env.IMAGE_EDIT_BASE;
+  delete process.env.IMAGE_API_KEY;
+  delete process.env.IMAGE_API_KEYS;
+  try {
+    process.chdir(dir);
+    const config = defaultProviderConfig();
+    assert.equal(config.baseUrl, "https://toapis.example.com/v1/images/generations");
+    assert.equal(config.imageEditUrl, "https://toapis.example.com/v1/images/generations");
+    assert.equal(config.imageTransport, "url");
+    assert.equal(config.apiKey, "authoritative-key");
+  } finally {
+    process.chdir(previousCwd);
+    restoreEnv("AI_TU_RUNTIME_CONFIG_FILE", oldConfigFile);
+    restoreEnv("IMAGE_API_BASE", oldBase);
+    restoreEnv("IMAGE_EDIT_BASE", oldEditBase);
+    restoreEnv("IMAGE_API_KEY", oldKey);
+    restoreEnv("IMAGE_API_KEYS", oldKeys);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("provider config normalizes legacy edits baseUrl into the fixed text endpoint", () => {
   const dir = mkdtempSync(join(tmpdir(), "ai-tu-config-legacy-edits-"));
   const configFile = join(dir, "runtime-config.json");
@@ -2702,7 +2751,7 @@ test("provider config infers fixed generations and edits endpoints but not model
   try {
     const config = defaultProviderConfig();
     assert.equal(hasRequiredProviderConfig(config), true);
-    assert.equal(config.baseUrl, "https://memefast.top/v1/images/generations");
+    assert.equal(config.baseUrl, "https://toapis.com/v1/images/generations");
     assert.equal(config.imageEditUrl, "https://provider.example.com/v1/images/edits");
     assert.equal(config.model, "gpt-image-2");
     assert.equal(config.imageModel, "gpt-image-2");

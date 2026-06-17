@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "repair",
-  "currentTask": "main01-fix03-premerge-blocker",
+  "currentTask": "main01-fix05-main-merge-review",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -187,7 +187,40 @@
         "review-gate-pass-main01-fix03-premerge-blocker-2026-06-17"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix05-main-merge-review",
+      "status": "blocked",
+      "owner": "lead-codex",
+      "files": [
+        "server.js",
+        "src/providers/ai-tu-provider-adapter.js",
+        "src/routes/prompt-optimizations.js",
+        "ai-tu/gateway/server.js",
+        "README.md",
+        "BACKEND_DESIGN.md",
+        "API_CONTRACTS.md",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+        ".codex-agent-team/reports/main01-fix05-main-merge-review-20260617.md",
+        ".codex-agent-team/reports/review-main01-fix05-main-merge-blocked.json"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-before-work-2026-06-17-fix05",
+        "branch-main01-fix05-from-main01-2026-06-17",
+        "npm-run-check-pass-2026-06-17-fix05",
+        "npm-test-141-pass-2026-06-17-fix05",
+        "provider-config-present-2026-06-17-fix05",
+        "final-v1-4-evidence-scan-pass-2026-06-17-fix05",
+        "node-api-test-ai-tu-v36-gateway-contract-16-pass-2026-06-17-fix05",
+        "review-gate-blocked-main01-fix05-main-merge-review-2026-06-17",
+        "codegraph-status-pendingChanges-0-2026-06-17-fix05"
+      ],
+      "blockers": [
+        "BROWSER_LIVE_COMPLETION_UNRESOLVED"
+      ]
     }
   ],
-  "updatedAt": "2026-06-17T02:55:00+08:00"
+  "updatedAt": "2026-06-17T17:20:00+08:00"
 }

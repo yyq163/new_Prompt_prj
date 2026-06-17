@@ -7,9 +7,11 @@ Final image generation API. The request body is JSON only.
 Malformed JSON and request bodies over `MAX_BODY_SIZE` return HTTP 400 with
 the V3.6 failure envelope (`status: "failed"`, `error.code:
 "INVALID_REQUEST_SCHEMA"`) before request normalization or provider execution.
-Client validation and clarification errors retain their original public
-`error.code` and 4xx status; only provider/upstream failures are mapped to
-generic prompt image backend error codes.
+Client validation errors retain their original public `error.code` and 4xx
+status. Direct Final API clarification responses currently keep
+`status: "needs_clarification"` with HTTP 200; the standalone `ai-tu/gateway`
+proxy normalizes that specific status to HTTP 400. Only provider/upstream
+failures are mapped to generic prompt image backend error codes.
 
 ### Request Fields
 
@@ -152,9 +154,10 @@ is returned as failure; this API must not mock success.
 ## POST /api/reference-images
 
 Browser helper endpoint for local UI acceptance. It accepts one multipart
-`image` file, stores the bytes in the in-memory Generated Image Store, and
-returns a structured local image URL that the page can place into
-`references[].url`.
+`image` file and, under the current authoritative `真实配置_toapis.md`,
+prefers uploading that file to the configured public image host before
+returning the structured `references[].url`. Only when no public image host is
+enabled does it fall back to an in-memory Generated Image Store URL.
 
 This endpoint is not the Final image generation API and does not allow
 URL-only generation requests. `POST /api/v1/image-generations` remains JSON

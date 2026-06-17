@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 
 const ROOT = resolve(join(import.meta.dirname, ".."));
 const HTML_FILE = resolve(ROOT, process.env.IMAGE_HTML_FILE || "ai-image-generator.html");
-const CONFIG_FILE = resolve(ROOT, process.env.RUNTIME_CONFIG_FILE || "runtime-config.json");
+const CONFIG_FILE = resolve(ROOT, process.env.RUNTIME_CONFIG_FILE || "../真实配置_toapis.md");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 8787);
 const OWNER_COOKIE = "ai_image_owner";
@@ -184,7 +184,7 @@ async function handlePromptBackendImageGeneration(body, request) {
   }
 
   if (payload && payload.__backendError) {
-    return finalImageError("PROMPT_IMAGE_BACKEND_UNAVAILABLE", "生图服务暂时不可用，请稍后重试。", 502);
+    return whitelistPromptBackendError(payload.statusCode, payload.payload);
   }
 
   return whitelistPromptBackendResponse(payload);
@@ -504,11 +504,44 @@ async function postPromptImageBackend(requestBody, backend) {
     } catch {
       json = {};
     }
-    if (!response.ok) return { __backendError: true };
+    if (!response.ok) {
+      return {
+        __backendError: true,
+        statusCode: response.status,
+        payload: json
+      };
+    }
     return json;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function whitelistPromptBackendError(statusCode, payload) {
+  const publicStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599 ? statusCode : 502;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return finalImageError("PROMPT_IMAGE_BACKEND_UNAVAILABLE", "生图服务暂时不可用，请稍后重试。", publicStatusCode);
+  }
+  const sourceError = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)
+    ? payload.error
+    : {};
+  const code = sanitizePublicErrorCode(sourceError.code) || "PROMPT_IMAGE_BACKEND_UNAVAILABLE";
+  const message = sanitizePublicErrorMessage(sourceError.message) || "生图服务暂时不可用，请稍后重试。";
+  const error = {
+    code,
+    message
+  };
+  const backendCallSummary = sanitizeBackendCallSummary(sourceError.backend_call_summary || payload.backend_call_summary);
+  if (backendCallSummary) error.backend_call_summary = backendCallSummary;
+  return {
+    statusCode: publicStatusCode,
+    payload: {
+      status: payload.status === "needs_clarification" ? "needs_clarification" : "failed",
+      error,
+      images: [],
+      warnings: whitelistWarnings(payload.warnings)
+    }
+  };
 }
 
 function whitelistPromptBackendResponse(payload) {
@@ -589,7 +622,7 @@ function whitelistWarnings(value) {
 }
 
 function containsUnsafePublicText(value) {
-  return /authorization|bearer|api[_-]?key|token|secret|cookie|base64|b64_json|data:image|final_prompt|compiled_prompt|raw_provider|provider_payload/i.test(String(value || ""));
+  return /authorization|bearer|api[_-]?key|token|secret|cookie|base64|b64_json|data:image|final_prompt|compiled_prompt|raw_provider|provider_payload|https?:|localhost|127\.0\.0\.1|\/api\/v1\/|\/private\/|\/var\/|\/users\//i.test(String(value || ""));
 }
 
 function sanitizePublicErrorCode(value) {
@@ -602,6 +635,55 @@ function sanitizePublicErrorMessage(value) {
   const message = stringValue(value).trim();
   if (!message || containsUnsafePublicText(message)) return "";
   return message.slice(0, 300);
+}
+
+function sanitizeBackendCallSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const summary = {};
+  const stage = safeEnum(value.stage, ["provider_submit", "provider_poll", "provider_normalize", "generated_store", "reference_fetch"]);
+  if (stage) summary.stage = stage;
+  const endpointKind = safeEnum(value.endpoint_kind, ["generations", "edits", "poll", "unknown"]);
+  if (endpointKind) summary.endpoint_kind = endpointKind;
+  const upstreamStatus = Number(value.upstream_status);
+  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) {
+    summary.upstream_status = upstreamStatus;
+  }
+  const providerErrorCode = sanitizeProviderErrorCode(value.provider_error_code);
+  if (providerErrorCode) summary.provider_error_code = providerErrorCode;
+  if (typeof value.retryable === "boolean") summary.retryable = value.retryable;
+  const retryAfterMs = Number(value.retry_after_ms);
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    summary.retry_after_ms = Math.min(3_600_000, Math.floor(retryAfterMs));
+  }
+  return Object.keys(summary).length ? summary : null;
+}
+
+function safeEnum(value, allowed) {
+  const text = stringValue(value).trim();
+  return allowed.includes(text) ? text : "";
+}
+
+function sanitizeProviderErrorCode(value) {
+  const code = stringValue(value).trim();
+  if (!code || code.length > 80 || !/^[A-Za-z0-9_.:-]+$/.test(code) || containsUnsafePublicText(code)) return "";
+  return code;
+}
+
+function normalizePublicImageHostUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(stringValue(value).trim());
+  } catch {
+    throw httpError(502, "image_host_unsafe_url", "图床返回了不安全的图片 URL。");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw httpError(502, "image_host_unsafe_url", "图床返回了不安全的图片 URL。");
+  }
+  if (parsed.username || parsed.password || isUnsafeNetworkHost(parsed.hostname)) {
+    throw httpError(502, "image_host_unsafe_url", "图床返回了不安全的图片 URL。");
+  }
+  parsed.hash = "";
+  return parsed.toString();
 }
 
 function finalImageError(code, message, statusCode) {
@@ -713,7 +795,7 @@ async function uploadReferenceToImgbb(file, rawName, config, referenceId) {
     if (error && error.name === "AbortError") {
       throw httpError(504, "image_host_timeout", "图床上传超时，请检查图床配置或稍后重试。");
     }
-    throw httpError(502, "image_host_unreachable", `图床连接失败：${error.message || String(error)}`);
+    throw httpError(502, "image_host_unreachable", "图床连接失败，请稍后重试。");
   } finally {
     clearTimeout(timeout);
   }
@@ -739,16 +821,15 @@ async function uploadReferenceToImgbb(file, rawName, config, referenceId) {
   if (!imageUrl) {
     throw httpError(502, "image_host_missing_url", "图床上传成功但没有返回图片 URL。");
   }
+  const safeImageUrl = normalizePublicImageHostUrl(imageUrl);
   return {
     referenceId,
     host: "imgbb",
     name: safeFilename(file.filename || rawName || data.title || "reference"),
     type: file.type,
     size: file.bytes.length,
-    url: imageUrl,
-    image_url: imageUrl,
-    viewer_url: data.url_viewer || "",
-    delete_url: data.delete_url || ""
+    url: safeImageUrl,
+    image_url: safeImageUrl
   };
 }
 

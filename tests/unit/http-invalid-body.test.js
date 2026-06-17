@@ -101,6 +101,27 @@ test("HTTP reference image upload returns structured local image URL for browser
   assert.equal(image.headers.get("cache-control"), "no-store");
 });
 
+test("HTTP reference image upload uses PUBLIC_BASE_URL when configured", async (t) => {
+  const app = await startTestServer({
+    maxBodySize: "1mb",
+    publicBaseUrl: "https://img.example.com///"
+  });
+  t.after(async () => {
+    await app.stop();
+  });
+
+  const form = new FormData();
+  form.append("image", new Blob([samplePngBytes()], { type: "image/png" }), "reference.png");
+  const upload = await fetch(`${app.baseUrl}/api/reference-images`, {
+    method: "POST",
+    body: form
+  });
+  const payload = await upload.json();
+  assert.equal(upload.status, 200);
+  assert.match(payload.image_url, /^https:\/\/img\.example\.com\/api\/v1\/generated-images\/img_/);
+  assert.equal(payload.url, payload.image_url);
+});
+
 test("HTTP legacy image job POST and GET are disabled and cannot create provider jobs", async (t) => {
   const app = await startTestServer();
   t.after(async () => {
@@ -185,7 +206,7 @@ function assertNoForbiddenFields(payload) {
   }
 }
 
-async function startTestServer({ maxBodySize = "512b" } = {}) {
+async function startTestServer({ maxBodySize = "512b", publicBaseUrl = "" } = {}) {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), "http-invalid-body-"));
   const configFile = join(dir, "runtime-config.json");
@@ -197,6 +218,7 @@ async function startTestServer({ maxBodySize = "512b" } = {}) {
       PORT: String(port),
       HOST: "127.0.0.1",
       MAX_BODY_SIZE: maxBodySize,
+      PUBLIC_BASE_URL: publicBaseUrl,
       AI_TU_RUNTIME_CONFIG_FILE: configFile,
       IMAGE_API_BASE: "",
       IMAGE_MODEL: "",

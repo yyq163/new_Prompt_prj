@@ -317,6 +317,65 @@ test("ai-tu gateway rejects backend failed status and unsafe image URLs", async 
   }
 });
 
+test("ai-tu gateway preserves backend non-2xx status and safe public error payload", async (t) => {
+  const backend = await startBackend(async (_request, response) => {
+    sendJson(response, 400, {
+      status: "failed",
+      error: {
+        code: "REFERENCE_IMAGE_NOT_ACCESSIBLE",
+        message: "参考图地址无法被生图服务访问。"
+      },
+      images: [],
+      warnings: []
+    });
+  });
+  t.after(backend.stop);
+  const gateway = await startGateway({ PROMPT_IMAGE_BACKEND_BASE_URL: backend.baseUrl });
+  t.after(gateway.stop);
+
+  const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, {
+    task_type: "image_reference",
+    prompt: "基于参考图生成。",
+    references: [validReference()],
+    output: textImageRequest().output
+  });
+  assert.equal(response.status, 400);
+  assertV36Error(response.body, "REFERENCE_IMAGE_NOT_ACCESSIBLE");
+});
+
+test("ai-tu gateway preserves backend 504 timeout and backend_call_summary", async (t) => {
+  const backend = await startBackend(async (_request, response) => {
+    sendJson(response, 504, {
+      status: "failed",
+      error: {
+        code: "IMAGE_PROVIDER_TIMEOUT",
+        message: "图片生成超时，请稍后重试。",
+        backend_call_summary: {
+          stage: "provider_submit",
+          endpoint_kind: "generations",
+          provider_error_code: "request_timeout",
+          retryable: true
+        }
+      },
+      images: [],
+      warnings: []
+    });
+  });
+  t.after(backend.stop);
+  const gateway = await startGateway({ PROMPT_IMAGE_BACKEND_BASE_URL: backend.baseUrl });
+  t.after(gateway.stop);
+
+  const response = await postJson(`${gateway.baseUrl}/api/v1/image-generations`, textImageRequest());
+  assert.equal(response.status, 504);
+  assertV36Error(response.body, "IMAGE_PROVIDER_TIMEOUT");
+  assert.deepEqual(response.body.error.backend_call_summary, {
+    stage: "provider_submit",
+    endpoint_kind: "generations",
+    provider_error_code: "request_timeout",
+    retryable: true
+  });
+});
+
 test("ai-tu gateway does not forward backend internals in public response", async (t) => {
   const backend = await startBackend(async (request, response) => {
     sendJson(response, 200, {

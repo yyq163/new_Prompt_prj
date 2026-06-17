@@ -286,8 +286,7 @@ export function ragflowConfig(env = process.env) {
 function readRagflowRuntimeConfig(env = process.env) {
   const candidates = [
     stringValue(env.AI_TU_RUNTIME_CONFIG_FILE).trim(),
-    resolve(ROOT, "ai-tu/runtime-config.json"),
-    resolve(ROOT, "ai-tu/runtime-config.example.json")
+    resolve(ROOT, "真实配置_toapis.md")
   ].filter(Boolean);
   for (const filePath of candidates) {
     try {

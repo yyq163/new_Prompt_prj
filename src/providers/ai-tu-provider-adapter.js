@@ -16,7 +16,7 @@ import { resolve } from "node:path";
 
 const UPSTREAM_RETRY_BASE_DELAY_MS = 2000;
 const UPSTREAM_RETRY_MAX_DELAY_MS = 30_000;
-const AI_TU_DEFAULT_GENERATIONS_URL = "https://memefast.top/v1/images/generations";
+const AI_TU_DEFAULT_GENERATIONS_URL = "https://toapis.com/v1/images/generations";
 const FIXED_IMAGE_MODEL = "gpt-image-2";
 const PROVIDER_PROMPT_MAX_CHARS = 1000;
 const LONG_RUNNING_SUBMIT_MIN_TIMEOUT_SECONDS = 600;
@@ -825,8 +825,7 @@ export function defaultProviderConfig() {
 export function loadAiTuRuntimeConfig() {
   const candidates = [
     stringValue(process.env.AI_TU_RUNTIME_CONFIG_FILE).trim(),
-    resolve("ai-tu/runtime-config.json"),
-    resolve("ai-tu/runtime-config.example.json")
+    resolve("真实配置_toapis.md")
   ].filter(Boolean);
   for (const filePath of candidates) {
     try {

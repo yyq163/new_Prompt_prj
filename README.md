@@ -19,7 +19,7 @@ HTTP 请求体必须是合法 JSON，且不能超过 `MAX_BODY_SIZE`。非法 JS
 
 ## Provider 配置
 
-服务优先从环境变量读取真实 provider 配置；如果未设置，则只读读取 `ai-tu/runtime-config.json`，也可以用 `AI_TU_RUNTIME_CONFIG_FILE` 指向 ai-tu 的运行时配置文件。
+服务优先从环境变量读取真实 provider 配置；如果未设置，则当前工作区默认只读读取根目录 `真实配置_toapis.md`。当前仓库只保留这一份权威运行时配置文件；如需临时覆盖，只能通过 `AI_TU_RUNTIME_CONFIG_FILE` 显式指定。
 
 - `IMAGE_API_BASE`
 - `IMAGE_EDIT_BASE`
@@ -31,7 +31,7 @@ HTTP 请求体必须是合法 JSON，且不能超过 `MAX_BODY_SIZE`。非法 JS
 - `IMAGE_PROVIDER_POLL_INTERVAL_SECONDS`
 - `PUBLIC_BASE_URL`
 
-Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、`IMAGE_MODEL_IMAGE`、`IMAGE_MODEL_FOR_IMAGE`、`model` 或 `imageModel` 覆盖，也不会 fallback 到 `gpt-image-2-all`、`gpt-image-1`、`dall-e-*`。文生图 / 无 references 请求只会提交到 `/v1/images/generations`；图生图 / 有 references 请求只会提交到 `/v1/images/edits`。缺少 provider key、generations endpoint 或 edits endpoint 时，服务返回 `PROVIDER_CONFIG_MISSING` 或配置错误，不会返回假成功。
+Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、`IMAGE_MODEL_IMAGE`、`IMAGE_MODEL_FOR_IMAGE`、`model` 或 `imageModel` 覆盖，也不会 fallback 到 `gpt-image-2-all`、`gpt-image-1`、`dall-e-*`。在当前权威 `toapis` 配置下，文生图 / 无 references 请求和图生图 / 有 references 请求都会提交到 `/v1/images/generations`；图生图通过 `reference_images` 传递结构化引用。缺少 provider key 或 generations endpoint 时，服务返回 `PROVIDER_CONFIG_MISSING` 或配置错误，不会返回假成功。
 
 `PUBLIC_BASE_URL` 用于生成 Generated Image Store 的公网图片 URL。生产环境必须配置 HTTP(S) base URL；服务会去掉尾部 `/` 后拼接 `/api/v1/generated-images/:image_id`。本地开发未配置时才回退到当前本地 host，不在生产环境静默返回 `127.0.0.1`。
 
@@ -39,7 +39,7 @@ Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、
 
 - 不运行时 import/require `ai-tu/gateway/server.js`。
 - `POST /api/v1/image-generations` 不接收图片文件上传，仍只接收 JSON。
-- `POST /api/reference-images` 仅作为本地浏览器测试台辅助入口，把用户选择的参考图写入短期 Generated Image Store，并返回可放入结构化 `references[].url` 的服务本地 URL；它不是 Final API 验收入口，也不支持 URL-only 生图绕过。
+- `POST /api/reference-images` 仅作为本地浏览器测试台辅助入口；在当前权威 `真实配置_toapis.md` 下，它会优先把用户选择的参考图上传到配置的公网图床，并返回可放入结构化 `references[].url` 的公网 URL。只有未启用公网图床时才回退到服务本地 Generated Image Store URL。它不是 Final API 验收入口，也不支持 URL-only 生图绕过。
 - 不做图床上传或长期参考图托管。
 - `references[]` 采用严格结构化协议，不支持只有 URL 的引用对象：`reference_id`、`entity_name`、`entity_type`、`role`、`url` 均为必填字段，且 `reference_id` 在单次请求内必须唯一。
 - `entity_type` 与 `role` 必须使用 API 合同中的枚举值；`pattern_reference` 仅兼容映射为 `ornament_reference`。

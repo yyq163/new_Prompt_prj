@@ -55,7 +55,7 @@ Provider model and route selection are fixed by Final API contract:
 
 - Provider payload `model` is always `gpt-image-2`.
 - `text_to_image` / no references uses `/v1/images/generations`.
-- `image_to_image` / one or more references uses `/v1/images/edits`.
+- `image_to_image` / one or more references uses the same `/v1/images/generations` submit endpoint under the current authoritative `toapis` config.
 - `task_type` never changes the model.
 - Runtime `model` / `imageModel` config values are ignored for Final API image
   generation and cannot fall back to `gpt-image-2-all`, `gpt-image-1`, or
@@ -64,8 +64,9 @@ Provider model and route selection are fixed by Final API contract:
   `/api/reference-images`, which stores bytes in Generated Image Store and
   returns a service local URL for structured `references[].url`.
 - Reference-backed provider calls fetch those structured reference URLs and
-  submit them to `/v1/images/edits` as multipart image parts. The public Final
-  API endpoint itself remains JSON-only.
+  submit them to the configured `/v1/images/generations` endpoint. In the
+  current authoritative `toapis` path this is a JSON submit with
+  `reference_images`; the public Final API endpoint itself remains JSON-only.
 - Provider-returned external URLs are public-URL validated before entering
   `images[].url`; unsafe local/private/provider URLs fail instead of becoming
   public success output.

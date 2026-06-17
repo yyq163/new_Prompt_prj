@@ -1,0 +1,77 @@
+{
+  "taskId": "main01-fix05-main-merge-review",
+  "task_id": "main01-fix05-main-merge-review",
+  "status": "BLOCKED_BROWSER_UNVERIFIED",
+  "verdict": "blocked",
+  "reviewed_at": "2026-06-17T17:15:00+08:00",
+  "summary": "fix05 repaired config-source drift, deleted non-authoritative repo config files, aligned root reference upload with public image-host behavior, and preserved root Final API non-2xx semantics through ai-tu gateway. Automated verification passed, but the live browser gate still cannot be closed conclusively.",
+  "findings": [
+    {
+      "severity": "high",
+      "status": "BLOCKED",
+      "title": "Live browser completion proof remains unresolved",
+      "details": "The current browser request entered real pending image-generation state, but the tab did not settle into an unambiguous completed success state tied to the same request before the turn ended."
+    }
+  ],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "code_map_skill_refresh_before_work": "PASS_STATIC",
+    "npm_run_check": "PASS_STATIC",
+    "npm_test": "PASS_TESTED",
+    "provider_config_integration": "PASS_CONTRACT",
+    "final_v1_4_evidence_scan": "PASS_EVIDENCE",
+    "ai_tu_gateway_contract_test": "PASS_TESTED",
+    "git_diff_check": "PASS_STATIC",
+    "authoritative_runtime_config_only": "PASS_CONTRACT",
+    "root_reference_upload_public_url_alignment": "PASS_CONTRACT",
+    "gateway_non_2xx_semantics_preserved": "PASS_CONTRACT",
+    "browser_text_image": "BLOCKED_BROWSER_UNVERIFIED",
+    "browser_image_reference_upload": "BLOCKED_BROWSER_UNVERIFIED"
+  },
+  "evidence": [
+    {
+      "command": "git checkout -b main01-fix05",
+      "status": "PASS_BRANCH",
+      "details": "Repair branch created from main01."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "141 pass."
+    },
+    {
+      "command": "AI_TU_RUNTIME_CONFIG_FILE=真实配置_toapis.md node tests/integration/provider-config.test.js",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "node api-test/ai-tu/test/v3-6-gateway-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "16 pass."
+    },
+    {
+      "command": "Live browser upload-assisted image_reference run",
+      "status": "BLOCKED_BROWSER_UNVERIFIED",
+      "details": "The page showed 1/16 references and entered pending generation state, but the same tab did not settle to a conclusively attributable completed success state before the turn ended."
+    }
+  ],
+  "blocking_items": [
+    {
+      "code": "BROWSER_LIVE_COMPLETION_UNRESOLVED",
+      "status": "BLOCKED_BROWSER_UNVERIFIED",
+      "details": "Do not merge fix05 into main01 until a fresh live browser request is tied to a completed success state with the required product-page evidence."
+    }
+  ],
+  "allowed_to_merge_main_now": "no",
+  "allowed_to_merge_main01_now": "no"
+}

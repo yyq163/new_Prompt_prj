@@ -1,7 +1,7 @@
 import { TYPE_SCHEMAS, walk } from "./runtime.js";
 
 const DEFAULT_MAX_ENHANCEMENT_CHARS = 12000;
-const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|provider_internal_payload/i;
+const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|internal_prompt|provider_internal_payload|provider_payload|raw_provider|Authorization|Cookie|Bearer|token|secret|api[_-]?key|base64|b64_json|data:image/i;
 const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
 const ALLOWED_TOP_LEVEL_FIELDS = new Set(TYPE_SCHEMAS.RagflowEnhancement.fields);
 
@@ -53,7 +53,7 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   if (serialized.length > maxChars) return { enhancement: null, discarded: "too_long" };
 
   if (containsForbiddenPromptField(value)) return { enhancement: null, discarded: "prompt_leak" };
-  if (containsReferenceEmission(value)) return { enhancement: null, discarded: "reference_emitted" };
+  if (containsForbiddenIdentifierEmission(value)) return { enhancement: null, discarded: "identifier_emitted" };
   if (containsUrl(value)) return { enhancement: null, discarded: "url_emitted" };
   if (containsBindingDecision(value)) return { enhancement: null, discarded: "binding_decision" };
   if (containsInternalTerms(value)) return { enhancement: null, discarded: "internal_terms" };
@@ -68,12 +68,12 @@ function containsUnknownTopLevelField(value) {
   return Object.keys(value).some((key) => !ALLOWED_TOP_LEVEL_FIELDS.has(key));
 }
 
-function containsReferenceEmission(value) {
+function containsForbiddenIdentifierEmission(value) {
   let found = false;
   walk(value, (node) => {
     if (found || !node || typeof node !== "object" || Array.isArray(node)) return;
     for (const key of Object.keys(node)) {
-      if (/^reference_ids?$/.test(key)) {
+      if (/^(?:reference_ids?|asset_ids?)$/i.test(key)) {
         found = true;
         return;
       }
@@ -129,7 +129,7 @@ function containsForbiddenPromptField(value) {
   walk(value, (node) => {
     if (!node || typeof node !== "object" || Array.isArray(node)) return;
     for (const key of Object.keys(node)) {
-      if (key === "final_prompt" || key === "compiled_prompt") found = true;
+      if (/^(?:final_prompt|compiled_prompt|internal_prompt|provider_payload|provider_internal_payload|raw_provider_payload|raw_provider_response)$/i.test(key)) found = true;
     }
   });
   return found;

@@ -9,6 +9,54 @@ import { resolve } from "node:path";
 const RAGFLOW_TIMEOUT_MS = 45_000;
 const ROOT = resolve(import.meta.dirname, "../..");
 const PROMPT_MIN_CJK = 80;
+const PROMPT_OPTIMIZATION_ALLOWED_FIELDS = new Set([
+  "request_id",
+  "task_type",
+  "prompt",
+  "references",
+  "reference_policy",
+  "output"
+]);
+const PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS = new Set([
+  "callback",
+  "callback_url",
+  "options",
+  "provider",
+  "provider_config",
+  "provider_options",
+  "model",
+  "headers",
+  "authorization",
+  "Authorization",
+  "api_key",
+  "apiKey",
+  "token",
+  "secret",
+  "internal_prompt",
+  "final_prompt",
+  "compiled_prompt",
+  "provider_payload",
+  "provider_internal_payload",
+  "provider_raw_payload",
+  "provider_raw_response",
+  "raw_provider_payload",
+  "raw_provider_response",
+  "ragflow_status",
+  "fallback_status"
+]);
+const RAGFLOW_ALLOWED_FIELDS = new Set([
+  "scene_summary",
+  "visual_focus",
+  "story_function",
+  "action_stages",
+  "shot_plan",
+  "normalized_shot_plan",
+  "lighting_notes",
+  "composition_notes",
+  "negative_notes",
+  "missing_constraints"
+]);
+const RAGFLOW_FORBIDDEN_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image/i;
 
 export async function handlePromptOptimization(body, options = {}) {
   const fallbackRequestId = stringValue(body && body.request_id).trim() || makeId("req");
@@ -21,6 +69,11 @@ export async function handlePromptOptimization(body, options = {}) {
         errorCode: body.error_code || "INVALID_REQUEST_SCHEMA",
         message: body.message || "请求体不是合法 JSON。"
       });
+    }
+    assertPromptOptimizationBodyObject(body);
+    assertPromptOptimizationRequestFields(body);
+    if (!stringValue(body.prompt).trim()) {
+      clarification("PROMPT_REQUIRED", "prompt 不能为空。");
     }
 
     const request = normalizePromptOptimizationRequest({
@@ -62,6 +115,20 @@ export function normalizePromptOptimizationRequest(body) {
   };
 }
 
+function assertPromptOptimizationBodyObject(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    fail("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
+  }
+}
+
+function assertPromptOptimizationRequestFields(body) {
+  for (const key of Object.keys(body)) {
+    if (PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key) || !PROMPT_OPTIMIZATION_ALLOWED_FIELDS.has(key)) {
+      fail("INVALID_REQUEST_SCHEMA", "请求包含不允许的提示词优化字段。");
+    }
+  }
+}
+
 async function buildPromptOptimizationContext(request, options = {}) {
   const binding = resolvePromptOptimizationReferences(request, request.entity_mentions);
   const referencePlan = buildReferencePlan({
@@ -86,6 +153,9 @@ async function buildPromptOptimizationContext(request, options = {}) {
 
 function resolvePromptOptimizationReferences(request, entityMentions) {
   const references = validateReferences(request.references || []);
+  if (request.task_type === "text_image" && references.length) {
+    fail("REFERENCES_NOT_ALLOWED", "text_image 不允许携带 references。");
+  }
   const warnings = taskReferenceWarnings(request, references);
   const refsByEntity = new Map();
   for (const ref of references) {
@@ -309,7 +379,7 @@ function ragflowSystemPrompt() {
   return [
     "你是影视级 AIGC 生图提示词增强器，只输出可选结构化 enhancement。",
     "不要输出最终 prompt，不要输出 final_prompt，不要输出 compiled_prompt。",
-    "输出 JSON 对象，字段只能来自 scene_summary、visual_focus、story_function、action_stages、shot_plan、normalized_shot_plan、lighting_notes、composition_notes、negative_notes、template_guidance。",
+    "输出 JSON 对象，字段只能来自 scene_summary、visual_focus、story_function、action_stages、shot_plan、normalized_shot_plan、lighting_notes、composition_notes、negative_notes、missing_constraints。",
     "必须根据 task_type、raw_prompt、references[] 动态提供补充建议。",
     "不得新增 reference_id，不得新增图片 URL，不得改变后端确定的参考图绑定关系，不得把任何样例实体写死为规则。"
   ].join("");
@@ -338,27 +408,27 @@ export function parseRagflowOptimizedPrompt(json) {
     const unwrapped = unwrapCodeFence(content);
     const parsed = parseJsonMaybe(unwrapped);
     if (parsed && typeof parsed === "object") return parsed;
-    if (unwrapped) return { template_guidance: unwrapped };
   }
   return null;
 }
 
 export function validateRagflowEnhancement(candidate, context = {}) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-  if ("final_prompt" in candidate || "compiled_prompt" in candidate || "provider_payload" in candidate) return null;
+  if ("final_prompt" in candidate || "compiled_prompt" in candidate || "internal_prompt" in candidate || "provider_payload" in candidate) return null;
+  if (Object.keys(candidate).some((key) => !RAGFLOW_ALLOWED_FIELDS.has(key))) return null;
+  if (containsForbiddenEnhancementKey(candidate)) return null;
   const jsonText = JSON.stringify(candidate);
   if (jsonText.length > 8000) return null;
   for (const title of forbiddenPromptHeadings()) {
     if (jsonText.includes(title)) return null;
   }
-  if (/RAGFlow|fallback|provider\s*payload|provider_internal_payload|final_prompt|compiled_prompt/i.test(jsonText)) return null;
+  if (RAGFLOW_FORBIDDEN_TEXT.test(jsonText)) return null;
 
   const allowedReferenceIds = new Set((context.binding?.resolved_references || []).map((ref) => ref.reference_id));
-  const allowedUrls = new Set((context.binding?.resolved_references || []).map((ref) => ref.url));
   const foundReferenceIds = findValuesByKey(candidate, "reference_id");
   if (foundReferenceIds.some((id) => id && !allowedReferenceIds.has(id))) return null;
   const foundUrls = findUrls(candidate);
-  if (foundUrls.some((url) => !allowedUrls.has(url))) return null;
+  if (foundUrls.length) return null;
 
   return sanitizeEnhancement(candidate);
 }
@@ -375,7 +445,7 @@ function sanitizeEnhancement(candidate) {
     "lighting_notes",
     "composition_notes",
     "negative_notes",
-    "template_guidance"
+    "missing_constraints"
   ]) {
     const value = candidate[key];
     if (typeof value === "string" && value.trim()) out[key] = value.trim().slice(0, 1200);
@@ -389,11 +459,24 @@ function sanitizeEnhancement(candidate) {
 function sanitizePlainObject(value) {
   const out = {};
   for (const [key, item] of Object.entries(value)) {
-    if (["final_prompt", "compiled_prompt", "provider_payload", "enhancement"].includes(key)) continue;
+    if (isForbiddenEnhancementKey(key)) continue;
     if (typeof item === "string") out[key] = item.slice(0, 240);
     else if (typeof item === "number" || typeof item === "boolean") out[key] = item;
   }
   return out;
+}
+
+function isForbiddenEnhancementKey(key) {
+  return /^(?:final_prompt|compiled_prompt|internal_prompt|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|token|secret|api[_-]?key|enhancement)$/i.test(stringValue(key));
+}
+
+function containsForbiddenEnhancementKey(value) {
+  let found = false;
+  walkValue(value, (node) => {
+    if (found || !node || typeof node !== "object" || Array.isArray(node)) return;
+    if (Object.keys(node).some(isForbiddenEnhancementKey)) found = true;
+  });
+  return found;
 }
 
 export function compileOptimizedPrompt(context) {
@@ -418,7 +501,7 @@ export function compileOptimizedPrompt(context) {
 
 function textImagePrompt(context) {
   const theme = stripCommandPrefix(context.request.prompt);
-  const guidance = enhancementText(context, ["visual_focus", "lighting_notes", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]);
   return [
     `生成一张完整高质量的普通文字生图作品，主题围绕“${theme}”。画面需要清楚表达用户原始意图，主体明确，动作或状态自然，环境信息完整，构图稳定，前景、中景和背景层次分明。`,
     `${guidance}根据主题补充合理的画面气氛、镜头距离、色彩关系、光源方向、明暗层次、材质质感和清晰度要求，但不要强行套用人物四视图、场景多视图、道具多视图或故事板结构，也不要新增未提供的具体实体。`,
@@ -431,7 +514,7 @@ function imageReferencePrompt(context) {
   const refs = context.referencePlan.allRefs;
   const theme = stripCommandPrefix(context.request.prompt);
   const referenceText = refs.map((ref) => `${mention(ref, ref.entity_type || "参考对象")} 用作${roleUsageText(ref)}，保持${ref.description || ref.display_name || "关键视觉特征"}`).join("；");
-  const guidance = enhancementText(context, ["visual_focus", "lighting_notes", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]);
   return [
     `基于参考图生成一张新的完整图像，围绕“${theme}”组织主体、环境、构图、光影和材质。${referenceText}。`,
     `${guidance}参考图用于稳定主体特征、风格气质、构图关系、光影方向或材质细节；新画面可以根据提示词重新组织场景和镜头，但必须保持参考对象的关键视觉特征和绑定关系。`,
@@ -440,11 +523,14 @@ function imageReferencePrompt(context) {
 }
 
 function characterMultiviewPrompt(context) {
+  if (!hasProfessionalDetailSource(context, /四视图|4\s*格|正面|侧面|背面|头部特写|角色设定图/u)) {
+    return minimalCharacterMultiviewPrompt(context);
+  }
   const plan = context.referencePlan;
   const character = characterTaskRefs(plan);
   const name = namesText(character, mentionFromRaw(context.request.prompt, "角色"));
   const referenceText = roleRefsText(plan, character);
-  const guidance = enhancementText(context, ["visual_focus", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["visual_focus", "composition_notes", "missing_constraints"]);
   return [
     `生成一张人物多视角图，也就是角色四视图 / 角色设定图 / 人物一致性参考图，以 ${name} 作为角色主交付物。${name} 必须保持身份、五官特征、发型、服饰结构、身体比例、色彩搭配和整体气质稳定一致。`,
     `${referenceText ? `参考图等权使用：${referenceText}。按 role 将参考图用于脸部、角色、服装、发型、道具、场景、风格、构图或光影约束，不要改变用户指定的参考绑定。` : ""}${guidance}`,
@@ -455,6 +541,9 @@ function characterMultiviewPrompt(context) {
 }
 
 function sceneMultiviewPrompt(context) {
+  if (!hasProfessionalDetailSource(context, /3×3|3x3|九宫格|多机位|全景|中景|俯视|平面布局|材质特写|场景设定参考板/u)) {
+    return minimalSceneMultiviewPrompt(context);
+  }
   const plan = context.referencePlan;
   const sceneRefs = sceneTaskRefs(plan);
   const sceneName = namesText(sceneRefs, mentionFromRaw(context.request.prompt, "场景"));
@@ -465,7 +554,7 @@ function sceneMultiviewPrompt(context) {
     allRefs: plan.allRefs.filter((ref) => !isCharacterReference(ref))
   });
   const theme = stripCommandPrefix(context.request.prompt);
-  const guidance = enhancementText(context, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]);
   const characterSentence = characterText
     ? `${characterText} 作为角色参考进入场景，用于空间尺度锚点、站位锚点、行动调度锚点和互动关系参照，不作为人物主图，不喧宾夺主。`
     : "";
@@ -486,11 +575,14 @@ function sceneMultiviewPrompt(context) {
 }
 
 function propMultiviewPrompt(context) {
+  if (!hasProfessionalDetailSource(context, /正面|侧面|背面|顶部|底部|结构拆解|材质特写|多角度|资产参考板/u)) {
+    return minimalPropMultiviewPrompt(context);
+  }
   const plan = context.referencePlan;
   const prop = propTaskRefs(plan);
   const name = namesText(prop, mentionFromRaw(context.request.prompt, "主道具"));
   const referenceText = roleRefsText(plan);
-  const guidance = enhancementText(context, ["visual_focus", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["visual_focus", "composition_notes", "missing_constraints"]);
   return [
     `生成一张道具多视图资产参考板，也是一套道具资产 / 多角度资产图，以 ${name} 作为道具主交付物，最终呈现道具结构、材质、纹样和多角度资产图，不是普通产品图，也不是单张道具美图。${name} 必须保持轮廓、体块、比例、连接结构、开合结构、边缘结构、可活动部件、装饰位置、局部细节和材质层次稳定一致。`,
     `${referenceText ? `参考图等权使用：${referenceText}。角色或场景参考用于比例参照、使用语境、摆放关系或动作语境；材质和纹样参考用于表面质感与装饰位置，不改变用户指定绑定。` : ""}${guidance}`,
@@ -501,11 +593,14 @@ function propMultiviewPrompt(context) {
 }
 
 function storyboardPrompt(context) {
+  if (!hasProfessionalDetailSource(context, /左侧规划区|右侧剧情宫格|剧情宫格|shot\s*\d+|镜头\s*\d+|完整故事板|分镜制作板/u)) {
+    return minimalStoryboardPrompt(context);
+  }
   const plan = context.referencePlan;
   const refsText = plan.allRefs.length ? `参考对象保持绑定稳定：${plan.allRefs.map((ref) => `${mention(ref, ref.entity_type || "对象")} 用作${roleUsageText(ref)}`).join("；")}。` : "";
   const shotCount = detectShotCount(context.request.prompt);
   const shotText = shotCount ? `如果输入中已有 shot 清单，右侧剧情宫格区必须保持原 ${shotCount} 个 shot 的数量、顺序和核心动作，只补景别、运镜、光影、布局和负向约束，不重拆、不重排、不合并、不删除。` : "右侧剧情宫格区根据实际剧情动作阶段自适应生成分镜数量，宫格数量等于实际 shot 数量。";
-  const guidance = enhancementText(context, ["story_function", "action_stages", "lighting_notes", "composition_notes", "template_guidance"]);
+  const guidance = enhancementText(context, ["story_function", "action_stages", "lighting_notes", "composition_notes", "missing_constraints"]);
   return [
     `生成一张影视级剧情故事板制作图，围绕“${stripCommandPrefix(context.request.prompt)}”制作剧情宫格电影分镜制作板。它不是普通漫画分镜，不是固定九宫格，不是单张剧情图。`,
     "画面必须包含左侧规划区和右侧剧情宫格区。左侧规划区包含场景走位示意图、氛围概念图、光影变化示意、空间关系、人物动线和镜头调度，用来说明分镜执行逻辑。",
@@ -515,13 +610,64 @@ function storyboardPrompt(context) {
   ].filter(Boolean).join("\n\n");
 }
 
+function minimalCharacterMultiviewPrompt(context) {
+  const plan = context.referencePlan;
+  const character = characterTaskRefs(plan);
+  const name = namesText(character, mentionFromRaw(context.request.prompt, "角色"));
+  const referenceText = roleRefsText(plan);
+  return [
+    `生成一张以 ${name} 为主体的角色一致性参考图，围绕“${stripCommandPrefix(context.request.prompt)}”保留用户原始意图、角色身份、外观气质、服饰轮廓和可见特征。`,
+    referenceText ? `参考图按既有绑定使用：${referenceText}。只根据参考图已提供的信息稳定身份和视觉特征，不新增参考对象，不改变 reference_id 与实体的绑定关系。` : "未提供角色参考图时，只根据用户文字描述组织角色一致性提示，不主动补充未说明的具体服装、发型、道具或身份背景。",
+    "输出应适合直接作为角色参考图提示词使用，主体清楚，比例自然，画面干净，光线稳定，细节服务于角色一致性。不要生成无关实体、文字、水印、标签、畸形肢体、重复脸、低清晰度或与用户题材冲突的元素。"
+  ].filter(Boolean).join("\n\n");
+}
+
+function minimalSceneMultiviewPrompt(context) {
+  const plan = context.referencePlan;
+  const sceneRefs = sceneTaskRefs(plan);
+  const sceneName = namesText(sceneRefs, mentionFromRaw(context.request.prompt, "场景"));
+  const referenceText = roleRefsText(plan);
+  return [
+    `生成一张围绕 ${sceneName} 的场景一致性参考图，主题为“${stripCommandPrefix(context.request.prompt)}”。画面需要保留用户指定的空间身份、氛围、主体关系和行动语境。`,
+    referenceText ? `参考图按既有绑定使用：${referenceText}。只根据参考图和原始提示中的信息稳定空间结构、材质倾向、光影方向和实体关系，不新增未提供的参考对象。` : "未提供场景参考图时，只根据用户文字描述组织场景提示，不主动补充具体物件清单、固定机位数量或固定版式。",
+    "输出应适合直接作为场景参考提示词使用，空间可信，主体关系明确，光影统一，前后景层次清楚。不要让角色或道具喧宾夺主，不要出现文字、水印、标签、重复主体、低清晰度、空间错乱或互相矛盾的场景结构。"
+  ].filter(Boolean).join("\n\n");
+}
+
+function minimalPropMultiviewPrompt(context) {
+  const plan = context.referencePlan;
+  const prop = propTaskRefs(plan);
+  const name = namesText(prop, mentionFromRaw(context.request.prompt, "主道具"));
+  const referenceText = roleRefsText(plan);
+  return [
+    `生成一张以 ${name} 为主体的道具一致性参考图，围绕“${stripCommandPrefix(context.request.prompt)}”保留用户原始意图、道具身份、轮廓、材质倾向、比例关系和可见细节。`,
+    referenceText ? `参考图按既有绑定使用：${referenceText}。只根据参考图已提供的信息稳定道具外形和视觉特征，不新增未提供的道具，不改变绑定关系。` : "未提供道具参考图时，只根据用户文字描述组织道具提示，不主动补充固定视角、拆解结构或具体工艺细节。",
+    "输出应适合直接作为道具资产提示词使用，道具主体清晰，边界明确，材质可辨，背景简洁。不要生成角色立绘、场景主图、无关物件、文字、水印、标签、比例错乱、材质混淆、结构前后矛盾或低清晰度结果。"
+  ].filter(Boolean).join("\n\n");
+}
+
+function minimalStoryboardPrompt(context) {
+  const plan = context.referencePlan;
+  const refsText = plan.allRefs.length ? `参考对象保持既有绑定：${plan.allRefs.map((ref) => `${mention(ref, ref.entity_type || "对象")} 用作${roleUsageText(ref)}`).join("；")}。` : "";
+  return [
+    `生成一张围绕“${stripCommandPrefix(context.request.prompt)}”的故事板分镜参考图，保留用户原始剧情意图、角色身份、场景关系、动作顺序和情绪推进。`,
+    `${refsText}根据原文已经给出的动作阶段组织镜头表达，不重排、不删除、不合并用户明确写出的情节或 shot；如果原文没有明确 shot 清单，只做自然的分镜化表达，不固定九宫格、2×2、3×3、固定时长或固定镜头数量。`,
+    "输出应适合直接作为故事板提示词使用，镜头关系清楚，动作连续，空间方向稳定，光影和构图服务叙事。不要新增未提供的剧情实体、改变人物身份、打乱动作顺序、出现文字水印、无关标签、空间跳变或低清晰度结果。"
+  ].filter(Boolean).join("\n\n");
+}
+
+function hasProfessionalDetailSource(context, explicitPattern) {
+  if (context.enhancement && Object.keys(context.enhancement).length) return true;
+  return explicitPattern.test(stringValue(context.request && context.request.prompt));
+}
+
 export function validateOptimizedPrompt(prompt, context = {}) {
   const text = stringValue(prompt).trim();
   if (!text || countCjk(text) < PROMPT_MIN_CJK) throw optimizedPromptInvalid();
   for (const title of forbiddenPromptHeadings()) {
     if (text.includes(title)) throw optimizedPromptInvalid();
   }
-  if (/RAGFlow|fallback|provider\s*payload|provider_internal_payload|final_prompt|compiled_prompt|enhancement|input_analysis|storyboard_processing/i.test(text)) {
+  if (/RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image|enhancement|input_analysis|storyboard_processing/i.test(text)) {
     throw optimizedPromptInvalid();
   }
 
@@ -552,21 +698,15 @@ function validateCharacterMultiviewPrompt(text, plan) {
   for (const name of requiredNames(plan.characterRefs)) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
-  if (!/(人物多视角|四视图|角色设定图|人物一致性参考图)/u.test(text)) throw optimizedPromptInvalid();
-  for (const word of ["4 格横向布局", "正面全身", "头部特写", "侧面全身", "背面全身", "头到脚", "鞋子", "A 字站姿", "手上无道具", "纯色背景"]) {
-    if (!text.includes(word)) throw optimizedPromptInvalid();
-  }
+  if (!/(人物多视角|四视图|角色设定图|人物一致性参考图|角色一致性参考图|角色参考图)/u.test(text)) throw optimizedPromptInvalid();
   if (/(场景多视图|道具多视图|剧情宫格|左侧规划区|右侧剧情宫格区)/u.test(text)) throw optimizedPromptInvalid();
 }
 
 function validateSceneMultiviewPrompt(text, plan = {}) {
-  if (!/(场景多视图|多机位|多视图|现场光影参考图|场景设定参考板|场景设定板)/u.test(text)) throw optimizedPromptInvalid();
+  if (!/(场景多视图|多机位|多视图|现场光影参考图|场景设定参考板|场景设定板|场景一致性参考图|场景参考提示词)/u.test(text)) throw optimizedPromptInvalid();
   for (const name of plan.allEntityNames || []) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
-  if (plan.characterRefs?.length && !/(角色参考|空间尺度|站位|调度|不作为人物主图|不喧宾夺主)/u.test(text)) throw optimizedPromptInvalid();
-  const viewWords = ["全景", "中景", "特写", "俯视", "平面布局", "分镜", "材质", "光影"];
-  if (viewWords.filter((word) => text.includes(word)).length < 5) throw optimizedPromptInvalid();
   if (/(角色四视图|道具多视图|剧情宫格|左侧规划区|右侧剧情宫格区)/u.test(text)) throw optimizedPromptInvalid();
 }
 
@@ -574,20 +714,15 @@ function validatePropMultiviewPrompt(text, plan) {
   for (const name of requiredNames(plan.propRefs || [])) {
     if (!includesEntityName(text, name)) throw optimizedPromptInvalid();
   }
-  if (!/(道具多视图|道具资产|多角度资产图|资产参考板)/u.test(text)) throw optimizedPromptInvalid();
-  for (const word of ["正面", "侧面", "背面", "结构", "材质", "比例", "特写"]) {
-    if (!text.includes(word)) throw optimizedPromptInvalid();
-  }
+  if (!/(道具多视图|道具资产|多角度资产图|资产参考板|道具一致性参考图|道具资产提示词)/u.test(text)) throw optimizedPromptInvalid();
   if (/(必须采用 4 格横向布局|场景设定参考板结构|左侧规划区和右侧剧情宫格区)/u.test(text)) throw optimizedPromptInvalid();
 }
 
 function validateStoryboardPrompt(text) {
-  for (const word of ["故事板", "分镜", "剧情宫格", "左侧规划区", "右侧剧情宫格区"]) {
+  for (const word of ["故事板", "分镜"]) {
     if (!text.includes(word)) throw optimizedPromptInvalid();
   }
   if (!/(不固定九宫格|不要固定九宫格)/u.test(text)) throw optimizedPromptInvalid();
-  if (!/(自适应|shot 数量|宫格数量等于实际 shot 数量)/u.test(text)) throw optimizedPromptInvalid();
-  if (!/(不限制 shot 数量|不限制总时长)/u.test(text)) throw optimizedPromptInvalid();
   if (/采用 3×3 或等价多视图/u.test(text)) throw optimizedPromptInvalid();
 }
 
@@ -825,7 +960,7 @@ function extractPromptCandidates(json) {
   push(json && json.data && json.data.message);
   push(json && json.data && json.data.response);
 
-  if (Object.keys(json || {}).length) candidates.push(JSON.stringify(json));
+  if (!Array.isArray(json?.choices) && Object.keys(json || {}).length) candidates.push(JSON.stringify(json));
   return [...new Set(candidates)];
 }
 

@@ -620,7 +620,7 @@ test("RAGFlow unauthorized reference_id is discarded", () => {
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));
   const validation = validateEnhancement({ reference_id: "ref_other" }, { request, binding });
   assert.equal(validation.enhancement, null);
-  assert.equal(validation.discarded, "reference_emitted");
+  assert.equal(validation.discarded, "identifier_emitted");
 });
 
 test("RAGFlow may not emit any reference id URL or unknown enhancement fields", () => {
@@ -628,8 +628,10 @@ test("RAGFlow may not emit any reference id URL or unknown enhancement fields", 
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));
   const knownUrl = binding.resolved_references[0].url;
   const cases = [
-    [{ reference_id: "ref_char" }, "reference_emitted"],
-    [{ reference_ids: ["ref_char"] }, "reference_emitted"],
+    [{ reference_id: "ref_char" }, "identifier_emitted"],
+    [{ reference_ids: ["ref_char"] }, "identifier_emitted"],
+    [{ shot_plan: [{ asset_id: "asset_1", text: "推门" }] }, "identifier_emitted"],
+    [{ normalized_shot_plan: [{ asset_ids: ["asset_1"], text: "回头" }] }, "identifier_emitted"],
     [{ composition_notes: `match ${knownUrl}` }, "url_emitted"],
     [{ composition_notes: "inline data:image/png;base64,abc" }, "url_emitted"],
     [{ composition_notes: "local file:///tmp/reference.png" }, "url_emitted"],
@@ -687,10 +689,14 @@ test("RAGFlow unauthorized URL non JSON array and internal negative notes are di
 test("RAGFlow internal implementation terms are discarded across enhancement fields", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
   const binding = { resolved_references: [] };
-  const cases = [
+ const cases = [
     { composition_notes: "Do not mention RAGFlow retrieval state." },
     { visual_focus: "避免暴露本地模板处理。" },
     { missing_constraints: ["不要输出 fallback 状态。"] },
+    { composition_notes: "Authorization: Bearer secret-token" },
+    { composition_notes: "Cookie: sid=secret" },
+    { composition_notes: "raw_provider_response should stay hidden." },
+    { composition_notes: "b64_json and base64 should stay hidden." },
     { nested: { note: "provider_internal_payload must stay hidden." } },
     { nested: { note: "compiled_prompt should not be exposed." } },
     { nested: { note: "final_prompt should not be exposed." } }

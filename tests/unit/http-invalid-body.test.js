@@ -41,13 +41,57 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\"",
-    expectedMessage: "请求体不是合法 JSON"
+    expectedMessage: "请求体不是合法 JSON",
+    expectedRequestId: ""
   });
 
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: JSON.stringify({ prompt: "x".repeat(2000) }),
-    expectedMessage: "请求体过大"
+    expectedMessage: "请求体过大",
+    expectedRequestId: ""
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify([]),
+    expectedMessage: "请求体必须是 JSON 对象"
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify("plain text"),
+    expectedMessage: "请求体必须是 JSON 对象"
+  });
+
+  await assertPromptBusinessError({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify({}),
+    code: "PROMPT_REQUIRED"
+  });
+
+  await assertPromptBusinessError({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify({ task_type: "text_image" }),
+    code: "PROMPT_REQUIRED"
+  });
+
+  await assertPromptBusinessError({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify({ task_type: "bad_task", prompt: "生成一张山间晨雾图。" }),
+    code: "UNSUPPORTED_TASK_TYPE"
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify({ task_type: "text_image", prompt: "生成一张山间晨雾图。", provider: { apiKey: "test" } }),
+    expectedMessage: "请求包含不允许的提示词优化字段"
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: JSON.stringify({ task_type: "text_image", prompt: "生成一张山间晨雾图。", final_prompt: "secret" }),
+    expectedMessage: "请求包含不允许的提示词优化字段"
   });
 });
 
@@ -162,15 +206,35 @@ async function assertFinalInvalidBody({ url, body }) {
   assertV36Error(response.body, "INVALID_REQUEST_SCHEMA");
 }
 
-async function assertPromptInvalidBody({ url, body, expectedMessage }) {
+async function assertPromptInvalidBody({ url, body, expectedMessage, expectedRequestId = null }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 400);
-  assert.equal(response.body.request_id, "");
+  if (expectedRequestId === null) {
+    assert.equal(typeof response.body.request_id, "string");
+    assert.ok(response.body.request_id.length > 0);
+  } else {
+    assert.equal(response.body.request_id, expectedRequestId);
+  }
   assert.equal(response.body.status, "failed");
   assert.equal(response.body.error_code, "INVALID_REQUEST_SCHEMA");
   assert.match(response.body.message, new RegExp(expectedMessage));
   assert.equal("generation_id" in response.body, false);
-  assert.equal("trace_id" in response.body, false);
+  if (expectedRequestId === "") {
+    assert.equal("trace_id" in response.body, false);
+  } else {
+    assert.equal(typeof response.body.trace_id, "string");
+    assert.ok(response.body.trace_id.length > 0);
+  }
+  assert.equal("images" in response.body, false);
+  assertNoForbiddenFields(response.body);
+}
+
+async function assertPromptBusinessError({ url, body, code }) {
+  const response = await postRaw(url, body);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, "needs_clarification");
+  assert.equal(response.body.error_code, code);
+  assert.equal("optimized_prompt" in response.body, false);
   assert.equal("images" in response.body, false);
   assertNoForbiddenFields(response.body);
 }

@@ -8,7 +8,7 @@ Backend/API-only prompt optimizer residual security repair on `main01-fix11`. No
 
 ## Result
 
-Pre-merge ready after repairing RAGFlow output parser differentials, nested unsafe output keys, and quoted Authorization assignment handling found after fix10. HTTP request parsing, prompt optimizer RAGFlow response parsing, and legacy RAGFlow enhancement parsing now share duplicate/canonical JSON key detection. Prompt optimizer and legacy enhancement validation recursively reject nested `__proto__`, `prototype`, `constructor`, `references`, `reference_policy`, `output`, `enhancement`, and Unicode/fullwidth/canonical variants before they can enter compiled prompts. Credential detection now rejects quoted `authorization=` and `proxy_authorization=` values containing custom schemes, spaces, and special-character credentials before RAGFlow fetch, while placeholder teaching text remains allowed.
+Pre-merge ready after repairing RAGFlow output parser differentials, nested unsafe output keys, and quoted auth assignment handling found after fix10. HTTP request parsing, prompt optimizer RAGFlow response parsing, and legacy RAGFlow enhancement parsing now share duplicate/canonical JSON key detection. Prompt optimizer and legacy enhancement validation recursively reject nested `__proto__`, `prototype`, `constructor`, `references`, `reference_policy`, `output`, `enhancement`, and Unicode/fullwidth/canonical variants before they can enter compiled prompts. Credential detection now rejects quoted auth and proxy-auth assignment values containing custom schemes, spaces, and special-character credentials before RAGFlow fetch, while placeholder teaching text remains allowed.
 
 ## Verification Evidence
 

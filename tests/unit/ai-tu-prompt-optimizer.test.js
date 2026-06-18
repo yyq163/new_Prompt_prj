@@ -13,6 +13,7 @@ import {
   ragflowConfig,
   validateRagflowEnhancement
 } from "../../src/routes/prompt-optimizations.js";
+import { containsHighConfidenceSensitivePayload } from "../../src/core/sensitive-payload.js";
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
@@ -152,7 +153,7 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
 });
 
 test("prompt optimizer accepts ordinary natural-language security vocabulary", async () => {
-  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Proxy-Authorization 教学、Cookie: session=value 是教学示例、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
+  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Authorization: Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Proxy-Authorization 教学、Cookie: session=value 是教学示例、cookie=YOUR_SESSION_COOKIE 是占位格式、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
   const textResult = await handlePromptOptimization({
     task_type: "text_image",
     prompt: `生成一张用于课程封面的画面：${legalText}`,
@@ -160,7 +161,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(textResult.statusCode, 200);
   assert.equal(textResult.payload.status, "succeeded");
-  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|Cookie: session=value|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(textResult.payload.optimized_prompt);
   assertNoPublicLeaks(textResult.payload);
 
@@ -178,7 +179,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(referenceResult.statusCode, 200);
   assert.equal(referenceResult.payload.status, "succeeded");
-  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|Authorization: Bearer <token>|Cookie: session=value|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(referenceResult.payload.optimized_prompt);
   assertNoPublicLeaks(referenceResult.payload);
 });
@@ -223,6 +224,7 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
   const tokenValue = `tok_${"D".repeat(32)}`;
   const proxyValue = `proxy_${"P".repeat(32)}`;
   const customSchemeValue = `custom:${"Q".repeat(16)}!@#$%^&*()`;
+  const lowEntropySpecialAuthValue = `${"Q".repeat(16)}!@#$%^&*()`;
   const digestValue = `${"a".repeat(32)}`;
   const awsCredentialValue = `AKIA${"A".repeat(16)}/20260618/us-east-1/service/aws4_request`;
   const accessTokenValue = `access_${"G".repeat(32)}`;
@@ -319,6 +321,16 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       label: "quoted authorization assignment with special characters",
       body: { task_type: "text_image", prompt: `authorization="X-Custom ${customSchemeValue}"`, references: [] },
       leaked: customSchemeValue
+    },
+    {
+      label: "quoted authorization assignment with low-entropy special characters",
+      body: { task_type: "text_image", prompt: `authorization="X-Custom ${lowEntropySpecialAuthValue}"`, references: [] },
+      leaked: lowEntropySpecialAuthValue
+    },
+    {
+      label: "quoted proxy authorization assignment with low-entropy special characters",
+      body: { task_type: "text_image", prompt: `proxy_authorization="Fancy ${lowEntropySpecialAuthValue}"`, references: [] },
+      leaked: lowEntropySpecialAuthValue
     },
     {
       label: "access_token assignment",
@@ -849,6 +861,8 @@ test("RAGFlow enhancement fields must be consumed by the current task before cha
 test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is discarded", async () => {
   const badCandidates = [
     { choices: [{ message: { content: "任务类型：text_image\n原始需求：雨后森林" } }] },
+    { choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual_focus\":\"duplicate-wins\"}" } }] },
+    { choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual-focus\":\"canonical-wins\"}" } }] },
     { choices: [{ message: { content: JSON.stringify({ reference_id: "unknown_ref", visual_focus: "越权引用" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ asset_id: "asset_1", visual_focus: "越权资产" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: `Authorization: Bearer tok_${"A".repeat(32)}` }) } }] },
@@ -878,6 +892,8 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     assertTextImagePrompt(result.payload.optimized_prompt);
     assert.equal(result.payload.optimized_prompt.includes("越权引用"), false);
     assert.equal(result.payload.optimized_prompt.includes("越权资产"), false);
+    assert.equal(result.payload.optimized_prompt.includes("duplicate-wins"), false);
+    assert.equal(result.payload.optimized_prompt.includes("canonical-wins"), false);
     assert.equal(result.payload.optimized_prompt.includes("Authorization"), false);
     assert.equal(result.payload.optimized_prompt.includes("Cookie"), false);
     assert.equal(result.payload.optimized_prompt.includes("data:image"), false);
@@ -902,7 +918,20 @@ test("validateRagflowEnhancement rejects internal and unauthorized content", () 
   assert.equal(validateRagflowEnhancement({ reference_id: "bad_ref", visual_focus: "x" }, context), null);
   assert.equal(validateRagflowEnhancement({ shot_plan: [{ asset_id: "asset_1", text: "x" }] }, context), null);
   assert.equal(validateRagflowEnhancement({ template_guidance: "旧字段" }, context), null);
-  assert.equal(validateRagflowEnhancement(JSON.parse("{\"action_stages\":[{\"constructor\":\"构造器泄漏\",\"prototype\":\"原型泄漏\",\"＿＿ｐｒｏｔｏ＿＿\":\"全角proto泄漏\",\"ｃｏｎｓｔｒｕｃｔｏｒ\":\"全角泄漏\",\"stage\":\"安全阶段\"}]}"), {
+  const nestedUnsafeEnhancements = [
+    "{\"action_stages\":[{\"constructor\":\"构造器泄漏\",\"prototype\":\"原型泄漏\",\"＿＿ｐｒｏｔｏ＿＿\":\"全角proto泄漏\",\"ｃｏｎｓｔｒｕｃｔｏｒ\":\"全角泄漏\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"references\":\"nested reference leak\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"reference_policy\":\"nested policy leak\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"output\":\"nested output leak\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"ｅｎｈａｎｃｅｍｅｎｔ\":\"nested enhancement leak\",\"stage\":\"安全阶段\"}]}"
+  ];
+  for (const raw of nestedUnsafeEnhancements) {
+    assert.equal(validateRagflowEnhancement(JSON.parse(raw), {
+      request: { task_type: "storyboard" },
+      binding: { resolved_references: [] }
+    }), null);
+  }
+  assert.equal(validateRagflowEnhancement(JSON.parse("{\"action_stages\":[{\"stage\":\"安全阶段\",\"st-age\":\"规范化冲突\"}]}"), {
     request: { task_type: "storyboard" },
     binding: { resolved_references: [] }
   }), null);
@@ -920,6 +949,15 @@ test("RAGFlow response parser discards natural language instead of treating it a
     choices: [{ message: { content: "加强冷色调现场光影和空间纵深。" } }]
   });
   assert.equal(parsed, null);
+});
+
+test("RAGFlow response parser rejects duplicate and canonical-conflicting JSON candidates", () => {
+  assert.equal(parseRagflowOptimizedPrompt({
+    choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual_focus\":\"duplicate-wins\"}" } }]
+  }), null);
+  assert.equal(parseRagflowOptimizedPrompt({
+    choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual-focus\":\"canonical-wins\"}" } }]
+  }), null);
 });
 
 test("RAGFlow config can be read from ai-tu runtime config file", () => {
@@ -1752,10 +1790,7 @@ function assertNoPublicLeaks(payload) {
 }
 
 function assertNoSensitivePayload(text) {
-  assert.doesNotMatch(text, /\b(?:Proxy-Authorization|Authorization)\s*:\s*[A-Za-z][A-Za-z0-9._+-]{0,63}\s+[A-Za-z0-9._~+/=-]{16,}/i);
-  assert.doesNotMatch(text, /\b(?:Set-Cookie|Cookie)\s*:\s*[^;\s=]{1,80}=[A-Za-z0-9._~+/%-]{16,}/i);
-  assert.doesNotMatch(text, /\b(?:proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*["']?[^\s"',;]{20,}/i);
-  assert.doesNotMatch(text, /\bdata:image\/(?:png|jpeg|jpg|webp|gif);base64,/i);
+  assert.equal(containsHighConfidenceSensitivePayload(text), false, "high-confidence sensitive payload leaked");
 }
 
 function ragflowEnvWith(overrides = {}) {

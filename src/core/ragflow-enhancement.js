@@ -1,4 +1,4 @@
-import { TYPE_SCHEMAS, walk } from "./runtime.js";
+import { canonicalJsonKey, hasUnsafeJsonObjectKeys, parseJsonWithoutDuplicateKeys, TYPE_SCHEMAS, walk } from "./runtime.js";
 import { containsHighConfidenceSensitivePayload } from "./sensitive-payload.js";
 import { isExplicitPrivateEndpointHost, isUnsafeNetworkHost } from "./url-security.js";
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -11,6 +11,64 @@ const INTERNAL_KEY_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt
 const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
 const ALLOWED_TOP_LEVEL_FIELDS = new Set(TYPE_SCHEMAS.RagflowEnhancement.fields);
 const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
+const FORBIDDEN_ENHANCEMENT_CANONICAL_KEYS = new Set([
+  "__proto__",
+  "proto",
+  "prototype",
+  "constructor",
+  "finalprompt",
+  "compiledprompt",
+  "internalprompt",
+  "provider",
+  "providerconfig",
+  "providerpayload",
+  "providerinternalpayload",
+  "providerrawpayload",
+  "providerrawresponse",
+  "rawprovider",
+  "rawproviderpayload",
+  "rawproviderresponse",
+  "apikey",
+  "authorization",
+  "proxyauthorization",
+  "headers",
+  "cookie",
+  "setcookie",
+  "token",
+  "accesstoken",
+  "secret",
+  "clientsecret",
+  "password",
+  "callback",
+  "callbackurl",
+  "images",
+  "image",
+  "imageurl",
+  "b64json",
+  "base64",
+  "imagebase64",
+  "dataurl",
+  "model",
+  "endpoint",
+  "baseurl",
+  "metadata",
+  "options",
+  "extra",
+  "context",
+  "referenceid",
+  "referenceids",
+  "assetid",
+  "assetids",
+  "references",
+  "referencepolicy",
+  "output",
+  "enhancement",
+  "inputanalysis",
+  "storyboardprocessing",
+  "templateguidance",
+  "referenceweight",
+  "bindingdecision"
+]);
 
 export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch, lookupHost = dnsLookup, env = process.env } = {}) {
   const endpoint = String(env.RAGFLOW_ENHANCEMENT_URL || "").trim();
@@ -264,11 +322,11 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   let value = raw;
   if (typeof raw === "string") {
     if (raw.length > maxChars) return { enhancement: null, discarded: "too_long" };
-    try {
-      value = JSON.parse(raw);
-    } catch {
+    const parsed = parseJsonWithoutDuplicateKeys(raw);
+    if (!parsed.ok) {
       return { enhancement: null, discarded: "non_json" };
     }
+    value = parsed.value;
   }
 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -283,6 +341,7 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
   if (containsBindingDecision(value)) return { enhancement: null, discarded: "binding_decision" };
   if (containsInternalTerms(value)) return { enhancement: null, discarded: "internal_terms" };
   if (containsUnknownTopLevelField(value)) return { enhancement: null, discarded: "unknown_field" };
+  if (containsUnsafeEnhancementKey(value)) return { enhancement: null, discarded: "unsafe_key" };
   if (!validStoryboardShape(value)) return { enhancement: null, discarded: "invalid_storyboard_shape" };
   if (!preservesShotList(value, request)) return { enhancement: null, discarded: "shot_plan_changed" };
 
@@ -291,6 +350,22 @@ export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_
 
 function containsUnknownTopLevelField(value) {
   return Object.keys(value).some((key) => !ALLOWED_TOP_LEVEL_FIELDS.has(key));
+}
+
+function containsUnsafeEnhancementKey(value) {
+  if (hasUnsafeJsonObjectKeys(value, FORBIDDEN_ENHANCEMENT_CANONICAL_KEYS)) return true;
+  let found = false;
+  walk(value, (node) => {
+    if (found || !node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      const canonical = canonicalJsonKey(key);
+      if (FORBIDDEN_ENHANCEMENT_CANONICAL_KEYS.has(canonical) || INTERNAL_KEY_TERMS.test(key) || BINDING_DECISION_TERMS.test(key)) {
+        found = true;
+        return;
+      }
+    }
+  });
+  return found;
 }
 
 function containsForbiddenIdentifierEmission(value) {

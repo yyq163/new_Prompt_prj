@@ -915,6 +915,31 @@ test("RAGFlow may not emit any reference id URL or unknown enhancement fields", 
   }
 });
 
+test("RAGFlow enhancement rejects duplicate and nested unsafe canonical keys", () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "镜头 1 少女推门。", references: [] });
+  const binding = resolveReferences(request, extractEntityMentions(request.prompt));
+  const duplicate = validateEnhancement("{\"composition_notes\":\"safe\",\"composition_notes\":\"duplicate-wins\"}", { request, binding });
+  assert.equal(duplicate.enhancement, null);
+  assert.equal(duplicate.discarded, "non_json");
+
+  const cases = [
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"references\":\"nested reference leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"reference_policy\":\"nested policy leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"output\":\"nested output leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"ｅｎｈａｎｃｅｍｅｎｔ\":\"nested enhancement leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"constructor\":\"ctor leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"prototype\":\"proto leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"＿＿ｐｒｏｔｏ＿＿\":\"fullwidth proto leak\"}]}"),
+    JSON.parse("{\"normalized_shot_plan\":[{\"shot_number\":1,\"shot-number\":\"canonical conflict\"}]}")
+  ];
+
+  for (const enhancement of cases) {
+    const validation = validateEnhancement(enhancement, { request, binding });
+    assert.equal(validation.enhancement, null);
+    assert.equal(validation.discarded, "unsafe_key");
+  }
+});
+
 test("RAGFlow binding decision semantics are discarded", () => {
   const request = normalizeRequest({ task_type: "character_multiview", prompt: "参考 @萧昭宁", references: [characterRef()] });
   const binding = resolveReferences(request, extractEntityMentions(request.prompt));

@@ -201,6 +201,7 @@ const PROMPT_PUBLIC_ERROR_FIELDS = new Set([
 const PROMPT_PUBLIC_FORBIDDEN_KEY = /(?:final_prompt|compiled_prompt|internal_prompt|enhancement|ragflow|fallback|provider|callback|images?|b64_json|base64|data_url|authorization|cookie|bearer|api[_-]?key|token|secret|stack|raw)/i;
 const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:RAGFlow|fallback_status|ragflow_status|provider_internal_payload|data:image|stack trace)/i;
 const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
+const PROMPT_AUTHORIZATION_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization)\b\s*[:=]\s*([^\r\n,;]{8,})/giu;
 
 export async function handlePromptOptimization(body, options = {}) {
   const fallbackRequestId = safeRequestId(body && body.request_id) || makeId("req");
@@ -216,6 +217,7 @@ export async function handlePromptOptimization(body, options = {}) {
     }
     assertPromptOptimizationBodyObject(body);
     assertPromptOptimizationRequestFields(body);
+    assertPromptOptimizationNestedSchema(body);
     if (!stringValue(body.prompt).trim()) {
       clarification("PROMPT_REQUIRED", "prompt 不能为空。");
     }
@@ -240,14 +242,38 @@ export async function handlePromptOptimization(body, options = {}) {
     };
   } catch (error) {
     const result = publicErrorPayload(error, fallbackRequestId);
-    const payload = {
+    let statusCode = result.statusCode;
+    let payload = {
       ...result.payload,
       trace_id: traceId
     };
-    assertNoForbiddenPublicFields(payload);
-    assertPromptOptimizationPublicPayload(payload, "error");
-    return { statusCode: result.statusCode, payload };
+    if (containsForbiddenPublicText(payload.message)) {
+      payload.message = safePromptOptimizationErrorMessage(payload.error_code, payload.status);
+    }
+    try {
+      assertNoForbiddenPublicFields(payload);
+      assertPromptOptimizationPublicPayload(payload, "error");
+    } catch {
+      payload = {
+        status: "failed",
+        request_id: fallbackRequestId,
+        error_code: "INTERNAL_ERROR",
+        message: "服务内部错误。",
+        trace_id: traceId
+      };
+      statusCode = 500;
+    }
+    return { statusCode, payload };
   }
+}
+
+function safePromptOptimizationErrorMessage(errorCode, status) {
+  if (status === "needs_clarification") return "请求需要补充信息。";
+  if (errorCode === "RAGFLOW_CONFIG_INVALID") return "提示词优化服务配置无效。";
+  if (errorCode === "RAGFLOW_OPENAI_ENDPOINT_NOT_FOUND" || errorCode === "RAGFLOW_OPTIMIZER_FAILED") {
+    return "提示词优化服务暂时不可用，请稍后重试。";
+  }
+  return "请求无效。";
 }
 
 export function normalizePromptOptimizationRequest(body, env = process.env, fallbackRequestId = "") {
@@ -294,6 +320,27 @@ function assertPromptOptimizationRequestFields(body) {
     fail("INVALID_REQUEST_SCHEMA", "request_id 必须是安全字符串。");
   }
   assertNoForbiddenSchemaKeys(body);
+}
+
+function assertPromptOptimizationNestedSchema(body) {
+  if (body.references != null) {
+    if (!Array.isArray(body.references)) fail("INVALID_REQUEST_SCHEMA", "references 必须是数组。");
+    if (body.references.length > 16) fail("INVALID_REQUEST_SCHEMA", "references 最多支持 16 个。");
+    body.references.forEach((ref, index) => {
+      if (!isPlainRecord(ref)) fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference 必须是对象。`);
+      assertAllowedObjectKeys(ref, PROMPT_REFERENCE_ALLOWED_FIELDS, "reference 包含不允许的字段。");
+    });
+  }
+  if (body.reference_policy != null) {
+    if (!isPlainRecord(body.reference_policy)) fail("INVALID_REQUEST_SCHEMA", "reference_policy 必须是对象。");
+    assertAllowedObjectKeys(body.reference_policy, PROMPT_REFERENCE_POLICY_ALLOWED_FIELDS, "reference_policy 包含不允许的字段。");
+    if (body.reference_policy.unbound_entity != null && typeof body.reference_policy.unbound_entity !== "string") {
+      fail("INVALID_REQUEST_SCHEMA", "reference_policy.unbound_entity 必须是字符串。");
+    }
+    if (body.reference_policy.unbound_entity != null && !["warn", "block"].includes(body.reference_policy.unbound_entity)) {
+      fail("INVALID_REQUEST_SCHEMA", "reference_policy.unbound_entity 只支持 warn 或 block。");
+    }
+  }
 }
 
 function assertNoForbiddenSchemaKeys(value) {
@@ -420,9 +467,37 @@ function optionalReferenceString(ref, field, maxLength, limits = defaultPromptOp
 
 function assertNoForbiddenInputText(value, field) {
   const text = stringValue(value);
-  if (containsHighConfidenceSensitivePayload(text)) {
+  if (containsPromptOptimizationSensitivePayload(text)) {
     fail("INVALID_REQUEST_SCHEMA", `${field} 包含不允许的敏感内容。`);
   }
+}
+
+function containsPromptOptimizationSensitivePayload(value) {
+  const text = promptOptimizationDetectionText(value);
+  if (!text) return false;
+  if (containsHighConfidenceSensitivePayload(text)) return true;
+  return containsPromptAuthorizationAssignment(text);
+}
+
+function promptOptimizationDetectionText(value) {
+  return stringValue(value)
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
+    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "")
+    .replace(/[：﹕꞉︓]/gu, ":")
+    .replace(/[＝﹦]/gu, "=")
+    .replace(/文案|产品|包装/gu, "示例");
+}
+
+function containsPromptAuthorizationAssignment(text) {
+  PROMPT_AUTHORIZATION_ASSIGNMENT.lastIndex = 0;
+  let match;
+  while ((match = PROMPT_AUTHORIZATION_ASSIGNMENT.exec(text))) {
+    const value = stringValue(match[2]).trim();
+    if (!value) continue;
+    if (containsHighConfidenceSensitivePayload(`${match[1]}: ${value}`)) return true;
+  }
+  return false;
 }
 
 function promptOptimizationLimits(env = process.env) {
@@ -692,7 +767,8 @@ export async function callRagflowEnhancementIfAvailable({ request, binding, refe
   let config;
   try {
     config = ragflowConfig(env);
-  } catch {
+  } catch (error) {
+    if (error instanceof ImageApiError && error.errorCode !== "RAGFLOW_CONFIG_MISSING" && hasExplicitRagflowRuntimeEnv(env)) throw error;
     return null;
   }
   try {
@@ -712,9 +788,31 @@ export async function callRagflowEnhancementIfAvailable({ request, binding, refe
       maxChars: config.maxEnhancementChars
     });
   } catch (error) {
-    if (error instanceof ImageApiError && error.errorCode === "INVALID_REQUEST_SCHEMA") throw error;
+    if (error instanceof ImageApiError) throw error;
     return null;
   }
+}
+
+function hasExplicitRagflowRuntimeEnv(env = {}) {
+  return [
+    "RAGFLOW_BASE_URL",
+    "RAGFLOW_API_KEY",
+    "RAGFLOW_CHAT_ID",
+    "RAGFLOW_MODEL",
+    "RAGFLOW_DEPLOYMENT_TIER",
+    "RAGFLOW_ALLOW_PRIVATE_ENDPOINTS",
+    "RAGFLOW_ALLOWED_ORIGINS",
+    "RAGFLOW_TIMEOUT_MS",
+    "RAGFLOW_DNS_TIMEOUT_MS",
+    "RAGFLOW_MAX_REQUEST_BYTES",
+    "RAGFLOW_MAX_REQUEST_MESSAGE_CHARS",
+    "RAGFLOW_MAX_RESPONSE_BYTES",
+    "RAGFLOW_MAX_JSON_DEPTH",
+    "RAGFLOW_MAX_JSON_KEYS",
+    "RAGFLOW_MAX_JSON_ARRAY_LENGTH",
+    "RAGFLOW_MAX_JSON_STRING_LENGTH",
+    "RAGFLOW_MAX_ENHANCEMENT_CHARS"
+  ].some((key) => stringValue(env[key]).trim() !== "");
 }
 
 export async function callRagflowPromptOptimizer({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, config = null, lookupHost = dnsLookup } = {}) {
@@ -791,7 +889,7 @@ function buildRagflowPromptOptimizerRequestBody(config, userPrompt) {
 }
 
 function assertNoSensitiveRagflowOutbound(userPrompt) {
-  if (!containsHighConfidenceSensitivePayload(userPrompt)) return;
+  if (!containsPromptOptimizationSensitivePayload(userPrompt)) return;
   throw new ImageApiError({
     statusCode: 400,
     status: "failed",
@@ -805,6 +903,7 @@ export function ragflowConfig(env = process.env) {
   const baseUrl = stringValue(env.RAGFLOW_BASE_URL || fileConfig.baseUrl).trim();
   const apiKey = stringValue(env.RAGFLOW_API_KEY || fileConfig.apiKey).trim();
   const chatId = stringValue(env.RAGFLOW_CHAT_ID || fileConfig.chatId).trim();
+  const explicitConfig = assertExplicitRagflowConfigValues(env);
   if (!baseUrl || !apiKey || !chatId) {
     throw new ImageApiError({
       statusCode: 503,
@@ -815,7 +914,7 @@ export function ragflowConfig(env = process.env) {
   }
   const normalized = normalizeRagflowBaseUrl(baseUrl, env);
   const endpoint = `${normalized.baseUrl}/api/v1/openai/${encodeURIComponent(chatId)}/chat/completions`;
-  const timeoutMs = intEnv(env.RAGFLOW_TIMEOUT_MS, 50, 60_000, RAGFLOW_TIMEOUT_MS);
+  const timeoutMs = explicitConfig.timeoutMs;
   return {
     apiKey,
     model: stringValue(env.RAGFLOW_MODEL || fileConfig.model).trim() || "model",
@@ -824,19 +923,35 @@ export function ragflowConfig(env = process.env) {
     tier: normalized.tier,
     allowPrivateEndpoint: normalized.allowPrivateEndpoint,
     timeoutMs,
-    dnsTimeoutMs: intEnv(env.RAGFLOW_DNS_TIMEOUT_MS, 1, timeoutMs, Math.min(RAGFLOW_DNS_TIMEOUT_MS, timeoutMs)),
-    maxRequestBytes: intEnv(env.RAGFLOW_MAX_REQUEST_BYTES, 512, 1024 * 1024, RAGFLOW_MAX_REQUEST_BYTES),
-    maxRequestMessageChars: intEnv(env.RAGFLOW_MAX_REQUEST_MESSAGE_CHARS, 128, 128_000, RAGFLOW_MAX_REQUEST_MESSAGE_CHARS),
-    maxResponseBytes: intEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES),
-    maxEnhancementChars: intEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS),
+    dnsTimeoutMs: strictIntEnv(env.RAGFLOW_DNS_TIMEOUT_MS, 1, timeoutMs, Math.min(RAGFLOW_DNS_TIMEOUT_MS, timeoutMs)),
+    maxRequestBytes: strictIntEnv(env.RAGFLOW_MAX_REQUEST_BYTES, 512, 1024 * 1024, RAGFLOW_MAX_REQUEST_BYTES),
+    maxRequestMessageChars: strictIntEnv(env.RAGFLOW_MAX_REQUEST_MESSAGE_CHARS, 128, 128_000, RAGFLOW_MAX_REQUEST_MESSAGE_CHARS),
+    maxResponseBytes: strictIntEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES),
+    maxEnhancementChars: strictIntEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS),
     jsonLimits: {
-      maxDepth: intEnv(env.RAGFLOW_MAX_JSON_DEPTH, 2, 32, RAGFLOW_MAX_JSON_DEPTH),
-      maxKeys: intEnv(env.RAGFLOW_MAX_JSON_KEYS, 8, 1000, RAGFLOW_MAX_JSON_KEYS),
-      maxArrayLength: intEnv(env.RAGFLOW_MAX_JSON_ARRAY_LENGTH, 1, 1000, RAGFLOW_MAX_JSON_ARRAY_LENGTH),
-      maxStringLength: intEnv(env.RAGFLOW_MAX_JSON_STRING_LENGTH, 64, 64_000, RAGFLOW_MAX_JSON_STRING_LENGTH),
-      maxTotalChars: intEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS)
+      maxDepth: strictIntEnv(env.RAGFLOW_MAX_JSON_DEPTH, 2, 32, RAGFLOW_MAX_JSON_DEPTH),
+      maxKeys: strictIntEnv(env.RAGFLOW_MAX_JSON_KEYS, 8, 1000, RAGFLOW_MAX_JSON_KEYS),
+      maxArrayLength: strictIntEnv(env.RAGFLOW_MAX_JSON_ARRAY_LENGTH, 1, 1000, RAGFLOW_MAX_JSON_ARRAY_LENGTH),
+      maxStringLength: strictIntEnv(env.RAGFLOW_MAX_JSON_STRING_LENGTH, 64, 64_000, RAGFLOW_MAX_JSON_STRING_LENGTH),
+      maxTotalChars: strictIntEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS)
     }
   };
+}
+
+function assertExplicitRagflowConfigValues(env) {
+  const timeoutMs = strictIntEnv(env.RAGFLOW_TIMEOUT_MS, 50, 60_000, RAGFLOW_TIMEOUT_MS);
+  strictIntEnv(env.RAGFLOW_DNS_TIMEOUT_MS, 1, timeoutMs, Math.min(RAGFLOW_DNS_TIMEOUT_MS, timeoutMs));
+  strictIntEnv(env.RAGFLOW_MAX_REQUEST_BYTES, 512, 1024 * 1024, RAGFLOW_MAX_REQUEST_BYTES);
+  strictIntEnv(env.RAGFLOW_MAX_REQUEST_MESSAGE_CHARS, 128, 128_000, RAGFLOW_MAX_REQUEST_MESSAGE_CHARS);
+  strictIntEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES);
+  strictIntEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS);
+  strictIntEnv(env.RAGFLOW_MAX_JSON_DEPTH, 2, 32, RAGFLOW_MAX_JSON_DEPTH);
+  strictIntEnv(env.RAGFLOW_MAX_JSON_KEYS, 8, 1000, RAGFLOW_MAX_JSON_KEYS);
+  strictIntEnv(env.RAGFLOW_MAX_JSON_ARRAY_LENGTH, 1, 1000, RAGFLOW_MAX_JSON_ARRAY_LENGTH);
+  strictIntEnv(env.RAGFLOW_MAX_JSON_STRING_LENGTH, 64, 64_000, RAGFLOW_MAX_JSON_STRING_LENGTH);
+  if (stringValue(env.RAGFLOW_DEPLOYMENT_TIER).trim()) normalizeRagflowDeploymentTier(env.RAGFLOW_DEPLOYMENT_TIER);
+  parseAllowedOrigins(env.RAGFLOW_ALLOWED_ORIGINS);
+  return { timeoutMs };
 }
 
 function normalizeRagflowBaseUrl(raw, env) {
@@ -898,13 +1013,6 @@ function throwRagflowConfigInvalid() {
     errorCode: "RAGFLOW_CONFIG_INVALID",
     message: "提示词优化服务配置无效。"
   });
-}
-
-function intEnv(value, min, max, fallback) {
-  if (value == null || value === "") return fallback;
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
 function strictIntEnv(value, min, max, fallback) {
@@ -1140,10 +1248,10 @@ function jsonWithinResourceLimits(value, limits) {
 }
 
 function readRagflowRuntimeConfig(env = process.env) {
-  const candidates = [
-    stringValue(env.AI_TU_RUNTIME_CONFIG_FILE).trim(),
-    resolve(ROOT, "真实配置_toapis.md")
-  ].filter(Boolean);
+  const explicitConfigFile = stringValue(env.AI_TU_RUNTIME_CONFIG_FILE).trim();
+  const candidates = explicitConfigFile
+    ? [explicitConfigFile]
+    : [resolve(ROOT, "真实配置_toapis.md")];
   for (const filePath of candidates) {
     try {
       if (!existsSync(filePath)) continue;
@@ -1584,18 +1692,25 @@ function assertPromptOptimizationPublicPayload(payload, kind) {
 }
 
 function containsForbiddenEnhancementText(text) {
-  return RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT.test(stringValue(text)) || containsHighConfidenceSensitivePayload(text);
+  return RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT.test(stringValue(text)) || containsPromptOptimizationSensitivePayload(text);
 }
 
 function containsForbiddenOptimizedPromptText(text) {
   const value = stringValue(text);
   return /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|data:image|enhancement|input_analysis|storyboard_processing/i.test(value)
-    || containsHighConfidenceSensitivePayload(value);
+    || containsPromptOptimizationPublicSensitivePayload(value);
 }
 
 function containsForbiddenPublicText(text) {
   const value = stringValue(text);
-  return PROMPT_PUBLIC_FORBIDDEN_TEXT.test(value) || containsHighConfidenceSensitivePayload(value);
+  if (/^RAGFLOW_(?:CONFIG_INVALID|OPENAI_ENDPOINT_NOT_FOUND|OPTIMIZER_FAILED)$/u.test(value)) return false;
+  return PROMPT_PUBLIC_FORBIDDEN_TEXT.test(value) || containsPromptOptimizationPublicSensitivePayload(value);
+}
+
+function containsPromptOptimizationPublicSensitivePayload(value) {
+  const text = promptOptimizationDetectionText(value);
+  if (!text) return false;
+  return containsHighConfidenceSensitivePayload(text);
 }
 
 export function buildReferencePlan(input = {}) {

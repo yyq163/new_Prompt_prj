@@ -458,6 +458,68 @@
         "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix11",
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix11"
       ]
+    },
+    {
+      "id": "main01-fix12-prompt-optimizer-security-contract",
+      "title": "Close prompt optimizer remaining security and error contract gaps",
+      "status": "premerge_verified",
+      "dependsOn": [
+        "main01-fix11-prompt-optimizer-ragflow-parser-differential"
+      ],
+      "filesExpected": [
+        "server.js",
+        "src/core/sensitive-payload.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "API_CONTRACTS.md",
+        ".codex-agent-team/context/main01-fix12-prompt-optimizer-security-contract.md",
+        ".codex-agent-team/reports/review-main01-fix12-prompt-optimizer-security-contract.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix12-prompt-optimizer-security-contract.md"
+      ],
+      "acceptance": [
+        "Prompt optimizer malformed and oversized JSON returns the prompt optimizer error envelope with non-empty request and trace IDs",
+        "Recursive request schema rejects unknown fields, nested illegal fields, arrays, primitives, duplicate keys, canonical collisions, Unicode variants, and prototype-pollution keys",
+        "Credential detection normalizes the detection copy, blocks high-confidence credential payloads before RAGFlow fetch, and allows legitimate teaching and product-copy text",
+        "Prompt, reference, aggregate reference, RAGFlow body, and JSON resource boundaries are exact and fail closed without truncation or outbound calls",
+        "Explicit invalid RAGFlow hardening config fails closed even when endpoint config is absent",
+        "DNS lookup is inside the total deadline, late resolution cannot fetch, remaining fetch budget is enforced, and no unhandled rejection occurs",
+        "All prompt optimizer error paths expose only status, request_id, trace_id, error_code, and message and never expose image or optimized-prompt fields on failure",
+        "All required tests, security scans, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node tests/unit/http-invalid-body.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix12-prompt-optimizer-security-contract.json",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix12-2026-06-18-pendingChanges-0",
+        "branch-main01-fix12-from-origin-main01-5484cf12b8b6d221f47db61c94100f447e7f8d8a",
+        "code-map-skill-refresh-after-branch-fix12-2026-06-18-pendingChanges-0",
+        ".codex-agent-team/context/main01-fix12-prompt-optimizer-security-contract.md",
+        "npm-run-check-pass-2026-06-18-fix12",
+        "npm-test-181-pass-2026-06-18-fix12",
+        "prompt-optimizer-test-46-pass-2026-06-18-fix12",
+        "http-invalid-body-test-7-pass-2026-06-18-fix12",
+        "image-api-test-110-pass-2026-06-18-fix12",
+        "dns-timeout-focused-6-pass-late-resolve-fetch-0-unhandled-0-2026-06-18-fix12",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix12",
+        "git-diff-check-pass-2026-06-18-fix12",
+        "security-scan-pass-triaged-detector-literal-2026-06-18-fix12",
+        "code-map-skill-refresh-precommit-fix12-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-899-edgeCount-2293",
+        ".codex-agent-team/reports/review-main01-fix12-prompt-optimizer-security-contract.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix12-prompt-optimizer-security-contract.md",
+        "prompt-optimizer-security-and-contract-debt-empty-2026-06-18-fix12",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix12"
+      ]
     }
   ]
 }

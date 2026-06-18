@@ -41,29 +41,25 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\"",
-    expectedMessage: "请求体不是合法 JSON",
-    expectedRequestId: ""
+    expectedMessage: "请求体不是合法 JSON"
   });
 
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"prompt\":\"覆盖\"}",
-    expectedMessage: "重复字段",
-    expectedRequestId: ""
+    expectedMessage: "重复字段"
   });
 
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"ｐｒｏｍｐｔ\":\"覆盖\"}",
-    expectedMessage: "重复字段",
-    expectedRequestId: ""
+    expectedMessage: "重复字段"
   });
 
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: "{\"task_type\":\"image_reference\",\"prompt\":\"基于 @海报参考 生成视觉图。\",\"references\":[{\"reference_id\":\"ref_poster\",\"reference_id\":\"ref_shadow\",\"entity_name\":\"海报参考\",\"entity_type\":\"style\",\"role\":\"style_reference\",\"url\":\"https://example.com/ref.png\",\"mime_type\":\"image/png\"}]}",
-    expectedMessage: "重复字段",
-    expectedRequestId: ""
+    expectedMessage: "重复字段"
   });
 
   await assertPromptInvalidBody({
@@ -75,8 +71,7 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: JSON.stringify({ prompt: "x".repeat(2000) }),
-    expectedMessage: "请求体过大",
-    expectedRequestId: ""
+    expectedMessage: "请求体过大"
   });
 
   await assertPromptInvalidBody({
@@ -166,6 +161,76 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
       expectedMessage: "不允许|不允许的字段"
     });
   }
+
+  for (const routePath of ["/api/v1/prompt-optimizations", "/api/prompt-optimizer"]) {
+    const url = `${app.baseUrl}${routePath}`;
+    await assertPromptInvalidBody({
+      url,
+      body: "{\"task_type\":\"text_image\"",
+      expectedMessage: "请求体不是合法 JSON"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify({ prompt: "x".repeat(2000) }),
+      expectedMessage: "请求体过大"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"prompt\":\"覆盖\"}",
+      expectedMessage: "重复字段"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"ｐｒｏｍｐｔ\":\"覆盖\"}",
+      expectedMessage: "重复字段"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify([]),
+      expectedMessage: "请求体必须是 JSON 对象"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify("plain text"),
+      expectedMessage: "请求体必须是 JSON 对象"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify({ task_type: "text_image", prompt: "生成一张山间晨雾图。", unknown_field: null }),
+      expectedMessage: "不允许|不允许的字段"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify({
+        task_type: "image_reference",
+        references: [{
+          reference_id: "ref_scene",
+          entity_name: "山雾",
+          entity_type: "scene",
+          role: "scene_reference",
+          url: "https://example.com/ref.png",
+          mime_type: "image/png",
+          provider_payload: "x"
+        }]
+      }),
+      expectedMessage: "不允许|不允许的字段"
+    });
+    await assertPromptInvalidBody({
+      url,
+      body: JSON.stringify({ task_type: "text_image", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } }),
+      expectedMessage: "不允许|不允许的字段"
+    });
+    await assertPromptBusinessError({
+      url,
+      body: JSON.stringify({ task_type: "text_image" }),
+      code: "PROMPT_REQUIRED"
+    });
+    await assertPromptBusinessError({
+      url,
+      body: JSON.stringify({ task_type: "bad_task", prompt: "生成一张山间晨雾图。" }),
+      code: "UNSUPPORTED_TASK_TYPE"
+    });
+  }
 });
 
 test("HTTP final route still accepts legal V1.4 JSON into the normal provider-gated path", async (t) => {
@@ -188,6 +253,91 @@ test("HTTP final route still accepts legal V1.4 JSON into the normal provider-ga
   }));
   assert.equal(response.status, 503);
   assertV36Error(response.body, "PROMPT_IMAGE_BACKEND_NOT_CONFIGURED");
+});
+
+test("HTTP prompt optimizer route fails closed on invalid RAGFlow numeric config", async (t) => {
+  const app = await startTestServer({
+    extraEnv: {
+      RAGFLOW_BASE_URL: "http://ragflow.local",
+      RAGFLOW_API_KEY: "test-key",
+      RAGFLOW_CHAT_ID: "chat_001",
+      RAGFLOW_DEPLOYMENT_TIER: "test",
+      RAGFLOW_TIMEOUT_MS: "0"
+    }
+  });
+  t.after(async () => {
+    await app.stop();
+  });
+
+  const response = await postRaw(`${app.baseUrl}/api/v1/prompt-optimizations`, JSON.stringify({
+    task_type: "text_image",
+    prompt: "生成一张山间晨雾图。",
+    references: []
+  }));
+  assert.equal(response.status, 503);
+  assert.equal(response.body.status, "failed");
+  assert.equal(response.body.error_code, "RAGFLOW_CONFIG_INVALID");
+  assert.equal(typeof response.body.request_id, "string");
+  assert.ok(response.body.request_id.length > 0);
+  assert.match(response.body.trace_id, /^trace_/);
+  assert.equal("images" in response.body, false);
+  assert.equal("optimized_prompt" in response.body, false);
+  assertNoForbiddenFields(response.body);
+});
+
+test("HTTP prompt optimizer route validates explicit RAGFlow hardening config before fallback", async (t) => {
+  const app = await startTestServer({
+    extraEnv: {
+      AI_TU_RUNTIME_CONFIG_FILE: "/tmp/prompt-optimizer-missing-runtime-config.json",
+      RAGFLOW_TIMEOUT_MS: "0"
+    }
+  });
+  t.after(async () => {
+    await app.stop();
+  });
+
+  for (const routePath of ["/api/v1/prompt-optimizations", "/api/prompt-optimizer"]) {
+    const response = await postRaw(`${app.baseUrl}${routePath}`, JSON.stringify({
+      task_type: "text_image",
+      prompt: "生成一张山间晨雾图。",
+      references: []
+    }));
+    assert.equal(response.status, 503);
+    assert.equal(response.body.status, "failed");
+    assert.equal(response.body.error_code, "RAGFLOW_CONFIG_INVALID");
+    assert.equal(typeof response.body.request_id, "string");
+    assert.ok(response.body.request_id.length > 0);
+    assert.match(response.body.trace_id, /^trace_/);
+    assert.equal("images" in response.body, false);
+    assert.equal("optimized_prompt" in response.body, false);
+    assertNoForbiddenFields(response.body);
+  }
+});
+
+test("HTTP prompt optimizer errors keep envelope when user text looks internal", async (t) => {
+  const app = await startTestServer();
+  t.after(async () => {
+    await app.stop();
+  });
+
+  for (const routePath of ["/api/v1/prompt-optimizations", "/api/prompt-optimizer"]) {
+    const response = await postRaw(`${app.baseUrl}${routePath}`, JSON.stringify({
+      task_type: "image_reference",
+      prompt: "基于 @RAGFlow 生成一张视觉图。",
+      references: [],
+      reference_policy: { unbound_entity: "block" }
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, "needs_clarification");
+    assert.equal(response.body.error_code, "ENTITY_REFERENCE_NOT_FOUND");
+    assert.equal(typeof response.body.request_id, "string");
+    assert.ok(response.body.request_id.length > 0);
+    assert.match(response.body.trace_id, /^trace_/);
+    assert.equal(response.body.message.includes("RAGFlow"), false);
+    assert.equal("images" in response.body, false);
+    assert.equal("optimized_prompt" in response.body, false);
+    assertNoForbiddenFields(response.body);
+  }
 });
 
 test("HTTP reference image upload returns structured local image URL for browser flow", async (t) => {
@@ -279,32 +429,29 @@ async function assertFinalInvalidBody({ url, body }) {
   assertV36Error(response.body, "INVALID_REQUEST_SCHEMA");
 }
 
-async function assertPromptInvalidBody({ url, body, expectedMessage, expectedRequestId = null }) {
+async function assertPromptInvalidBody({ url, body, expectedMessage }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 400);
-  if (expectedRequestId === null) {
-    assert.equal(typeof response.body.request_id, "string");
-    assert.ok(response.body.request_id.length > 0);
-  } else {
-    assert.equal(response.body.request_id, expectedRequestId);
-  }
+  assert.equal(typeof response.body.request_id, "string");
+  assert.ok(response.body.request_id.length > 0);
   assert.equal(response.body.status, "failed");
   assert.equal(response.body.error_code, "INVALID_REQUEST_SCHEMA");
   assert.match(response.body.message, new RegExp(expectedMessage));
   assert.equal("generation_id" in response.body, false);
-  if (expectedRequestId === "") {
-    assert.equal("trace_id" in response.body, false);
-  } else {
-    assert.equal(typeof response.body.trace_id, "string");
-    assert.ok(response.body.trace_id.length > 0);
-  }
+  assert.equal(typeof response.body.trace_id, "string");
+  assert.match(response.body.trace_id, /^trace_/);
   assert.equal("images" in response.body, false);
+  assert.equal("optimized_prompt" in response.body, false);
   assertNoForbiddenFields(response.body);
 }
 
 async function assertPromptBusinessError({ url, body, code }) {
   const response = await postRaw(url, body);
   assert.equal(response.status, 200);
+  assert.equal(typeof response.body.request_id, "string");
+  assert.ok(response.body.request_id.length > 0);
+  assert.equal(typeof response.body.trace_id, "string");
+  assert.match(response.body.trace_id, /^trace_/);
   assert.equal(response.body.status, "needs_clarification");
   assert.equal(response.body.error_code, code);
   assert.equal("optimized_prompt" in response.body, false);
@@ -343,7 +490,7 @@ function assertNoForbiddenFields(payload) {
   }
 }
 
-async function startTestServer({ maxBodySize = "512b", publicBaseUrl = "" } = {}) {
+async function startTestServer({ maxBodySize = "512b", publicBaseUrl = "", extraEnv = {} } = {}) {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), "http-invalid-body-"));
   const configFile = join(dir, "runtime-config.json");
@@ -363,7 +510,8 @@ async function startTestServer({ maxBodySize = "512b", publicBaseUrl = "" } = {}
       IMAGE_MODEL_FOR_IMAGE: "",
       IMAGE_API_KEY: "",
       IMAGE_API_KEYS: "",
-      RAGFLOW_ENHANCEMENT_URL: ""
+      RAGFLOW_ENHANCEMENT_URL: "",
+      ...extraEnv
     },
     stdio: ["ignore", "pipe", "pipe"]
   });

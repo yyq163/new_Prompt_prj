@@ -48,8 +48,6 @@ async function route(request, response) {
   }
   if (request.method === "POST" && (url.pathname === "/api/prompt-optimizer" || url.pathname === "/api/v1/prompt-optimizations")) {
     const body = await readJson(request);
-    const invalid = invalidJsonPayload(body);
-    if (invalid) return sendJson(response, invalid.statusCode, invalid.payload);
     const result = await handlePromptOptimization(body);
     return sendJson(response, result.statusCode, result.payload);
   }

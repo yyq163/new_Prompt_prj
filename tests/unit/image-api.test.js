@@ -1005,7 +1005,7 @@ test("RAGFlow internal implementation terms are discarded across enhancement fie
     { composition_notes: `Bearer tok_${"C".repeat(32)}` },
     { composition_notes: `Basic ${Buffer.from("user:super-secret-password").toString("base64")}` },
     { composition_notes: `api_key=key_${"B".repeat(32)}` },
-    { composition_notes: `cookie=${"D".repeat(24)}` },
+    { composition_notes: "cookie=K8sN4vQp9LmT2ZaB7cYd6EfGhJk3MnPq" },
     { composition_notes: `sk-proj-${"E".repeat(32)}` },
     { composition_notes: "raw_provider_response should stay hidden." },
     { composition_notes: "b64_json and base64 should stay hidden." },

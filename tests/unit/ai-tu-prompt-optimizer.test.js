@@ -334,13 +334,174 @@ test("prompt optimizer rejects complete authorization assignment values with com
   });
 });
 
+test("prompt optimizer rejects trailing authorization parameters after quoted primary assignments", async () => {
+  const cases = [
+    {
+      label: "token quoted primary then response after comma",
+      prompt: "authorization=\"Token x\", response=\"synthetic_response_123456789\"",
+      leaked: "synthetic_response_123456789"
+    },
+    {
+      label: "custom quoted primary then signature after semicolon",
+      prompt: "authorization=\"Custom x\"; signature=\"synthetic_signature_123456789\"",
+      leaked: "synthetic_signature_123456789"
+    },
+    {
+      label: "digest quoted primary then credential after comma",
+      prompt: "authorization=\"Digest x\", credential=\"synthetic_credential_123456789\"",
+      leaked: "synthetic_credential_123456789"
+    },
+    {
+      label: "aws4 quoted primary then mixed case signature after semicolon",
+      prompt: "authorization=\"AWS4-HMAC-SHA256 x\"; Signature=\"synthetic_signature_123456789\"",
+      leaked: "synthetic_signature_123456789"
+    },
+    {
+      label: "proxy underscore quoted primary then token after comma",
+      prompt: "proxy_authorization=\"Custom x\", token=\"synthetic_token_123456789\"",
+      leaked: "synthetic_token_123456789"
+    },
+    {
+      label: "proxy kebab quoted primary then key after semicolon",
+      prompt: "proxy-authorization=\"ApiKey x\"; key=\"synthetic_key_123456789\"",
+      leaked: "synthetic_key_123456789"
+    },
+    {
+      label: "quoted delimiter remains inside primary and trailing secret is scanned",
+      prompt: "authorization=\"Custom realm=\\\"x,y;z\\\"\", secret=synthetic_secret_123456789",
+      leaked: "synthetic_secret_123456789"
+    },
+    {
+      label: "escaped quote in primary and trailing response is scanned",
+      prompt: "authorization=\"Custom token=\\\"display\\\"\", response=synthetic_response_123456789",
+      leaked: "synthetic_response_123456789"
+    },
+    {
+      label: "malformed quote fails closed on current logical line",
+      prompt: "authorization=\"Token x, response=synthetic_response_123456789",
+      leaked: "synthetic_response_123456789"
+    },
+    {
+      label: "logical line scan stops at LF and still catches second line credential",
+      prompt: "authorization=\"Token x\"\nproxy_authorization=\"Custom x\"; token=synthetic_token_123456789",
+      leaked: "synthetic_token_123456789"
+    }
+  ];
+
+  for (const { label, prompt, leaked } of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "reference description cannot smuggle trailing authorization parameter",
+    body: {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
+      references: [reference(
+        "ref_poster",
+        "海报参考",
+        "style",
+        "style_reference",
+        "https://example.com/ref_poster.png",
+        "authorization=\"Token x\", response=\"synthetic_response_123456789\""
+      )]
+    },
+    leaked: "synthetic_response_123456789"
+  });
+
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "oversized quoted authorization logical value",
+    body: {
+      task_type: "text_image",
+      prompt: `authorization="${"A".repeat(4097)}", response="synthetic_response_123456789"`,
+      references: []
+    },
+    leaked: "synthetic_response_123456789"
+  });
+
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "too many authorization parameters fail closed",
+    body: {
+      task_type: "text_image",
+      prompt: `authorization="Token x", ${Array.from({ length: 33 }, (_, index) => `p${index}=v`).join(", ")}`,
+      references: []
+    },
+    leaked: "p32=v"
+  });
+
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "oversized authorization parameter value fails closed",
+    body: {
+      task_type: "text_image",
+      prompt: `authorization="Token x", username="${"u".repeat(2049)}"`,
+      references: []
+    },
+    leaked: "uuuuuuuuuuuuuuuu"
+  });
+});
+
+test("prompt optimizer allows benign authorization tail parameters without credential values", async () => {
+  const allowed = [
+    "authorization=\"Token x\", username=\"tester\"",
+    "authorization=\"Token x\", algorithm=\"hmac\"",
+    "authorization=\"Digest x\"; realm=\"public\"; qop=\"auth\"",
+    "proxy_authorization=\"Custom x\"; username=\"tester\""
+  ];
+
+  for (const prompt of allowed) {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: `生成一张接口教学图，文字包括：${prompt}`,
+      references: []
+    }, noRagflowOptions());
+    assert.equal(result.statusCode, 200, prompt);
+    assert.equal(result.payload.status, "succeeded", prompt);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
+test("prompt optimizer rejects scheme-less authorization assignment credentials before RAGFlow fetch", async () => {
+  const cases = [
+    {
+      label: "scheme-less authorization token",
+      prompt: `authorization=tok_${"A".repeat(32)}`,
+      leaked: `tok_${"A".repeat(32)}`
+    },
+    {
+      label: "scheme-less proxy authorization token",
+      prompt: `proxy_authorization=proxy_${"P".repeat(32)}`,
+      leaked: `proxy_${"P".repeat(32)}`
+    }
+  ];
+
+  for (const { label, prompt, leaked } of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
 test("prompt optimizer cookie detection allows low-risk preference copy and rejects credential cookies", async () => {
   const allowed = [
     "Cookie: flavor=choco",
     "请在标签上写 Cookie: flavor=choco",
     "Set-Cookie: theme=dark",
     "Cookie: language=zh-CN",
-    "Cookie: theme=\"dark\"; layout=grid"
+    "Cookie: theme=\"dark\"; layout=grid",
+    "cookie=flavor=choco",
+    "cookie=theme=dark",
+    "cookie=language=zh-CN",
+    "cookie=layout=grid",
+    "cookie=\"flavor=choco; theme=dark\"",
+    "set_cookie=theme=dark",
+    "set-cookie=language=zh-CN; Path=/",
+    "请在标签上写 cookie=flavor=choco"
   ];
   for (const prompt of allowed) {
     const result = await handlePromptOptimization({
@@ -350,7 +511,7 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
     }, noRagflowOptions());
     assert.equal(result.statusCode, 200, prompt);
     assert.equal(result.payload.status, "succeeded", prompt);
-    assert.match(result.payload.optimized_prompt, /flavor=choco|theme="?dark"?|language=zh-CN/, prompt);
+    assert.match(result.payload.optimized_prompt, /flavor=choco|theme="?dark"?|language=zh-CN|layout=grid/, prompt);
     assertNoPublicLeaks(result.payload);
   }
 
@@ -363,16 +524,18 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
       "style",
       "style_reference",
       "https://example.com/ref_packaging.png",
-      "reference metadata shows Cookie: flavor=choco and Set-Cookie: theme=dark"
+      "reference metadata shows Cookie: flavor=choco, Set-Cookie: theme=dark, and cookie=language=zh-CN"
     )]
   }, noRagflowOptions());
   assert.equal(referenceResult.statusCode, 200);
   assert.equal(referenceResult.payload.status, "succeeded");
-  assert.match(referenceResult.payload.optimized_prompt, /flavor=choco|theme=dark/);
+  assert.match(referenceResult.payload.optimized_prompt, /flavor=choco|theme=dark|language=zh-CN/);
   assertNoPublicLeaks(referenceResult.payload);
 
   const highEntropySid = "N7xQp4rT9vLm2ZaB8cYd6EfGhJk3MnPq";
   const highEntropyPreference = "T7xQp4rT9vLm2ZaB8cYd6EfGhJk3MnPq";
+  const highEntropyGenericCookie = "K8sN4vQp9LmT2ZaB7cYd6EfGhJk3MnPq";
+  const genericJwt = "eyJsyntheticJwtHeader123456789.eyJsyntheticPayload123456789.syntheticSignature123456789";
   const rejected = [
     ["session cookie", "Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"],
     ["short session cookie", "Cookie: sessionid=abc", "sessionid=abc"],
@@ -384,7 +547,16 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
     ["high entropy sid", `Cookie: sid=${highEntropySid}`, highEntropySid],
     ["short sid cookie", "Cookie: sid=abc", "sid=abc"],
     ["generic high entropy cookie", `Cookie: preference=${highEntropyPreference}`, highEntropyPreference],
-    ["multi pair credential", "Cookie: flavor=choco; jwt=eyJsyntheticJwtHeader123456789.eyJsyntheticPayload123456789.syntheticSignature123456789", "eyJsyntheticJwtHeader123456789"],
+    ["assignment session cookie", "cookie=sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"],
+    ["assignment auth token cookie", "cookie=auth_token=synthetic_auth_token_123456789", "synthetic_auth_token_123456789"],
+    ["assignment access token cookie", "cookie=access_token=synthetic_access_token_123456789", "synthetic_access_token_123456789"],
+    ["assignment jwt cookie", "cookie=jwt=synthetic.jwt.token.value", "synthetic.jwt.token.value"],
+    ["assignment quoted mixed credential cookie", "cookie=\"theme=dark; sessionid=synthetic_session_123456789\"", "synthetic_session_123456789"],
+    ["assignment set-cookie jwt attribute", "set-cookie=jwt=abc; HttpOnly", "jwt=abc"],
+    ["assignment set-cookie refresh token", "set_cookie=refresh_token=synthetic_refresh_token_123456789; HttpOnly", "synthetic_refresh_token_123456789"],
+    ["generic assignment high entropy cookie", `cookie=${highEntropyGenericCookie}`, highEntropyGenericCookie],
+    ["generic assignment jwt cookie", `cookie=${genericJwt}`, "eyJsyntheticJwtHeader123456789"],
+    ["multi pair credential", `Cookie: flavor=choco; jwt=${genericJwt}`, "eyJsyntheticJwtHeader123456789"],
     ["product copy cannot hide session cookie", "产品文案示例 Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"]
   ];
   for (const [label, prompt, leaked] of rejected) {
@@ -525,9 +697,9 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       leaked: setCookieValue
     },
     {
-      label: "cookie assignment value",
-      body: { task_type: "text_image", prompt: `请绘制 cookie=${"F".repeat(24)}`, references: [] },
-      leaked: "F".repeat(24)
+      label: "generic high entropy cookie assignment value",
+      body: { task_type: "text_image", prompt: "请绘制 cookie=K8sN4vQp9LmT2ZaB7cYd6EfGhJk3MnPq", references: [] },
+      leaked: "K8sN4vQp9LmT2ZaB7cYd6EfGhJk3MnPq"
     },
     {
       label: "standalone known provider key",

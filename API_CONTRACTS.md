@@ -229,6 +229,9 @@ limits such as `RAGFLOW_TIMEOUT_MS`, `RAGFLOW_DNS_TIMEOUT_MS`,
 `RAGFLOW_MAX_JSON_KEYS`, `RAGFLOW_MAX_JSON_ARRAY_LENGTH`,
 `RAGFLOW_MAX_JSON_STRING_LENGTH`, and `RAGFLOW_MAX_ENHANCEMENT_CHARS` are never
 accepted from user request payloads.
+When `AI_TU_RUNTIME_CONFIG_FILE` is explicitly set, only that file is used for
+runtime RAGFlow config isolation; the service does not fall back to the
+workspace default config if the explicit file is absent or empty.
 `RAGFLOW_DEPLOYMENT_TIER` is strict and must be one of `production`,
 `staging`, `development`, or `test`; missing values and aliases such as `prod`,
 `stage`, `qa`, or unknown tiers are configuration errors. Production and staging
@@ -239,6 +242,9 @@ reject private endpoints by default and allow only loopback, RFC1918, or ULA
 private endpoints with `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Metadata,
 link-local, multicast, reserved, and documentation ranges remain blocked even
 with the opt-in. Malformed allowlist entries are configuration errors.
+Explicit numeric resource settings must be finite integers inside their
+documented server-side bounds. Invalid, zero, `NaN`, `Infinity`, or out-of-range
+values fail closed as configuration errors; unset values use safe defaults.
 
 ### Prompt optimization response
 

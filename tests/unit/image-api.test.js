@@ -740,6 +740,18 @@ test("legacy RAGFlow enhancement rejects sensitive outbound input before fetch",
       binding: emptyBinding()
     },
     {
+      request: normalizeRequest({ task_type: "storyboard", prompt: `Ａｕｔｈｏｒｉｚａｔｉｏｎ： ApiKey key_${"C".repeat(32)}`, references: [] }),
+      binding: emptyBinding()
+    },
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: `Autho\u200brization: X-Custom custom_${"D".repeat(32)}`, references: [] }),
+      binding: emptyBinding()
+    },
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: `Proxy-Authori\u202ezation=Fancy proxy_${"E".repeat(32)}`, references: [] }),
+      binding: emptyBinding()
+    },
+    {
       request: normalizeRequest({ task_type: "storyboard", prompt: `sk-proj-${"B".repeat(32)}`, references: [] }),
       binding: emptyBinding()
     },

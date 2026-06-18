@@ -1,5 +1,6 @@
 const CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^\s,;]{8,}))/giu;
 const AUTHORIZATION_HEADER_VALUE = /\b(?:proxy-authorization|authorization)\s*:\s*([^\r\n]+)/giu;
+const AUTHORIZATION_ASSIGNMENT_VALUE = /\b(proxy[_-]?authorization|authorization)\b\s*[:=]\s*([^\r\n,;]{8,})/giu;
 const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/giu;
 const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/giu;
 const COOKIE_HEADER_VALUE = /\b(?:set-cookie|cookie)\s*:\s*([^\r\n]+)/giu;
@@ -10,14 +11,15 @@ const BASE64_DATA_URI = /\bdata:[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*(?:;[a
 const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=$|[^A-Za-z0-9+/=])/g;
 const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
 const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret)\s*=\s*"?([^",\s]{8,})"?/giu;
-const TEACHING_CONTEXT = /教学|示例|占位|占位符|说明|语法|格式|流程|不是|非真实|not\s+real|placeholder|example|sample|dummy/iu;
+const TEACHING_CONTEXT = /教学|示例|占位|占位符|说明|语法|格式|流程|文案|产品|包装|不是|非真实|not\s+real|placeholder|example|sample|dummy/iu;
 const PLACEHOLDER_CREDENTIAL = /^(?:[<{[]?\s*)?(?:(?:your|replace|replace_me|placeholder|example|sample|dummy|fake|test)(?:[\s_:-]*(?:token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|session|value|bearer))*|(?:token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|session|value|bearer)[\s_:-]*(?:placeholder|example|sample|dummy|fake|test))\s*(?:[>}\]]?)$/iu;
 
 export function containsHighConfidenceSensitivePayload(value) {
-  const text = stringValue(value);
+  const text = normalizeDetectionText(value);
   if (!text) return false;
   if (PRIVATE_KEY_BLOCK.test(text)) return true;
   if (containsAuthorizationHeader(text)) return true;
+  if (containsAuthorizationAssignment(text)) return true;
   if (containsBareAuthCredential(BARE_BEARER, text)) return true;
   if (containsBareAuthCredential(BARE_BASIC, text)) return true;
   if (containsCookieHeader(text)) return true;
@@ -26,6 +28,15 @@ export function containsHighConfidenceSensitivePayload(value) {
   if (containsCredentialAssignment(text)) return true;
   if (containsBase64DataUri(text)) return true;
   return containsVerifiableLongBase64(text);
+}
+
+function normalizeDetectionText(value) {
+  return stringValue(value)
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
+    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "")
+    .replace(/[：﹕꞉︓]/gu, ":")
+    .replace(/[＝﹦]/gu, "=");
 }
 
 function containsAuthorizationHeader(text) {
@@ -63,6 +74,17 @@ function containsCredentialParameter(value) {
   let match;
   while ((match = AUTH_PARAM_CREDENTIAL.exec(value))) {
     if (isLikelyCredentialValue(match[1])) return true;
+  }
+  return false;
+}
+
+function containsAuthorizationAssignment(text) {
+  AUTHORIZATION_ASSIGNMENT_VALUE.lastIndex = 0;
+  let match;
+  while ((match = AUTHORIZATION_ASSIGNMENT_VALUE.exec(text))) {
+    const value = stringValue(match[2]).trim();
+    if (!value || isPlaceholderCredential(value)) continue;
+    if (containsAssignedAuthorizationCredential(value)) return true;
   }
   return false;
 }

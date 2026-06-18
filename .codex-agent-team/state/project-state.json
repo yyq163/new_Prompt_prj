@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "review",
-  "currentTask": "main01-fix11-prompt-optimizer-ragflow-parser-differential",
+  "currentTask": "main01-fix12-prompt-optimizer-security-contract",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -425,7 +425,45 @@
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix11"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix12-prompt-optimizer-security-contract",
+      "status": "premerge_verified",
+      "owner": "lead-orchestrated-codex-subagents",
+      "files": [
+        "server.js",
+        "src/core/sensitive-payload.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "API_CONTRACTS.md",
+        ".codex-agent-team/context/main01-fix12-prompt-optimizer-security-contract.md",
+        ".codex-agent-team/reports/review-main01-fix12-prompt-optimizer-security-contract.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix12-prompt-optimizer-security-contract.md"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix12-2026-06-18-pendingChanges-0",
+        "branch-main01-fix12-from-origin-main01-5484cf12b8b6d221f47db61c94100f447e7f8d8a",
+        "code-map-skill-refresh-after-branch-fix12-2026-06-18-pendingChanges-0",
+        ".codex-agent-team/context/main01-fix12-prompt-optimizer-security-contract.md",
+        "npm-run-check-pass-2026-06-18-fix12",
+        "npm-test-181-pass-2026-06-18-fix12",
+        "prompt-optimizer-test-46-pass-2026-06-18-fix12",
+        "http-invalid-body-test-7-pass-2026-06-18-fix12",
+        "image-api-test-110-pass-2026-06-18-fix12",
+        "dns-timeout-focused-6-pass-late-resolve-fetch-0-unhandled-0-2026-06-18-fix12",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix12",
+        "git-diff-check-pass-2026-06-18-fix12",
+        "security-scan-pass-triaged-detector-literal-2026-06-18-fix12",
+        "code-map-skill-refresh-precommit-fix12-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-899-edgeCount-2293",
+        ".codex-agent-team/reports/review-main01-fix12-prompt-optimizer-security-contract.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix12-prompt-optimizer-security-contract.md",
+        "prompt-optimizer-security-and-contract-debt-empty-2026-06-18-fix12",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix12"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-18T16:25:04+08:00"
+  "updatedAt": "2026-06-18T18:11:20+08:00"
 }

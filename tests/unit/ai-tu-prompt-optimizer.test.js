@@ -134,7 +134,9 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: { value: "warn" } } },
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "ignore" } },
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", references: [reference("ref_scene", "山雾", "scene", "scene_reference", "https://example.com/ref.png", "场景参考", { provider_payload: "x" })] },
-    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } }
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } },
+    { task_type: "image_reference", references: [reference("ref_scene", "山雾", "scene", "scene_reference", "https://example.com/ref.png", "场景参考", { provider_payload: "x" })] },
+    { task_type: "text_image", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } }
   ];
   for (const body of cases) {
     const result = await handlePromptOptimization(body, offlineOptions());
@@ -153,7 +155,7 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
 });
 
 test("prompt optimizer accepts ordinary natural-language security vocabulary", async () => {
-  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Authorization: Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Proxy-Authorization 教学、Cookie: session=value 是教学示例、cookie=YOUR_SESSION_COOKIE 是占位格式、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
+  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Authorization: Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Proxy-Authorization 教学、Cookie: session=value 是教学示例、Cookie: flavor=choco 是产品文案、cookie=YOUR_SESSION_COOKIE 是占位格式、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
   const textResult = await handlePromptOptimization({
     task_type: "text_image",
     prompt: `生成一张用于课程封面的画面：${legalText}`,
@@ -161,7 +163,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(textResult.statusCode, 200);
   assert.equal(textResult.payload.status, "succeeded");
-  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(textResult.payload.optimized_prompt);
   assertNoPublicLeaks(textResult.payload);
 
@@ -179,9 +181,20 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(referenceResult.statusCode, 200);
   assert.equal(referenceResult.payload.status, "succeeded");
-  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(referenceResult.payload.optimized_prompt);
   assertNoPublicLeaks(referenceResult.payload);
+
+  const colonCopyResult = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "生成一张奇幻仪表盘海报：secret: a hidden door in a castle garden；token: a brass coin on a velvet table；api_key: visual label for dashboard field。",
+    references: []
+  }, noRagflowOptions());
+  assert.equal(colonCopyResult.statusCode, 200);
+  assert.equal(colonCopyResult.payload.status, "succeeded");
+  assert.match(colonCopyResult.payload.optimized_prompt, /hidden door|brass coin|dashboard field/);
+  assertNoPromptLeaks(colonCopyResult.payload.optimized_prompt);
+  assertNoPublicLeaks(colonCopyResult.payload);
 });
 
 test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch", async () => {
@@ -273,8 +286,23 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       leaked: customSchemeValue
     },
     {
+      label: "fullwidth authorization header",
+      body: { task_type: "text_image", prompt: `请绘制 Ａｕｔｈｏｒｉｚａｔｉｏｎ： Bearer ${bearerValue}`, references: [] },
+      leaked: bearerValue
+    },
+    {
+      label: "zero-width authorization header",
+      body: { task_type: "text_image", prompt: `请绘制 Autho\u200brization: Bearer ${bearerValue}`, references: [] },
+      leaked: bearerValue
+    },
+    {
       label: "proxy authorization scheme",
       body: { task_type: "text_image", prompt: `请绘制 Proxy-Authorization: Fancy ${proxyValue}`, references: [] },
+      leaked: proxyValue
+    },
+    {
+      label: "bidi proxy authorization assignment",
+      body: { task_type: "text_image", prompt: `请绘制 Proxy-Authori\u202ezation＝Fancy ${proxyValue}`, references: [] },
       leaked: proxyValue
     },
     {
@@ -326,6 +354,16 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       label: "quoted authorization assignment with low-entropy special characters",
       body: { task_type: "text_image", prompt: `authorization="X-Custom ${lowEntropySpecialAuthValue}"`, references: [] },
       leaked: lowEntropySpecialAuthValue
+    },
+    {
+      label: "unquoted authorization assignment with rest of line credential",
+      body: { task_type: "text_image", prompt: `authorization=X-Custom ${lowEntropySpecialAuthValue}`, references: [] },
+      leaked: lowEntropySpecialAuthValue
+    },
+    {
+      label: "fullwidth api key assignment",
+      body: { task_type: "text_image", prompt: `ａｐｉ＿ｋｅｙ＝${apiKeyValue}`, references: [] },
+      leaked: apiKeyValue
     },
     {
       label: "quoted proxy authorization assignment with low-entropy special characters",
@@ -804,6 +842,28 @@ test("RAGFlow enhancement can participate in deterministic compiler", async () =
   assertNoPublicLeaks(result.payload);
 });
 
+test("RAGFlow upstream hard failures return prompt optimizer error envelope", async () => {
+  for (const [status, code] of [
+    [404, "RAGFLOW_OPENAI_ENDPOINT_NOT_FOUND"],
+    [500, "RAGFLOW_OPTIMIZER_FAILED"]
+  ]) {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: "雨后森林里的小木屋",
+      references: []
+    }, {
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => jsonResponse({ message: "upstream failed" }, { ok: false, status })
+    });
+    assert.equal(result.payload.status, "failed", String(status));
+    assert.equal(result.payload.error_code, code, String(status));
+    assert.match(result.payload.trace_id, /^trace_/, String(status));
+    assert.equal("optimized_prompt" in result.payload, false, String(status));
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
 test("RAGFlow enhancement fields must be consumed by the current task before changing template path", async () => {
   const character = await handlePromptOptimization({
     task_type: "character_multiview",
@@ -997,6 +1057,58 @@ Local notes below the JSON object are ignored.
   }
 });
 
+test("explicit AI_TU_RUNTIME_CONFIG_FILE isolates RAGFlow config fallback", async () => {
+  let fetches = 0;
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: { AI_TU_RUNTIME_CONFIG_FILE: "/tmp/definitely-missing-ragflow-config.json" },
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch when explicit runtime config is missing");
+    }
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal(fetches, 0);
+  assertNoPublicLeaks(result.payload);
+});
+
+test("explicit invalid RAGFlow hardening config fails closed even when endpoint config is absent", async () => {
+  for (const [key, value] of [
+    ["RAGFLOW_TIMEOUT_MS", "0"],
+    ["RAGFLOW_DEPLOYMENT_TIER", "prod"],
+    ["RAGFLOW_ALLOWED_ORIGINS", "https://ragflow.example.com/path"]
+  ]) {
+    let fetches = 0;
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: "雨后森林里的小木屋",
+      references: []
+    }, {
+      env: {
+        AI_TU_RUNTIME_CONFIG_FILE: "/tmp/definitely-missing-ragflow-hardening-config.json",
+        [key]: value
+      },
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("must not fetch with invalid explicit RAGFlow hardening config");
+      }
+    });
+    assert.equal(result.statusCode, 503, `${key}=${value}`);
+    assert.equal(result.payload.status, "failed", `${key}=${value}`);
+    assert.equal(result.payload.error_code, "RAGFLOW_CONFIG_INVALID", `${key}=${value}`);
+    assert.match(result.payload.trace_id, /^trace_/, `${key}=${value}`);
+    assert.equal("optimized_prompt" in result.payload, false, `${key}=${value}`);
+    assert.equal(fetches, 0, `${key}=${value}`);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
 test("RAGFlow environment variables override runtime config file", () => {
   const dir = mkdtempSync(join(tmpdir(), "rf-config-override-"));
   const configFile = join(dir, "runtime-config.json");
@@ -1115,6 +1227,74 @@ test("RAGFlow URL policy rejects unsafe schemes userinfo private hosts malformed
     RAGFLOW_DEPLOYMENT_TIER: "test",
     RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
   }).endpoint, "http://127.0.0.1:9380/api/v1/openai/chat_001/chat/completions");
+});
+
+test("RAGFlow numeric resource configuration fails closed on invalid explicit values", () => {
+  const base = ragflowEnv();
+  for (const [key, value] of [
+    ["RAGFLOW_TIMEOUT_MS", "0"],
+    ["RAGFLOW_TIMEOUT_MS", "Infinity"],
+    ["RAGFLOW_DNS_TIMEOUT_MS", "0"],
+    ["RAGFLOW_DNS_TIMEOUT_MS", "999999"],
+    ["RAGFLOW_MAX_REQUEST_BYTES", "0"],
+    ["RAGFLOW_MAX_REQUEST_MESSAGE_CHARS", "NaN"],
+    ["RAGFLOW_MAX_RESPONSE_BYTES", "1"],
+    ["RAGFLOW_MAX_JSON_DEPTH", "1"],
+    ["RAGFLOW_MAX_JSON_KEYS", "0"],
+    ["RAGFLOW_MAX_JSON_ARRAY_LENGTH", "0"],
+    ["RAGFLOW_MAX_JSON_STRING_LENGTH", "1"],
+    ["RAGFLOW_MAX_ENHANCEMENT_CHARS", "0"]
+  ]) {
+    assert.throws(() => ragflowConfig({ ...base, [key]: value }), isRagflowConfigInvalid, `${key}=${value}`);
+  }
+});
+
+test("RAGFlow explicit hardening config is validated even when runtime config is absent", async () => {
+  const missingFileEnv = { AI_TU_RUNTIME_CONFIG_FILE: "/tmp/prompt-optimizer-missing-runtime-config.json" };
+  for (const env of [
+    { ...missingFileEnv, RAGFLOW_TIMEOUT_MS: "0" },
+    { ...missingFileEnv, RAGFLOW_DEPLOYMENT_TIER: "prod" },
+    { ...missingFileEnv, RAGFLOW_ALLOWED_ORIGINS: "not-a-url" }
+  ]) {
+    assert.throws(() => ragflowConfig(env), isRagflowConfigInvalid);
+  }
+
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: { ...missingFileEnv, RAGFLOW_TIMEOUT_MS: "0" },
+    fetchImpl: async () => {
+      throw new Error("must not fetch with invalid RAGFlow config");
+    }
+  });
+  assert.equal(result.statusCode, 503);
+  assert.equal(result.payload.status, "failed");
+  assert.equal(result.payload.error_code, "RAGFLOW_CONFIG_INVALID");
+  assert.match(result.payload.trace_id, /^trace_/);
+  assert.equal("optimized_prompt" in result.payload, false);
+  assertNoPublicLeaks(result.payload);
+});
+
+test("prompt optimizer public handler fails closed on invalid RAGFlow numeric config", async () => {
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: ragflowEnv({ RAGFLOW_TIMEOUT_MS: "0" }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      throw new Error("must not fetch with invalid RAGFlow config");
+    }
+  });
+  assert.equal(result.statusCode, 503);
+  assert.equal(result.payload.status, "failed");
+  assert.equal(result.payload.error_code, "RAGFLOW_CONFIG_INVALID");
+  assert.match(result.payload.trace_id, /^trace_/);
+  assert.equal("optimized_prompt" in result.payload, false);
+  assertNoPublicLeaks(result.payload);
 });
 
 test("RAGFlow production and staging require HTTPS explicit origin and always reject private endpoints", () => {
@@ -1694,6 +1874,22 @@ test("prompt optimizer failure does not return optimized_prompt", async () => {
     reference_policy: { unbound_entity: "block" }
   }, offlineOptions());
   assert.equal(result.payload.status, "needs_clarification");
+  assert.equal("optimized_prompt" in result.payload, false);
+  assertNoPublicLeaks(result.payload);
+});
+
+test("prompt optimizer error envelope cannot escape on internal-looking user text", async () => {
+  const result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @RAGFlow 生成一张视觉图。",
+    references: [],
+    reference_policy: { unbound_entity: "block" }
+  }, offlineOptions());
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.status, "needs_clarification");
+  assert.equal(result.payload.error_code, "ENTITY_REFERENCE_NOT_FOUND");
+  assert.match(result.payload.trace_id, /^trace_/);
+  assert.equal(result.payload.message.includes("RAGFlow"), false);
   assert.equal("optimized_prompt" in result.payload, false);
   assertNoPublicLeaks(result.payload);
 });

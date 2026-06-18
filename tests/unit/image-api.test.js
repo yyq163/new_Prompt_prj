@@ -633,7 +633,8 @@ test("legacy RAGFlow enhancement endpoint rejects unsafe URL targets before fetc
     request,
     binding,
     env: {
-      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance"
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "test"
     },
     lookupHost: publicLookup,
     fetchImpl: async (url, init) => {
@@ -648,6 +649,130 @@ test("legacy RAGFlow enhancement endpoint rejects unsafe URL targets before fetc
   });
   assert.equal(redirectResult.enhancement, null);
   assert.equal(redirects[0].redirect, "manual");
+});
+
+test("legacy RAGFlow enhancement endpoint enforces strict deployment tier policy", async () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "少女推开门。", references: [] });
+  const binding = emptyBinding();
+  for (const env of [
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "prod"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "stage"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "qa"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "http://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "staging",
+      RAGFLOW_ALLOWED_ORIGINS: "http://ragflow.example.com"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "staging",
+      RAGFLOW_ALLOWED_ORIGINS: "https://other.example.com"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "staging",
+      RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com/path"
+    },
+    {
+      RAGFLOW_ENHANCEMENT_URL: "https://127.0.0.1:9380/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "staging",
+      RAGFLOW_ALLOWED_ORIGINS: "https://127.0.0.1:9380",
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }
+  ]) {
+    let fetches = 0;
+    const result = await getRagflowEnhancement({
+      request,
+      binding,
+      env,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("invalid legacy tier config must not fetch");
+      }
+    });
+    assert.equal(result.enhancement, null);
+    assert.equal(result.discarded, "invalid_endpoint");
+    assert.equal(fetches, 0);
+  }
+
+  for (const tier of ["production", "staging"]) {
+    const calls = [];
+    const result = await getRagflowEnhancement({
+      request,
+      binding,
+      env: {
+        RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+        RAGFLOW_DEPLOYMENT_TIER: tier,
+        RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com"
+      },
+      lookupHost: publicLookup,
+      fetchImpl: async (url) => {
+        calls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === "content-type" ? "application/json" : null },
+          text: async () => JSON.stringify({ visual_focus: "影视级增强命中" })
+        };
+      }
+    });
+    assert.deepEqual(result.enhancement, { visual_focus: "影视级增强命中" });
+    assert.equal(calls[0], "https://ragflow.example.com/enhance");
+  }
+});
+
+test("legacy RAGFlow enhancement rejects sensitive outbound input before fetch", async () => {
+  const cases = [
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: `Bearer tok_${"A".repeat(32)}`, references: [] }),
+      binding: emptyBinding()
+    },
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: `sk-proj-${"B".repeat(32)}`, references: [] }),
+      binding: emptyBinding()
+    },
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: "data:text/plain;base64,abc", references: [] }),
+      binding: emptyBinding()
+    },
+    {
+      request: normalizeRequest({ task_type: "storyboard", prompt: lowEntropyLongBase64(), references: [] }),
+      binding: emptyBinding()
+    }
+  ];
+
+  for (const item of cases) {
+    const binding = item.binding || resolveReferences(item.request, extractEntityMentions(item.request.prompt));
+    let fetches = 0;
+    const result = await getRagflowEnhancement({
+      request: item.request,
+      binding,
+      env: {
+        RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+        RAGFLOW_DEPLOYMENT_TIER: "test"
+      },
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("sensitive outbound input must not fetch");
+      }
+    });
+    assert.equal(result.enhancement, null);
+    assert.equal(result.discarded, "sensitive_input");
+    assert.equal(fetches, 0);
+  }
 });
 
 test("legacy RAGFlow enhancement default fetch pins DNS and enforces response byte limit", async () => {
@@ -780,12 +905,18 @@ test("RAGFlow unauthorized URL non JSON array and internal negative notes are di
 test("RAGFlow internal implementation terms are discarded across enhancement fields", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
   const binding = { resolved_references: [] };
- const cases = [
+  const cases = [
     { composition_notes: "Do not mention RAGFlow retrieval state." },
     { visual_focus: "避免暴露本地模板处理。" },
     { missing_constraints: ["不要输出 fallback 状态。"] },
-    { composition_notes: "Authorization header with Bearer credential" },
     { composition_notes: "Cookie: sid=secret" },
+    { composition_notes: `Authorization: Bearer tok_${"A".repeat(32)}` },
+    { composition_notes: `Authorization: Basic ${Buffer.from("user:super-secret-password").toString("base64")}` },
+    { composition_notes: `Bearer tok_${"C".repeat(32)}` },
+    { composition_notes: `Basic ${Buffer.from("user:super-secret-password").toString("base64")}` },
+    { composition_notes: `api_key=key_${"B".repeat(32)}` },
+    { composition_notes: `cookie=${"D".repeat(24)}` },
+    { composition_notes: `sk-proj-${"E".repeat(32)}` },
     { composition_notes: "raw_provider_response should stay hidden." },
     { composition_notes: "b64_json and base64 should stay hidden." },
     { nested: { note: "provider_internal_payload must stay hidden." } },
@@ -799,6 +930,19 @@ test("RAGFlow internal implementation terms are discarded across enhancement fie
       { enhancement: null, discarded: "internal_terms" }
     );
   }
+});
+
+test("RAGFlow enhancement accepts ordinary natural-language security vocabulary", () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
+  const binding = { resolved_references: [] };
+  const enhancement = {
+    composition_notes: "secret garden、cookie 包装、token of friendship、Bearer token 流程图、base64 教学图和 Authorization header 说明都只是课程主题。",
+    visual_focus: "画面表现安全培训课堂，不包含真实凭据。"
+  };
+  assert.deepEqual(validateEnhancement(enhancement, { request, binding }), {
+    enhancement,
+    discarded: ""
+  });
 });
 
 test("duplicate reference_id fails", async () => {
@@ -3137,6 +3281,10 @@ async function withLegacyRagflowServer(handler, callback) {
 
 function samplePngBase64() {
   return samplePngBytes().toString("base64");
+}
+
+function lowEntropyLongBase64() {
+  return Buffer.alloc(96, 0).toString("base64");
 }
 
 function samplePngBytes() {

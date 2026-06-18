@@ -2,6 +2,7 @@ import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/
 import { extractEntityMentions } from "../core/entity-mentions.js";
 import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, stringValue, walk } from "../core/runtime.js";
 import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
+import { containsHighConfidenceSensitivePayload } from "../core/sensitive-payload.js";
 import {
   ENTITY_TYPE_ALIASES,
   ROLE_ALIASES,
@@ -100,8 +101,8 @@ const RAGFLOW_CONSUMED_FIELDS_BY_TASK = Object.freeze({
   prop_multiview: new Set(["visual_focus", "composition_notes", "missing_constraints"]),
   storyboard: new Set(["story_function", "action_stages", "lighting_notes", "composition_notes", "missing_constraints"])
 });
-const RAGFLOW_FORBIDDEN_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
-const PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider\s*payload|provider_internal_payload|raw_provider|Authorization\s*:|authorization|Cookie\s*:|cookie|Bearer\s+|bearer|api[_-]?key|token|secret|data:image|base64|b64_json)/i;
+const RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|b64_json|data_url|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
+const PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider\s*payload|provider_internal_payload|raw_provider|b64_json|data_url)/i;
 const PROMPT_PUBLIC_SUCCESS_FIELDS = new Set([
   "status",
   "request_id",
@@ -122,7 +123,8 @@ const PROMPT_PUBLIC_ERROR_FIELDS = new Set([
   "trace_id"
 ]);
 const PROMPT_PUBLIC_FORBIDDEN_KEY = /(?:final_prompt|compiled_prompt|internal_prompt|enhancement|ragflow|fallback|provider|callback|images?|b64_json|base64|data_url|authorization|cookie|bearer|api[_-]?key|token|secret|stack|raw)/i;
-const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|RAGFlow|fallback_status|ragflow_status|provider_internal_payload|provider payload|Authorization|Cookie|Bearer|api[_-]?key|token|secret|base64|b64_json|data:image|stack trace)/i;
+const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|RAGFlow|fallback_status|ragflow_status|provider_internal_payload|provider payload|b64_json|data:image|data_url|stack trace)/i;
+const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
 
 export async function handlePromptOptimization(body, options = {}) {
   const fallbackRequestId = safeRequestId(body && body.request_id) || makeId("req");
@@ -311,7 +313,8 @@ function optionalReferenceString(ref, field, maxLength) {
 }
 
 function assertNoForbiddenInputText(value, field) {
-  if (PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT.test(stringValue(value))) {
+  const text = stringValue(value);
+  if (PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT.test(text) || containsHighConfidenceSensitivePayload(text)) {
     fail("INVALID_REQUEST_SCHEMA", `${field} 包含不允许的敏感内容。`);
   }
 }
@@ -530,6 +533,8 @@ export async function callRagflowEnhancementIfAvailable({ request, binding, refe
 export async function callRagflowPromptOptimizer({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, config = null, lookupHost = dnsLookup } = {}) {
   const activeConfig = config || ragflowConfig(env);
   const resolution = await validateRagflowEndpointForFetch(activeConfig, lookupHost);
+  const userPrompt = ragflowUserPrompt(request, binding, referencePlan);
+  assertNoSensitiveRagflowOutbound(userPrompt);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), activeConfig.timeoutMs);
   try {
@@ -542,7 +547,7 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
         temperature: 0.2,
         messages: [
           { role: "system", content: ragflowSystemPrompt() },
-          { role: "user", content: ragflowUserPrompt(request, binding, referencePlan) }
+          { role: "user", content: userPrompt }
         ]
       }),
       redirect: "manual",
@@ -575,6 +580,16 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
   }
 }
 
+function assertNoSensitiveRagflowOutbound(userPrompt) {
+  if (!containsHighConfidenceSensitivePayload(userPrompt)) return;
+  throw new ImageApiError({
+    statusCode: 400,
+    status: "failed",
+    errorCode: "INVALID_REQUEST_SCHEMA",
+    message: "请求包含不允许的敏感内容。"
+  });
+}
+
 export function ragflowConfig(env = process.env) {
   const fileConfig = readRagflowRuntimeConfig(env);
   const baseUrl = stringValue(env.RAGFLOW_BASE_URL || fileConfig.baseUrl).trim();
@@ -595,6 +610,7 @@ export function ragflowConfig(env = process.env) {
     model: stringValue(env.RAGFLOW_MODEL || fileConfig.model).trim() || "model",
     endpoint,
     approvedOrigin: normalized.origin,
+    tier: normalized.tier,
     allowPrivateEndpoint: normalized.allowPrivateEndpoint,
     timeoutMs: intEnv(env.RAGFLOW_TIMEOUT_MS, 1000, 60_000, RAGFLOW_TIMEOUT_MS),
     maxResponseBytes: intEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES),
@@ -619,19 +635,27 @@ function normalizeRagflowBaseUrl(raw, env) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throwRagflowConfigInvalid();
   if (parsed.username || parsed.password) throwRagflowConfigInvalid();
   if (parsed.pathname !== "/" || parsed.search || parsed.hash) throwRagflowConfigInvalid();
-  const tier = stringValue(env.RAGFLOW_DEPLOYMENT_TIER || env.NODE_ENV || "development").trim().toLowerCase();
-  const isProduction = tier === "production";
-  const allowPrivateEndpoint = !isProduction && stringValue(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS).trim() === "true";
+  const tier = normalizeRagflowDeploymentTier(env.RAGFLOW_DEPLOYMENT_TIER);
+  const requiresProductionControls = tier === "production" || tier === "staging";
+  const allowPrivateEndpoint = !requiresProductionControls && stringValue(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS).trim() === "true";
   const allowedOrigins = parseAllowedOrigins(env.RAGFLOW_ALLOWED_ORIGINS);
-  if (isProduction && parsed.protocol !== "https:") throwRagflowConfigInvalid();
-  if (isProduction && !allowedOrigins.size) throwRagflowConfigInvalid();
+  if (requiresProductionControls && parsed.protocol !== "https:") throwRagflowConfigInvalid();
+  if (requiresProductionControls && !allowedOrigins.size) throwRagflowConfigInvalid();
   if (allowedOrigins.size && !allowedOrigins.has(parsed.origin)) throwRagflowConfigInvalid();
+  if (requiresProductionControls && isUnsafeNetworkHost(parsed.hostname)) throwRagflowConfigInvalid();
   if (isUnsafeNetworkHost(parsed.hostname) && (!allowPrivateEndpoint || !isExplicitPrivateEndpointHost(parsed.hostname))) throwRagflowConfigInvalid();
   return {
     baseUrl: parsed.href.replace(/\/+$/u, ""),
     origin: parsed.origin,
+    tier,
     allowPrivateEndpoint
   };
+}
+
+function normalizeRagflowDeploymentTier(value) {
+  const tier = stringValue(value).trim().toLowerCase();
+  if (!tier || !RAGFLOW_DEPLOYMENT_TIERS.has(tier)) throwRagflowConfigInvalid();
+  return tier;
 }
 
 function parseAllowedOrigins(value) {
@@ -643,7 +667,9 @@ function parseAllowedOrigins(value) {
       const parsed = new URL(raw);
       if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !parsed.username && !parsed.password && parsed.pathname === "/" && !parsed.search && !parsed.hash) {
         origins.add(parsed.origin);
+        continue;
       }
+      throwRagflowConfigInvalid();
     } catch {
       throwRagflowConfigInvalid();
     }
@@ -937,7 +963,7 @@ export function validateRagflowEnhancement(candidate, context = {}) {
   for (const title of forbiddenPromptHeadings()) {
     if (jsonText.includes(title)) return null;
   }
-  if (RAGFLOW_FORBIDDEN_TEXT.test(jsonText)) return null;
+  if (containsForbiddenEnhancementText(jsonText)) return null;
 
   const allowedReferenceIds = new Set((context.binding?.resolved_references || []).map((ref) => ref.reference_id));
   const foundReferenceIds = findValuesByKey(candidate, "reference_id");
@@ -1194,7 +1220,7 @@ export function validateOptimizedPrompt(prompt, context = {}) {
   for (const title of forbiddenPromptHeadings()) {
     if (text.includes(title)) throw optimizedPromptInvalid();
   }
-  if (/RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image|enhancement|input_analysis|storyboard_processing/i.test(text)) {
+  if (containsForbiddenOptimizedPromptText(text)) {
     throw optimizedPromptInvalid();
   }
 
@@ -1284,7 +1310,7 @@ function assertPromptOptimizationPublicPayload(payload, kind) {
   walk(payload, (node) => {
     if (node == null) return;
     if (typeof node === "string") {
-      if (PROMPT_PUBLIC_FORBIDDEN_TEXT.test(node)) {
+      if (containsForbiddenPublicText(node)) {
         fail("INTERNAL_ERROR", "公共响应包含内部信息。", 500);
       }
       return;
@@ -1296,6 +1322,21 @@ function assertPromptOptimizationPublicPayload(payload, kind) {
       }
     }
   });
+}
+
+function containsForbiddenEnhancementText(text) {
+  return RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT.test(stringValue(text)) || containsHighConfidenceSensitivePayload(text);
+}
+
+function containsForbiddenOptimizedPromptText(text) {
+  const value = stringValue(text);
+  return /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|b64_json|data:image|enhancement|input_analysis|storyboard_processing/i.test(value)
+    || containsHighConfidenceSensitivePayload(value);
+}
+
+function containsForbiddenPublicText(text) {
+  const value = stringValue(text);
+  return PROMPT_PUBLIC_FORBIDDEN_TEXT.test(value) || containsHighConfidenceSensitivePayload(value);
 }
 
 export function buildReferencePlan(input = {}) {

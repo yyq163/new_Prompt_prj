@@ -131,11 +131,43 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
   }
 });
 
+test("prompt optimizer accepts ordinary natural-language security vocabulary", async () => {
+  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图和 Authorization header 说明";
+  const textResult = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: `生成一张用于课程封面的画面：${legalText}`,
+    references: []
+  }, noRagflowOptions());
+  assert.equal(textResult.statusCode, 200);
+  assert.equal(textResult.payload.status, "succeeded");
+  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization header|base64 教学图/);
+  assertNoPromptLeaks(textResult.payload.optimized_prompt);
+  assertNoPublicLeaks(textResult.payload);
+
+  const referenceResult = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @包装参考 生成一张安全培训海报",
+    references: [reference(
+      "ref_packaging",
+      "包装参考",
+      "style",
+      "style_reference",
+      "https://example.com/ref_packaging.png",
+      `${legalText}，这些词只作为 reference metadata 的教学主题`
+    )]
+  }, noRagflowOptions());
+  assert.equal(referenceResult.statusCode, 200);
+  assert.equal(referenceResult.payload.status, "succeeded");
+  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|Authorization header|base64 教学图/);
+  assertNoPromptLeaks(referenceResult.payload.optimized_prompt);
+  assertNoPublicLeaks(referenceResult.payload);
+});
+
 test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch", async () => {
   const cases = [
     {
       task_type: "text_image",
-      prompt: "请把 internal_prompt token secret 写入画面",
+      prompt: "请把 internal_prompt 写入画面",
       references: []
     },
     {
@@ -147,7 +179,7 @@ test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch",
         "style",
         "style_reference",
         "https://example.com/ref_poster.png",
-        "Authorization: Bearer token-123 data:image/png;base64,abc"
+        `Authorization: Bearer tok_${"A".repeat(32)} data:image/png;base64,${samplePngBase64()}`
       )]
     },
     {
@@ -189,6 +221,125 @@ test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch",
     assert.equal(result.statusCode, 400, JSON.stringify(body));
     assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
     assert.equal(fetches, 0);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
+test("prompt optimizer rejects high-confidence credentials and data payloads before RAGFlow fetch without echo", async () => {
+  const bearerValue = `tok_${"A".repeat(32)}`;
+  const basicValue = Buffer.from("user:super-secret-password").toString("base64");
+  const cookieValue = `session=sid_${"B".repeat(24)}`;
+  const apiKeyValue = `key_${"C".repeat(32)}`;
+  const tokenValue = `tok_${"D".repeat(32)}`;
+  const standaloneKeyValue = `sk-proj-${"E".repeat(32)}`;
+  const dataUriValue = `data:image/png;base64,${samplePngBase64()}`;
+  const textDataUriValue = "data:text/plain;base64,abc";
+  const rawBase64Value = samplePngBase64();
+  const lowEntropyBase64Value = lowEntropyLongBase64();
+  const cases = [
+    {
+      label: "long bearer authorization header",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: Bearer ${bearerValue}`, references: [] },
+      leaked: bearerValue
+    },
+    {
+      label: "basic authorization credential",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: Basic ${basicValue}`, references: [] },
+      leaked: basicValue
+    },
+    {
+      label: "bare bearer credential",
+      body: { task_type: "text_image", prompt: `请绘制 Bearer ${bearerValue}`, references: [] },
+      leaked: bearerValue
+    },
+    {
+      label: "bare basic credential",
+      body: { task_type: "text_image", prompt: `请绘制 Basic ${basicValue}`, references: [] },
+      leaked: basicValue
+    },
+    {
+      label: "cookie header value",
+      body: { task_type: "text_image", prompt: `请绘制 Cookie: ${cookieValue}`, references: [] },
+      leaked: cookieValue
+    },
+    {
+      label: "cookie assignment value",
+      body: { task_type: "text_image", prompt: `请绘制 cookie=${"F".repeat(24)}`, references: [] },
+      leaked: "F".repeat(24)
+    },
+    {
+      label: "standalone known provider key",
+      body: { task_type: "text_image", prompt: `请绘制 ${standaloneKeyValue}`, references: [] },
+      leaked: standaloneKeyValue
+    },
+    {
+      label: "api key assignment",
+      body: { task_type: "text_image", prompt: `api_key=${apiKeyValue}`, references: [] },
+      leaked: apiKeyValue
+    },
+    {
+      label: "token assignment",
+      body: { task_type: "text_image", prompt: `token=${tokenValue}`, references: [] },
+      leaked: tokenValue
+    },
+    {
+      label: "real image data URI",
+      body: { task_type: "text_image", prompt: dataUriValue, references: [] },
+      leaked: samplePngBase64()
+    },
+    {
+      label: "real non-image data URI",
+      body: { task_type: "text_image", prompt: textDataUriValue, references: [] },
+      leaked: textDataUriValue
+    },
+    {
+      label: "synthetic short data URI before RAGFlow",
+      body: { task_type: "text_image", prompt: "Authorization: Bearer token-123 data:image/png;base64,abc", references: [] },
+      leaked: "data:image/png;base64,abc"
+    },
+    {
+      label: "verifiable long base64 image",
+      body: { task_type: "text_image", prompt: rawBase64Value, references: [] },
+      leaked: rawBase64Value
+    },
+    {
+      label: "verifiable low-entropy long base64",
+      body: { task_type: "text_image", prompt: lowEntropyBase64Value, references: [] },
+      leaked: lowEntropyBase64Value
+    },
+    {
+      label: "credential inside reference metadata",
+      body: {
+        task_type: "image_reference",
+        prompt: "基于 @海报参考 生成一张新的品牌视觉图",
+        references: [reference(
+          "ref_poster",
+          "海报参考",
+          "style",
+          "style_reference",
+          "https://example.com/ref_poster.png",
+          `Authorization: Bearer ${bearerValue}`
+        )]
+      },
+      leaked: bearerValue
+    }
+  ];
+
+  for (const { label, body, leaked } of cases) {
+    let fetches = 0;
+    const { result, output } = await captureConsoleDuring(() => handlePromptOptimization(body, {
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("must not fetch with credential payload");
+      }
+    }));
+    assert.equal(result.statusCode, 400, label);
+    assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA", label);
+    assert.equal(fetches, 0, label);
+    assert.equal(JSON.stringify(result.payload).includes(leaked), false, label);
+    assert.equal(output.includes(leaked), false, label);
     assertNoPublicLeaks(result.payload);
   }
 });
@@ -374,9 +525,9 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     { choices: [{ message: { content: "任务类型：text_image\n原始需求：雨后森林" } }] },
     { choices: [{ message: { content: JSON.stringify({ reference_id: "unknown_ref", visual_focus: "越权引用" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ asset_id: "asset_1", visual_focus: "越权资产" }) } }] },
-    { choices: [{ message: { content: JSON.stringify({ visual_focus: "Authorization: Bearer token-123" }) } }] },
-    { choices: [{ message: { content: JSON.stringify({ visual_focus: "Cookie: sid=secret" }) } }] },
-    { choices: [{ message: { content: JSON.stringify({ visual_focus: "inline data:image/png;base64,abc" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: `Authorization: Bearer tok_${"A".repeat(32)}` }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "Cookie: sid=secret-value" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: `inline data:image/png;base64,${samplePngBase64()}` }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "local file:///etc/passwd" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "ftp://evil.example/ref.png" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "javascript:alert(1)" }) } }] },
@@ -445,8 +596,9 @@ test("RAGFlow config can be read from ai-tu runtime config file", () => {
     ragflowChatId: "chat_001"
   }), "utf8");
   try {
-    const config = ragflowConfig({ AI_TU_RUNTIME_CONFIG_FILE: configFile });
+    const config = ragflowConfig({ AI_TU_RUNTIME_CONFIG_FILE: configFile, RAGFLOW_DEPLOYMENT_TIER: "test" });
     assert.equal(config.endpoint, "http://ragflow.local/api/v1/openai/chat_001/chat/completions");
+    assert.equal(config.tier, "test");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -464,8 +616,9 @@ test("RAGFlow config can be read from markdown runtime config notes", () => {
 Local notes below the JSON object are ignored.
 `, "utf8");
   try {
-    const config = ragflowConfig({ AI_TU_RUNTIME_CONFIG_FILE: configFile });
+    const config = ragflowConfig({ AI_TU_RUNTIME_CONFIG_FILE: configFile, RAGFLOW_DEPLOYMENT_TIER: "test" });
     assert.equal(config.endpoint, "http://ragflow.local/api/v1/openai/chat_001/chat/completions");
+    assert.equal(config.tier, "test");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -481,23 +634,26 @@ test("RAGFlow environment variables override runtime config file", () => {
   }), "utf8");
   try {
     const config = ragflowConfig({
-      AI_TU_RUNTIME_CONFIG_FILE: configFile,
-      RAGFLOW_BASE_URL: "http://env-ragflow.local",
-      RAGFLOW_API_KEY: "env-key",
-      RAGFLOW_CHAT_ID: "env_chat",
-      RAGFLOW_MODEL: "custom-chat-model"
-    });
+    AI_TU_RUNTIME_CONFIG_FILE: configFile,
+    RAGFLOW_BASE_URL: "http://env-ragflow.local",
+    RAGFLOW_API_KEY: "env-key",
+    RAGFLOW_CHAT_ID: "env_chat",
+    RAGFLOW_MODEL: "custom-chat-model",
+    RAGFLOW_DEPLOYMENT_TIER: "test"
+  });
     assert.equal(config.endpoint, "http://env-ragflow.local/api/v1/openai/env_chat/chat/completions");
     assert.equal(config.model, "custom-chat-model");
+    assert.equal(config.tier, "test");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("RAGFlow URL policy rejects unsafe schemes userinfo private hosts and production misconfiguration", () => {
+test("RAGFlow URL policy rejects unsafe schemes userinfo private hosts malformed allowlists and invalid tiers", () => {
   const base = {
     RAGFLOW_API_KEY: "test-key",
-    RAGFLOW_CHAT_ID: "chat_001"
+    RAGFLOW_CHAT_ID: "chat_001",
+    RAGFLOW_DEPLOYMENT_TIER: "test"
   };
   for (const RAGFLOW_BASE_URL of [
     "file:///tmp/ragflow",
@@ -539,35 +695,123 @@ test("RAGFlow URL policy rejects unsafe schemes userinfo private hosts and produ
       RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
     }), isRagflowConfigInvalid);
   }
+
+  for (const RAGFLOW_DEPLOYMENT_TIER of ["prod", "stage", "qa", "unknown"]) {
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER
+    }), isRagflowConfigInvalid);
+  }
+
+  const missingTierBase = { ...base };
+  delete missingTierBase.RAGFLOW_DEPLOYMENT_TIER;
+  assert.throws(() => ragflowConfig({
+    ...missingTierBase,
+    RAGFLOW_BASE_URL: "https://ragflow.example.com"
+  }), isRagflowConfigInvalid);
+
+  for (const RAGFLOW_ALLOWED_ORIGINS of [
+    "not-a-url",
+    "https://user:pass@ragflow.example.com",
+    "https://ragflow.example.com/path",
+    "https://ragflow.example.com?x=1"
+  ]) {
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_ALLOWED_ORIGINS
+    }), isRagflowConfigInvalid);
+  }
+
   assert.throws(() => ragflowConfig({
     ...base,
-    RAGFLOW_BASE_URL: "https://ragflow.example.com",
-    RAGFLOW_DEPLOYMENT_TIER: "production"
+    RAGFLOW_BASE_URL: "https://ragflow.example.com:8443",
+    RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com"
   }), isRagflowConfigInvalid);
-  assert.throws(() => ragflowConfig({
-    ...base,
-    RAGFLOW_BASE_URL: "http://ragflow.example.com",
-    RAGFLOW_DEPLOYMENT_TIER: "production",
-    RAGFLOW_ALLOWED_ORIGINS: "http://ragflow.example.com"
-  }), isRagflowConfigInvalid);
-  assert.throws(() => ragflowConfig({
-    ...base,
-    RAGFLOW_BASE_URL: "https://ragflow.example.com",
-    RAGFLOW_DEPLOYMENT_TIER: "production",
-    RAGFLOW_ALLOWED_ORIGINS: "https://other.example.com"
-  }), isRagflowConfigInvalid);
+
   assert.equal(ragflowConfig({
     ...base,
     RAGFLOW_BASE_URL: "https://ragflow.example.com",
-    RAGFLOW_DEPLOYMENT_TIER: "production",
-    RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com"
+    RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com:443"
   }).endpoint, "https://ragflow.example.com/api/v1/openai/chat_001/chat/completions");
+
   assert.equal(ragflowConfig({
     ...base,
     RAGFLOW_BASE_URL: "http://127.0.0.1:9380",
     RAGFLOW_DEPLOYMENT_TIER: "test",
     RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
   }).endpoint, "http://127.0.0.1:9380/api/v1/openai/chat_001/chat/completions");
+});
+
+test("RAGFlow production and staging require HTTPS explicit origin and always reject private endpoints", () => {
+  const base = {
+    RAGFLOW_API_KEY: "test-key",
+    RAGFLOW_CHAT_ID: "chat_001"
+  };
+  for (const tier of ["production", "staging"]) {
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: tier
+    }), isRagflowConfigInvalid);
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "http://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOWED_ORIGINS: "http://ragflow.example.com"
+    }), isRagflowConfigInvalid);
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOWED_ORIGINS: "https://other.example.com"
+    }), isRagflowConfigInvalid);
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://127.0.0.1:9380",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOWED_ORIGINS: "https://127.0.0.1:9380",
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }), isRagflowConfigInvalid);
+    assert.equal(ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com"
+    }).endpoint, "https://ragflow.example.com/api/v1/openai/chat_001/chat/completions");
+  }
+});
+
+test("RAGFlow development and test reject private endpoints unless explicit override is enabled", () => {
+  const base = {
+    RAGFLOW_API_KEY: "test-key",
+    RAGFLOW_CHAT_ID: "chat_001"
+  };
+  for (const tier of ["development", "test"]) {
+    assert.equal(ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "http://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: tier
+    }).endpoint, "http://ragflow.example.com/api/v1/openai/chat_001/chat/completions");
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "http://127.0.0.1:9380",
+      RAGFLOW_DEPLOYMENT_TIER: tier
+    }), isRagflowConfigInvalid);
+    assert.equal(ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "http://127.0.0.1:9380",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }).endpoint, "http://127.0.0.1:9380/api/v1/openai/chat_001/chat/completions");
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL: "http://169.254.169.254",
+      RAGFLOW_DEPLOYMENT_TIER: tier,
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }), isRagflowConfigInvalid);
+  }
 });
 
 test("RAGFlow private endpoint opt-in allows local dev endpoints without widening metadata ranges", async () => {
@@ -612,6 +856,35 @@ test("RAGFlow private endpoint opt-in allows local dev endpoints without widenin
     }
   }), isRagflowConfigInvalid);
   assert.deepEqual(blockedCalls, []);
+});
+
+test("RAGFlow prompt optimizer helper blocks sensitive outbound payloads before fetch", async () => {
+  const binding = { resolved_references: [], references_used: [], entity_mentions: [] };
+  const referencePlan = buildReferencePlan({ resolved_references: [] });
+  const cases = [
+    { label: "bearer credential", prompt: `Authorization: Bearer tok_${"A".repeat(32)}` },
+    { label: "generic data URI", prompt: "data:text/plain;base64,abc" },
+    { label: "low entropy long base64", prompt: lowEntropyLongBase64() }
+  ];
+
+  for (const item of cases) {
+    let fetches = 0;
+    await assert.rejects(() => callRagflowPromptOptimizer({
+      request: {
+        ...promptRequest(),
+        prompt: item.prompt
+      },
+      binding,
+      referencePlan,
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error(`must not fetch ${item.label}`);
+      }
+    }), isInvalidRequestSchema, item.label);
+    assert.equal(fetches, 0, item.label);
+  }
 });
 
 test("RAGFlow default fetch path pins validated DNS result and aborts oversized streams", async () => {
@@ -1050,16 +1323,25 @@ function assertNoPromptLeaks(prompt) {
   ]) {
     assert.equal(prompt.includes(title), false, `field-summary title leaked: ${title}`);
   }
-  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider payload", "provider_internal_payload", "input_analysis", "storyboard_processing", "Authorization", "Cookie", "Bearer", "token", "secret", "base64", "data:image"]) {
+  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider payload", "provider_internal_payload", "input_analysis", "storyboard_processing", "data:image"]) {
     assert.equal(prompt.includes(token), false, `internal token leaked: ${token}`);
   }
+  assertNoSensitivePayload(prompt);
 }
 
 function assertNoPublicLeaks(payload) {
   const text = JSON.stringify(payload);
-  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider_internal_payload", "provider payload", "apiKey", "Authorization", "Cookie", "Bearer", "token", "secret", "base64", "data:image"]) {
+  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider_internal_payload", "provider payload", "apiKey", "data:image"]) {
     assert.equal(text.includes(token), false, `forbidden token leaked: ${token}`);
   }
+  assertNoSensitivePayload(text);
+}
+
+function assertNoSensitivePayload(text) {
+  assert.doesNotMatch(text, /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+[A-Za-z0-9._~+/\-=]{16,}/i);
+  assert.doesNotMatch(text, /\bCookie\s*:\s*[^;\s=]{1,80}=[^;\s]{4,}/i);
+  assert.doesNotMatch(text, /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*["']?[A-Za-z0-9._~+/\-=]{12,}/i);
+  assert.doesNotMatch(text, /\bdata:image\/(?:png|jpeg|jpg|webp|gif);base64,/i);
 }
 
 function ragflowEnvWith(overrides = {}) {
@@ -1067,6 +1349,7 @@ function ragflowEnvWith(overrides = {}) {
     RAGFLOW_BASE_URL: "http://ragflow.local",
     RAGFLOW_API_KEY: "test-key",
     RAGFLOW_CHAT_ID: "chat_001",
+    RAGFLOW_DEPLOYMENT_TIER: "test",
     ...overrides
   };
 }
@@ -1081,6 +1364,57 @@ function offlineOptions() {
     lookupHost: publicLookup,
     fetchImpl: async () => jsonResponse({ code: 100, data: null, message: "offline" })
   };
+}
+
+function noRagflowOptions() {
+  return {
+    env: {},
+    fetchImpl: async () => {
+      throw new Error("RAGFlow fetch should not run without config");
+    }
+  };
+}
+
+async function captureConsoleDuring(fn) {
+  const lines = [];
+  const original = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error
+  };
+  for (const name of Object.keys(original)) {
+    console[name] = (...args) => {
+      lines.push(args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" "));
+    };
+  }
+  try {
+    const result = await fn();
+    return { result, output: lines.join("\n") };
+  } finally {
+    console.log = original.log;
+    console.info = original.info;
+    console.warn = original.warn;
+    console.error = original.error;
+  }
+}
+
+function samplePngBase64() {
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+    0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+    0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82
+  ]).toString("base64");
+}
+
+function lowEntropyLongBase64() {
+  return Buffer.alloc(96, 0).toString("base64");
 }
 
 function jsonResponse(json, options = {}) {
@@ -1136,5 +1470,10 @@ function promptRequest() {
 
 function isRagflowConfigInvalid(error) {
   assert.equal(error && error.errorCode, "RAGFLOW_CONFIG_INVALID");
+  return true;
+}
+
+function isInvalidRequestSchema(error) {
+  assert.equal(error && error.errorCode, "INVALID_REQUEST_SCHEMA");
   return true;
 }

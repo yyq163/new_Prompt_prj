@@ -1,19 +1,25 @@
 import { TYPE_SCHEMAS, walk } from "./runtime.js";
+import { containsHighConfidenceSensitivePayload } from "./sensitive-payload.js";
 import { isExplicitPrivateEndpointHost, isUnsafeNetworkHost } from "./url-security.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
 const DEFAULT_MAX_ENHANCEMENT_CHARS = 12000;
-const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|internal_prompt|provider_internal_payload|provider_payload|raw_provider|Authorization|Cookie|Bearer|token|secret|api[_-]?key|base64|b64_json|data:image/i;
+const INTERNAL_TEXT_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|internal_prompt|provider_internal_payload|provider_payload|raw_provider|b64_json|data:image|data_url/i;
+const INTERNAL_KEY_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|internal_prompt|provider_internal_payload|provider_payload|raw_provider|Authorization|Cookie|Bearer|token|secret|api[_-]?key|base64|b64_json|data:image|data_url/i;
 const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
 const ALLOWED_TOP_LEVEL_FIELDS = new Set(TYPE_SCHEMAS.RagflowEnhancement.fields);
+const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
 
 export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch, lookupHost = dnsLookup, env = process.env } = {}) {
   const endpoint = String(env.RAGFLOW_ENHANCEMENT_URL || "").trim();
   if (!endpoint) return { enhancement: null, discarded: "not_configured" };
   const endpointPolicy = await validateEnhancementEndpoint(endpoint, env, lookupHost);
   if (!endpointPolicy.ok) return { enhancement: null, discarded: endpointPolicy.discarded };
+  if (containsOutboundSensitivePayload({ request, binding })) {
+    return { enhancement: null, discarded: "sensitive_input" };
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -46,6 +52,15 @@ export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000
   }
 }
 
+function containsOutboundSensitivePayload({ request, binding }) {
+  return containsHighConfidenceSensitivePayload(JSON.stringify({
+    prompt: request?.prompt || "",
+    entity_mentions: binding?.entity_mentions || [],
+    resolved_references: binding?.references_used || [],
+    output: request?.output || {}
+  }));
+}
+
 async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
   let parsed;
   try {
@@ -55,9 +70,16 @@ async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, discarded: "invalid_endpoint" };
   if (parsed.username || parsed.password) return { ok: false, discarded: "invalid_endpoint" };
-  const tier = String(env.RAGFLOW_DEPLOYMENT_TIER || env.NODE_ENV || "development").trim().toLowerCase();
-  const allowPrivate = tier !== "production" && String(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS || "").trim() === "true";
-  if (tier === "production" && parsed.protocol !== "https:") return { ok: false, discarded: "invalid_endpoint" };
+  const tier = normalizeRagflowDeploymentTier(env.RAGFLOW_DEPLOYMENT_TIER);
+  if (!tier) return { ok: false, discarded: "invalid_endpoint" };
+  const requiresProductionControls = tier === "production" || tier === "staging";
+  const allowPrivate = !requiresProductionControls && String(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS || "").trim() === "true";
+  const allowedOrigins = parseAllowedOrigins(env.RAGFLOW_ALLOWED_ORIGINS);
+  if (allowedOrigins.invalid) return { ok: false, discarded: "invalid_endpoint" };
+  if (requiresProductionControls && parsed.protocol !== "https:") return { ok: false, discarded: "invalid_endpoint" };
+  if (requiresProductionControls && !allowedOrigins.size) return { ok: false, discarded: "invalid_endpoint" };
+  if (allowedOrigins.size && !allowedOrigins.has(parsed.origin)) return { ok: false, discarded: "invalid_endpoint" };
+  if (requiresProductionControls && isUnsafeNetworkHost(parsed.hostname)) return { ok: false, discarded: "invalid_endpoint" };
   if (isUnsafeNetworkHost(parsed.hostname) && (!allowPrivate || !isExplicitPrivateEndpointHost(parsed.hostname))) {
     return { ok: false, discarded: "invalid_endpoint" };
   }
@@ -85,6 +107,36 @@ async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
       family: Number(record.family) === 6 ? 6 : 4
     }))
   };
+}
+
+function normalizeRagflowDeploymentTier(value) {
+  const tier = String(value || "").trim().toLowerCase();
+  return RAGFLOW_DEPLOYMENT_TIERS.has(tier) ? tier : "";
+}
+
+function parseAllowedOrigins(value) {
+  const origins = new Set();
+  for (const item of String(value || "").split(",")) {
+    const raw = item.trim();
+    if (!raw) continue;
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return nullSet();
+    }
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      return nullSet();
+    }
+    origins.add(parsed.origin);
+  }
+  return origins;
+}
+
+function nullSet() {
+  const invalid = new Set();
+  invalid.invalid = true;
+  return invalid;
 }
 
 function isIpLiteral(hostname) {
@@ -226,12 +278,12 @@ function containsInternalTerms(value) {
   walk(value, (node) => {
     if (found || node == null) return;
     if (typeof node === "string") {
-      if (INTERNAL_TERMS.test(node)) found = true;
+      if (INTERNAL_TEXT_TERMS.test(node) || containsHighConfidenceSensitivePayload(node)) found = true;
       return;
     }
     if (!node || typeof node !== "object" || Array.isArray(node)) return;
     for (const key of Object.keys(node)) {
-      if (INTERNAL_TERMS.test(key)) {
+      if (INTERNAL_KEY_TERMS.test(key)) {
         found = true;
         return;
       }

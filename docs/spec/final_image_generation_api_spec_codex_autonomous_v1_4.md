@@ -86,6 +86,9 @@ Optional fields:
 - `order`
 - `usage`: accepted from old clients but ignored by current logic and not returned
 
+`POST /api/v1/prompt-optimizations` has a separate narrower reference schema
+and does not accept legacy `usage`.
+
 Allowed `entity_type` values:
 
 - `character`

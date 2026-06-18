@@ -47,6 +47,33 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
 
   await assertPromptInvalidBody({
     url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"prompt\":\"覆盖\"}",
+    expectedMessage: "重复字段",
+    expectedRequestId: ""
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"ｐｒｏｍｐｔ\":\"覆盖\"}",
+    expectedMessage: "重复字段",
+    expectedRequestId: ""
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: "{\"task_type\":\"image_reference\",\"prompt\":\"基于 @海报参考 生成视觉图。\",\"references\":[{\"reference_id\":\"ref_poster\",\"reference_id\":\"ref_shadow\",\"entity_name\":\"海报参考\",\"entity_type\":\"style\",\"role\":\"style_reference\",\"url\":\"https://example.com/ref.png\",\"mime_type\":\"image/png\"}]}",
+    expectedMessage: "重复字段",
+    expectedRequestId: ""
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+    body: "{\"task_type\":\"text_image\",\"prompt\":\"生成一张山间晨雾图。\",\"__proto__\":{}}",
+    expectedMessage: "不允许|不允许的字段"
+  });
+
+  await assertPromptInvalidBody({
+    url: `${app.baseUrl}/api/v1/prompt-optimizations`,
     body: JSON.stringify({ prompt: "x".repeat(2000) }),
     expectedMessage: "请求体过大",
     expectedRequestId: ""

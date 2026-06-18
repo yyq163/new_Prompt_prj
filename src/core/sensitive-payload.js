@@ -1,24 +1,26 @@
-const CREDENTIAL_ASSIGNMENT = /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*["']?([A-Za-z0-9._~+/\-=]{12,})["']?/gi;
-const AUTHORIZATION_BEARER = /\bauthorization\s*:\s*bearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/gi;
-const AUTHORIZATION_BASIC = /\bauthorization\s*:\s*basic\s+([A-Za-z0-9+/=]{16,})\b/gi;
-const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/gi;
-const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/gi;
-const COOKIE_HEADER_VALUE = /\bcookie\s*:\s*[^;\s=]{1,80}=[^;\s]{4,}/gi;
-const COOKIE_ASSIGNMENT = /\b(?:cookie|session|sessionid|sid|jwt|csrf|xsrf)\b\s*=\s*["']?([A-Za-z0-9._~+/%-]{8,})["']?/gi;
+const CREDENTIAL_ASSIGNMENT = /\b(?:proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^\s,;]{12,}))/giu;
+const AUTHORIZATION_HEADER_VALUE = /\b(?:proxy-authorization|authorization)\s*:\s*([^\r\n]+)/giu;
+const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/giu;
+const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/giu;
+const COOKIE_HEADER_VALUE = /\b(?:set-cookie|cookie)\s*:\s*([^\r\n]+)/giu;
+const COOKIE_ASSIGNMENT = /\b(?:cookie|session|sessionid|sid|jwt|csrf|xsrf)\b\s*=\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^;\s,]{8,}))/giu;
 const KNOWN_CREDENTIAL_VALUE = /\b(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
 const PRIVATE_KEY_BLOCK = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/i;
 const BASE64_DATA_URI = /\bdata:[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*(?:;[a-z0-9._+-]+=[^,;\s]+|;[a-z0-9._+-]+)*;base64,[A-Za-z0-9+/=\s]*/gi;
 const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=$|[^A-Za-z0-9+/=])/g;
+const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
+const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret)\s*=\s*"?([^",\s]{8,})"?/giu;
+const TEACHING_CONTEXT = /教学|示例|占位|占位符|说明|语法|格式|流程|不是|非真实|not\s+real|placeholder|example|sample|dummy/iu;
+const PLACEHOLDER_CREDENTIAL = /^(?:[<{[]?\s*)?(?:your|replace|replace_me|placeholder|example|sample|dummy|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|value)(?:[\s_:-]*(?:your|replace|placeholder|example|sample|dummy|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|value))*\s*(?:[>}\]]?)$/iu;
 
 export function containsHighConfidenceSensitivePayload(value) {
   const text = stringValue(value);
   if (!text) return false;
   if (PRIVATE_KEY_BLOCK.test(text)) return true;
-  if (testGlobalPattern(AUTHORIZATION_BEARER, text)) return true;
-  if (testGlobalPattern(AUTHORIZATION_BASIC, text)) return true;
+  if (containsAuthorizationHeader(text)) return true;
   if (testGlobalPattern(BARE_BEARER, text)) return true;
   if (testGlobalPattern(BARE_BASIC, text)) return true;
-  if (testGlobalPattern(COOKIE_HEADER_VALUE, text)) return true;
+  if (containsCookieHeader(text)) return true;
   if (containsCookieAssignment(text)) return true;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, text)) return true;
   if (containsCredentialAssignment(text)) return true;
@@ -26,29 +28,116 @@ export function containsHighConfidenceSensitivePayload(value) {
   return containsVerifiableLongBase64(text);
 }
 
+function containsAuthorizationHeader(text) {
+  AUTHORIZATION_HEADER_VALUE.lastIndex = 0;
+  let match;
+  while ((match = AUTHORIZATION_HEADER_VALUE.exec(text))) {
+    const headerValue = firstHeaderExampleSegment(stripOuterQuotes(match[1]));
+    if (!headerValue) continue;
+    const parts = headerValue.match(/^([A-Za-z][A-Za-z0-9._+-]{0,63})(?:\s+(.+))?$/u);
+    if (!parts) {
+      if (isLikelyCredentialValue(headerValue)) return true;
+      continue;
+    }
+    const scheme = parts[1];
+    const credential = stripOuterQuotes(parts[2] || "");
+    if (!AUTH_SCHEME.test(scheme) || !credential) continue;
+    if (containsCredentialParameter(credential)) return true;
+    if (TEACHING_CONTEXT.test(headerValue) && !containsLikelyCredentialToken(credential)) continue;
+    if (isLikelyCredentialValue(credential)) return true;
+  }
+  return false;
+}
+
+function containsCredentialParameter(value) {
+  AUTH_PARAM_CREDENTIAL.lastIndex = 0;
+  let match;
+  while ((match = AUTH_PARAM_CREDENTIAL.exec(value))) {
+    if (isLikelyCredentialValue(match[1])) return true;
+  }
+  return false;
+}
+
 function containsCookieAssignment(text) {
   COOKIE_ASSIGNMENT.lastIndex = 0;
   let match;
   while ((match = COOKIE_ASSIGNMENT.exec(text))) {
-    const value = stringValue(match[1]).trim();
+    const value = stringValue(match[1] || match[2] || match[3]).trim();
     if (value.length >= 16 || shannonEntropy(value) >= 3.0) return true;
   }
   return false;
+}
+
+function containsCookieHeader(text) {
+  COOKIE_HEADER_VALUE.lastIndex = 0;
+  let match;
+  while ((match = COOKIE_HEADER_VALUE.exec(text))) {
+    const headerValue = firstHeaderExampleSegment(match[1]);
+    const teachingExample = TEACHING_CONTEXT.test(headerValue);
+    const pairs = headerValue.split(";").map((item) => item.trim()).filter(Boolean);
+    for (const pair of pairs) {
+      const separator = pair.indexOf("=");
+      if (separator <= 0) continue;
+      const value = stripOuterQuotes(pair.slice(separator + 1));
+      if (isLikelyCredentialValue(value)) return true;
+      if (!teachingExample && value.length >= 4) return true;
+    }
+  }
+  return false;
+}
+
+function firstHeaderExampleSegment(value) {
+  return stringValue(value).split(/[。；，、]/u)[0].trim();
 }
 
 function containsCredentialAssignment(text) {
   CREDENTIAL_ASSIGNMENT.lastIndex = 0;
   let match;
   while ((match = CREDENTIAL_ASSIGNMENT.exec(text))) {
-    if (isLikelyCredentialValue(match[1])) return true;
+    if (isLikelyCredentialValue(match[1] || match[2] || match[3])) return true;
   }
   return false;
 }
 
 function isLikelyCredentialValue(value) {
-  const compact = stringValue(value).trim().replace(/^["']|["']$/g, "");
+  const compact = stripOuterQuotes(value).trim();
+  if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return true;
+  if (isPlaceholderCredential(compact)) return false;
+  if (/\s/u.test(compact)) return containsLikelyCredentialToken(compact);
   if (compact.length >= 20) return true;
   return compact.length >= 12 && shannonEntropy(compact) >= 3.2;
+}
+
+function containsLikelyCredentialToken(value) {
+  const parts = stringValue(value)
+    .split(/[\s,;]+/u)
+    .map((part) => stripOuterQuotes(part).replace(/^[^\w]+|[^\w=+/_~.-]+$/gu, ""))
+    .filter(Boolean);
+  return parts.some((part) => {
+    if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, part)) return true;
+    if (isPlaceholderCredential(part)) return false;
+    if (part.length >= 20 && /[A-Za-z0-9]/u.test(part)) return true;
+    return part.length >= 12 && /[A-Za-z0-9]/u.test(part) && shannonEntropy(part) >= 3.2;
+  });
+}
+
+function isPlaceholderCredential(value) {
+  const compact = stripOuterQuotes(value)
+    .trim()
+    .replace(/^<|>$/gu, "")
+    .replace(/^\{|\}$/gu, "")
+    .replace(/^\[|\]$/gu, "");
+  if (!compact) return false;
+  if (PLACEHOLDER_CREDENTIAL.test(compact)) return true;
+  return /^(?:YOUR|REPLACE|PLACEHOLDER|EXAMPLE|SAMPLE|DUMMY)[A-Z0-9_-]*(?:TOKEN|KEY|SECRET|PASSWORD|COOKIE|VALUE)$/u.test(compact);
+}
+
+function stripOuterQuotes(value) {
+  const text = stringValue(value).trim();
+  if ((text.startsWith("\"") && text.endsWith("\"")) || (text.startsWith("'") && text.endsWith("'"))) {
+    return text.slice(1, -1);
+  }
+  return text;
 }
 
 function containsBase64DataUri(text) {

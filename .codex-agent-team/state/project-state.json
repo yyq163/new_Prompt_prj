@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "review",
-  "currentTask": "main01-fix09-prompt-optimizer-zero-security-debt",
+  "currentTask": "main01-fix10-prompt-optimizer-residual-security-gaps",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -340,7 +340,54 @@
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix09"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix10-prompt-optimizer-residual-security-gaps",
+      "status": "premerge_verified",
+      "owner": "lead-orchestrated-codex-subagents",
+      "files": [
+        "server.js",
+        "src/routes/prompt-optimizations.js",
+        "src/core/sensitive-payload.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/runtime.js",
+        "src/core/errors.js",
+        "src/core/url-security.js",
+        "src/core/prompt-compiler.js",
+        "src/core/runtime-config-file.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        "API_CONTRACTS.md",
+        "README.md",
+        "docs/ragflow/**",
+        ".codex-agent-team/context/main01-fix10-prompt-optimizer-residual-security-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix10-prompt-optimizer-residual-security-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix10-prompt-optimizer-residual-security-gaps.md"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix10-2026-06-18-pendingChanges-0",
+        "branch-main01-fix10-from-origin-main01-6a953700c826a57cfb0260788dc0302e21cc6851",
+        "code-map-skill-refresh-after-branch-fix10-2026-06-18-pendingChanges-0",
+        ".codex-agent-team/context/main01-fix10-prompt-optimizer-residual-security-gaps.md",
+        "npm-run-check-pass-2026-06-18-fix10",
+        "npm-test-171-pass-2026-06-18-fix10",
+        "prompt-optimizer-test-39-pass-2026-06-18-fix10",
+        "http-invalid-body-test-5-pass-2026-06-18-fix10",
+        "image-api-test-109-pass-2026-06-18-fix10",
+        "provider-config-present-2026-06-18-fix10",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix10",
+        "git-diff-check-pass-2026-06-18-fix10",
+        "security-scan-pass-triaged-detector-literal-2026-06-18-fix10",
+        "code-map-skill-refresh-precommit-fix10-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-878-edgeCount-2248",
+        ".codex-agent-team/reports/review-main01-fix10-prompt-optimizer-residual-security-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix10-prompt-optimizer-residual-security-gaps.md",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix10",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix10"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-18T12:47:12+08:00"
+  "updatedAt": "2026-06-18T15:31:51+08:00"
 }

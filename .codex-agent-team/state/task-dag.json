@@ -331,6 +331,73 @@
         "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix09",
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix09"
       ]
+    },
+    {
+      "id": "main01-fix10-prompt-optimizer-residual-security-gaps",
+      "title": "Close prompt optimizer residual credential, resource, DNS, and natural-language safety gaps",
+      "status": "premerge_verified",
+      "dependsOn": [
+        "main01-fix09-prompt-optimizer-zero-security-debt"
+      ],
+      "filesExpected": [
+        "server.js",
+        "src/routes/prompt-optimizations.js",
+        "src/core/errors.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/runtime.js",
+        "src/core/url-security.js",
+        "src/core/prompt-compiler.js",
+        "src/core/runtime-config-file.js",
+        "src/core/sensitive-payload.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        ".codex-agent-team/context/main01-fix10-prompt-optimizer-residual-security-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix10-prompt-optimizer-residual-security-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix10-prompt-optimizer-residual-security-gaps.md",
+        "API_CONTRACTS.md",
+        "README.md",
+        "docs/ragflow/**"
+      ],
+      "acceptance": [
+        "High-confidence Authorization, Proxy-Authorization, credential assignment, Cookie/Set-Cookie, data URI, and long base64 payloads are rejected before RAGFlow fetch without echo or logs",
+        "Natural-language prompt and reference metadata allow ordinary Authorization, Proxy-Authorization, final_prompt, provider payload, b64_json, data_url, token, secret, cookie, and base64 terminology",
+        "Prompt characters, prompt UTF-8 bytes, per-reference text, aggregate reference text, RAGFlow message characters, and serialized RAGFlow request body bytes have safe default and bounded configurable limits",
+        "DNS lookup is bounded by timeout/deadline, late lookup results do not trigger fetch, Authorization is not sent after timeout, and deterministic fallback is preserved",
+        "Fix08 and fix09 strict schema, tier policy, SSRF, redirect, response bounds, recursive unsafe output, isolation, fallback, and public forbidden scan capabilities remain covered",
+        "All required tests, security scans, subagent reviews, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node tests/unit/http-invalid-body.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix10-prompt-optimizer-residual-security-gaps.json",
+        "git status --short --untracked-files=all",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix10-2026-06-18-pendingChanges-0",
+        "branch-main01-fix10-from-origin-main01-6a953700c826a57cfb0260788dc0302e21cc6851",
+        "code-map-skill-refresh-after-branch-fix10-2026-06-18-pendingChanges-0",
+        "npm-run-check-pass-2026-06-18-fix10",
+        "npm-test-171-pass-2026-06-18-fix10",
+        "prompt-optimizer-test-39-pass-2026-06-18-fix10",
+        "http-invalid-body-test-5-pass-2026-06-18-fix10",
+        "image-api-test-109-pass-2026-06-18-fix10",
+        "provider-config-present-2026-06-18-fix10",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix10",
+        "git-diff-check-pass-2026-06-18-fix10",
+        "security-scan-pass-triaged-detector-literal-2026-06-18-fix10",
+        "code-map-skill-refresh-precommit-fix10-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-878-edgeCount-2248",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix10",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix10"
+      ]
     }
   ]
 }

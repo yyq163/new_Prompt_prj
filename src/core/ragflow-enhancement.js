@@ -15,14 +15,17 @@ const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development"
 export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch, lookupHost = dnsLookup, env = process.env } = {}) {
   const endpoint = String(env.RAGFLOW_ENHANCEMENT_URL || "").trim();
   if (!endpoint) return { enhancement: null, discarded: "not_configured" };
-  const endpointPolicy = await validateEnhancementEndpoint(endpoint, env, lookupHost);
+  const deadline = createDeadline(timeoutMs);
+  const endpointPolicy = await validateEnhancementEndpoint(endpoint, env, lookupHost, deadline);
   if (!endpointPolicy.ok) return { enhancement: null, discarded: endpointPolicy.discarded };
   if (containsOutboundSensitivePayload({ request, binding })) {
     return { enhancement: null, discarded: "sensitive_input" };
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const remainingMs = deadline.remainingMs();
+  if (remainingMs <= 0) return { enhancement: null, discarded: "ragflow_failed" };
+  const timer = setTimeout(() => controller.abort(), remainingMs);
   try {
     const init = {
       method: "POST",
@@ -61,7 +64,41 @@ function containsOutboundSensitivePayload({ request, binding }) {
   }));
 }
 
-async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
+function createDeadline(timeoutMs) {
+  const expiresAt = Date.now() + timeoutMs;
+  return {
+    remainingMs() {
+      return Math.max(0, expiresAt - Date.now());
+    }
+  };
+}
+
+class RagflowEnhancementLookupTimeoutError extends Error {
+  constructor() {
+    super("RAGFlow enhancement DNS lookup timed out.");
+    this.name = "RagflowEnhancementLookupTimeoutError";
+  }
+}
+
+async function lookupHostWithDeadline(lookupHost, hostname, options, deadline) {
+  const timeoutMs = deadline.remainingMs();
+  if (timeoutMs <= 0) throw new RagflowEnhancementLookupTimeoutError();
+  const lookupPromise = Promise.resolve().then(() => lookupHost(hostname, options));
+  lookupPromise.catch(() => {});
+  let timer;
+  try {
+    return await Promise.race([
+      lookupPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new RagflowEnhancementLookupTimeoutError()), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function validateEnhancementEndpoint(endpoint, env, lookupHost, deadline) {
   let parsed;
   try {
     parsed = new URL(endpoint);
@@ -86,10 +123,11 @@ async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
   if (isIpLiteral(parsed.hostname)) return { ok: true, discarded: "", records: [] };
   let records;
   try {
-    records = await lookupHost(parsed.hostname, { all: true, verbatim: true });
+    records = await lookupHostWithDeadline(lookupHost, parsed.hostname, { all: true, verbatim: true }, deadline);
   } catch {
     return { ok: false, discarded: "invalid_endpoint" };
   }
+  if (deadline.remainingMs() <= 0) return { ok: false, discarded: "invalid_endpoint" };
   const list = Array.isArray(records) ? records : [records];
   if (!list.length) return { ok: false, discarded: "invalid_endpoint" };
   for (const record of list) {

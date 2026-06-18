@@ -815,6 +815,59 @@ test("legacy RAGFlow enhancement default fetch pins DNS and enforces response by
   });
 });
 
+test("legacy RAGFlow enhancement DNS lookup obeys timeout and never fetches after late resolve", async () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "少女推开门。", references: [] });
+  const binding = emptyBinding();
+  let lateResolved = false;
+  let fetches = 0;
+
+  const lateResult = await getRagflowEnhancement({
+    request,
+    binding,
+    timeoutMs: 20,
+    env: {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "test"
+    },
+    lookupHost: async () => new Promise((resolveLookup) => {
+      setTimeout(() => {
+        lateResolved = true;
+        resolveLookup([{ address: "93.184.216.34", family: 4 }]);
+      }, 80);
+    }),
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch after DNS timeout");
+    }
+  });
+  assert.equal(lateResult.enhancement, null);
+  assert.equal(lateResult.discarded, "invalid_endpoint");
+  assert.equal(fetches, 0);
+  await delay(100);
+  assert.equal(lateResolved, true);
+  assert.equal(fetches, 0);
+
+  const startedAt = Date.now();
+  const neverResult = await getRagflowEnhancement({
+    request,
+    binding,
+    timeoutMs: 20,
+    env: {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance",
+      RAGFLOW_DEPLOYMENT_TIER: "test"
+    },
+    lookupHost: async () => new Promise(() => {}),
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch after never-resolving DNS");
+    }
+  });
+  assert.equal(neverResult.enhancement, null);
+  assert.equal(neverResult.discarded, "invalid_endpoint");
+  assert.equal(Date.now() - startedAt < 200, true);
+  assert.equal(fetches, 0);
+});
+
 test("RAGFlow output final_prompt is discarded", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt: "剧情段落", references: [] });
   const validation = validateEnhancement(JSON.stringify({ final_prompt: "secret" }), { request, binding: { resolved_references: [] } });
@@ -3263,6 +3316,10 @@ function publicLookup() {
 
 function localLookup() {
   return Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 async function withLegacyRagflowServer(handler, callback) {

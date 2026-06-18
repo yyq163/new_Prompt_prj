@@ -13,7 +13,7 @@ import {
   ragflowConfig,
   validateRagflowEnhancement
 } from "../../src/routes/prompt-optimizations.js";
-import { containsHighConfidenceSensitivePayload } from "../../src/core/sensitive-payload.js";
+import { containsHighConfidenceSensitivePayload, normalizeTextForSensitiveScan } from "../../src/core/sensitive-payload.js";
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
@@ -195,6 +195,205 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   assert.match(colonCopyResult.payload.optimized_prompt, /hidden door|brass coin|dashboard field/);
   assertNoPromptLeaks(colonCopyResult.payload.optimized_prompt);
   assertNoPublicLeaks(colonCopyResult.payload);
+});
+
+test("prompt optimizer rejects authorization credentials hidden by default-ignorable characters before RAGFlow fetch", async () => {
+  const apiKeyValue = "synthetic_credential_123456789";
+  const proxyValue = "synthetic_proxy_credential_123456789";
+  const cases = [
+    ["word joiner", `Authori\u2060zation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["soft hyphen", `Authori\u00ADzation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["combining grapheme joiner", `Authori\u034Fzation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["mongolian vowel separator", `Authori\u180Ezation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["arabic letter mark", `Authori\u061Czation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["hangul choseong filler", `Authori\u115Fzation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["left-to-right mark", `Authori\u200Ezation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["right-to-left mark", `Authori\u200Fzation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["bidi embedding", `Authori\u202Azation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["bidi isolate", `Authori\u2066zation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["variation selector", `Authori\uFE0Fzation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["variation selector start", `Authori\uFE00zation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["supplementary variation selector", `Authori\u{E0100}zation: ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["multiple invisible controls", `Pro\u2060xy\u00AD-\u034FAuthori\u180Ezation: Custom ${proxyValue}`, proxyValue],
+    ["fullwidth header and colon", `Ａｕｔｈｏｒｉｚａｔｉｏｎ： ApiKey ${apiKeyValue}`, apiKeyValue],
+    ["fullwidth assignment punctuation", `ｐｒｏｘｙ＿ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom ${proxyValue}`, proxyValue]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("scanner normalization helper preserves originals and builds bounded scan copies", () => {
+  const invisibleControls = [
+    "\u00AD",
+    "\u034F",
+    "\u061C",
+    "\u115F",
+    "\u180E",
+    "\u200B",
+    "\u200C",
+    "\u200D",
+    "\u200E",
+    "\u200F",
+    "\u202A",
+    "\u202B",
+    "\u202C",
+    "\u202D",
+    "\u202E",
+    "\u2060",
+    "\u2061",
+    "\u2062",
+    "\u2063",
+    "\u2064",
+    "\u2066",
+    "\u2067",
+    "\u2068",
+    "\u2069",
+    "\u206F",
+    "\uFE00",
+    "\uFE0F",
+    "\uFEFF"
+  ];
+  const original = `Ａｕｔｈｏｒｉ${invisibleControls.join("")}\u{E0100}ｚａｔｉｏｎ： ApiKey synthetic_credential_123456789`;
+  const scanCopy = normalizeTextForSensitiveScan(original);
+  assert.notEqual(original, scanCopy);
+  assert.match(original, /Ａｕｔｈｏｒｉ/);
+  assert.equal(scanCopy, "Authorization: ApiKey synthetic_credential_123456789");
+  for (const char of invisibleControls) {
+    assert.equal(scanCopy.includes(char), false, char.codePointAt(0).toString(16));
+  }
+  assert.equal(containsHighConfidenceSensitivePayload(original), true);
+  assert.equal(containsHighConfidenceSensitivePayload("Authorization header 工作原理和 assignment 解析说明"), false);
+
+  const longInput = `Authorization=${"A".repeat(4097)}`;
+  const started = Date.now();
+  assert.equal(containsHighConfidenceSensitivePayload(longInput), true);
+  assert.equal(Date.now() - started < 250, true);
+});
+
+test("prompt optimizer rejects complete authorization assignment values with comma and semicolon parameters", async () => {
+  const cases = [
+    {
+      label: "digest response after comma",
+      prompt: "authorization=Digest nc=1, response=\"synthetic_response_123456789\"",
+      leaked: "synthetic_response_123456789"
+    },
+    {
+      label: "digest response after quoted comma",
+      prompt: "authorization=Digest r=\"x,y\", response=\"synthetic_response_123456789\"",
+      leaked: "synthetic_response_123456789"
+    },
+    {
+      label: "aws credential and signature after comma",
+      prompt: "authorization=AWS4-HMAC-SHA256 Credential=synthetic/20260101/region/service/aws4_request, Signature=synthetic_signature_123456",
+      leaked: "synthetic_signature_123456"
+    },
+    {
+      label: "custom credential after semicolon",
+      prompt: "proxy_authorization=Custom realm=\"x\"; credential=\"synthetic_credential_123456789\"",
+      leaked: "synthetic_credential_123456789"
+    },
+    {
+      label: "kebab proxy authorization assignment",
+      prompt: "proxy-authorization=Token realm=\"x\"; token=\"synthetic_token_123456789\"",
+      leaked: "synthetic_token_123456789"
+    },
+    {
+      label: "escaped quoted assignment",
+      prompt: "authorization=\"Custom realm=\\\"x\\\"; signature=\\\"synthetic_signature_123456789\\\"\"",
+      leaked: "synthetic_signature_123456789"
+    },
+    {
+      label: "malformed quote still scans current logical value",
+      prompt: "authorization=\"Custom realm=\\\"x\\\"; signature=\\\"synthetic_signature_123456789",
+      leaked: "synthetic_signature_123456789"
+    }
+  ];
+
+  for (const { label, prompt, leaked } of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "oversized authorization assignment",
+    body: {
+      task_type: "text_image",
+      prompt: `authorization=${"A".repeat(4097)}`,
+      references: []
+    },
+    leaked: "AAAAAAAAAAAAAAAA"
+  });
+});
+
+test("prompt optimizer cookie detection allows low-risk preference copy and rejects credential cookies", async () => {
+  const allowed = [
+    "Cookie: flavor=choco",
+    "请在标签上写 Cookie: flavor=choco",
+    "Set-Cookie: theme=dark",
+    "Cookie: language=zh-CN",
+    "Cookie: theme=\"dark\"; layout=grid"
+  ];
+  for (const prompt of allowed) {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: `生成一张包装标签，文字包括：${prompt}`,
+      references: []
+    }, noRagflowOptions());
+    assert.equal(result.statusCode, 200, prompt);
+    assert.equal(result.payload.status, "succeeded", prompt);
+    assert.match(result.payload.optimized_prompt, /flavor=choco|theme="?dark"?|language=zh-CN/, prompt);
+    assertNoPublicLeaks(result.payload);
+  }
+
+  const referenceResult = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @包装参考 生成一张安全培训海报",
+    references: [reference(
+      "ref_packaging",
+      "包装参考",
+      "style",
+      "style_reference",
+      "https://example.com/ref_packaging.png",
+      "reference metadata shows Cookie: flavor=choco and Set-Cookie: theme=dark"
+    )]
+  }, noRagflowOptions());
+  assert.equal(referenceResult.statusCode, 200);
+  assert.equal(referenceResult.payload.status, "succeeded");
+  assert.match(referenceResult.payload.optimized_prompt, /flavor=choco|theme=dark/);
+  assertNoPublicLeaks(referenceResult.payload);
+
+  const highEntropySid = "N7xQp4rT9vLm2ZaB8cYd6EfGhJk3MnPq";
+  const highEntropyPreference = "T7xQp4rT9vLm2ZaB8cYd6EfGhJk3MnPq";
+  const rejected = [
+    ["session cookie", "Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"],
+    ["short session cookie", "Cookie: sessionid=abc", "sessionid=abc"],
+    ["auth token cookie", "Cookie: auth_token=synthetic_auth_token_123456789", "synthetic_auth_token_123456789"],
+    ["short auth token cookie", "Cookie: auth_token=abc", "auth_token=abc"],
+    ["access token set-cookie", "Set-Cookie: access_token=synthetic_access_token_123456789; HttpOnly", "synthetic_access_token_123456789"],
+    ["short access token set-cookie", "Set-Cookie: access_token=abc; HttpOnly", "access_token=abc"],
+    ["short jwt cookie", "Cookie: jwt=abc", "jwt=abc"],
+    ["high entropy sid", `Cookie: sid=${highEntropySid}`, highEntropySid],
+    ["short sid cookie", "Cookie: sid=abc", "sid=abc"],
+    ["generic high entropy cookie", `Cookie: preference=${highEntropyPreference}`, highEntropyPreference],
+    ["multi pair credential", "Cookie: flavor=choco; jwt=eyJsyntheticJwtHeader123456789.eyJsyntheticPayload123456789.syntheticSignature123456789", "eyJsyntheticJwtHeader123456789"],
+    ["product copy cannot hide session cookie", "产品文案示例 Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"]
+  ];
+  for (const [label, prompt, leaked] of rejected) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
 });
 
 test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch", async () => {
@@ -934,6 +1133,9 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "blob:https://evil.example/id" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "//evil.example/ref.png" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "visit evil.example/ref.png" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "RAG\u2060Flow 内部状态" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "provider\u2060_internal_payload 泄漏" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "final\uFE0F_prompt 泄漏" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ internal_prompt: "secret", visual_focus: "内部提示词" }) } }] },
     { code: 100, data: null, message: "internal failure" }
   ];
@@ -978,12 +1180,17 @@ test("validateRagflowEnhancement rejects internal and unauthorized content", () 
   assert.equal(validateRagflowEnhancement({ reference_id: "bad_ref", visual_focus: "x" }, context), null);
   assert.equal(validateRagflowEnhancement({ shot_plan: [{ asset_id: "asset_1", text: "x" }] }, context), null);
   assert.equal(validateRagflowEnhancement({ template_guidance: "旧字段" }, context), null);
+  assert.equal(validateRagflowEnhancement({ visual_focus: "RAG\u2060Flow 内部状态" }, context), null);
+  assert.equal(validateRagflowEnhancement({ visual_focus: "provider\u2060_internal_payload 泄漏" }, context), null);
+  assert.equal(validateRagflowEnhancement({ visual_focus: "final\uFE0F_prompt 泄漏" }, context), null);
   const nestedUnsafeEnhancements = [
     "{\"action_stages\":[{\"constructor\":\"构造器泄漏\",\"prototype\":\"原型泄漏\",\"＿＿ｐｒｏｔｏ＿＿\":\"全角proto泄漏\",\"ｃｏｎｓｔｒｕｃｔｏｒ\":\"全角泄漏\",\"stage\":\"安全阶段\"}]}",
     "{\"action_stages\":[{\"references\":\"nested reference leak\",\"stage\":\"安全阶段\"}]}",
     "{\"action_stages\":[{\"reference_policy\":\"nested policy leak\",\"stage\":\"安全阶段\"}]}",
     "{\"action_stages\":[{\"output\":\"nested output leak\",\"stage\":\"安全阶段\"}]}",
-    "{\"action_stages\":[{\"ｅｎｈａｎｃｅｍｅｎｔ\":\"nested enhancement leak\",\"stage\":\"安全阶段\"}]}"
+    "{\"action_stages\":[{\"ｅｎｈａｎｃｅｍｅｎｔ\":\"nested enhancement leak\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"final️_prompt\":\"default ignorable leak\",\"stage\":\"安全阶段\"}]}",
+    "{\"action_stages\":[{\"final󠄀_prompt\":\"supplementary default ignorable leak\",\"stage\":\"安全阶段\"}]}"
   ];
   for (const raw of nestedUnsafeEnhancements) {
     assert.equal(validateRagflowEnhancement(JSON.parse(raw), {
@@ -1017,6 +1224,9 @@ test("RAGFlow response parser rejects duplicate and canonical-conflicting JSON c
   }), null);
   assert.equal(parseRagflowOptimizedPrompt({
     choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual-focus\":\"canonical-wins\"}" } }]
+  }), null);
+  assert.equal(parseRagflowOptimizedPrompt({
+    choices: [{ message: { content: "{\"visual_focus\":\"安全光影\",\"visual️_focus\":\"default-ignorable-wins\"}" } }]
   }), null);
 });
 
@@ -1779,11 +1989,42 @@ test("prompt optimizer public response gate rejects nested forbidden keys and te
   }), /公共响应包含内部信息/);
   assert.throws(() => buildPromptOptimizationResponse({
     request,
+    context,
+    optimizedPrompt: "生成完整高质量中文画面，但这里包含 RAG\u2060Flow 内部状态。",
+    traceId: "trace_test"
+  }), /公共响应包含内部信息/);
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
+    context,
+    optimizedPrompt: "生成完整高质量中文画面，但这里包含 provider\u2060_internal_payload。",
+    traceId: "trace_test"
+  }), /公共响应包含内部信息/);
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
+    context,
+    optimizedPrompt: "生成完整高质量中文画面，但这里包含 final\uFE0F_prompt。",
+    traceId: "trace_test"
+  }), /公共响应包含内部信息/);
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
     context: {
       ...context,
       binding: {
         entity_mentions: [],
         references_used: [{ reference_id: "ref_safe", entity_name: "对象", provider_payload: "secret" }],
+        warnings: []
+      }
+    },
+    optimizedPrompt: "生成完整高质量中文画面，主体清楚，环境完整，光影稳定，细节清晰，适合直接用于图片生成。",
+    traceId: "trace_test"
+  }), /公共响应包含内部字段/);
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
+    context: {
+      ...context,
+      binding: {
+        entity_mentions: [],
+        references_used: [{ reference_id: "ref_safe", entity_name: "对象", final️_prompt: "secret" }],
         warnings: []
       }
     },
@@ -1908,6 +2149,24 @@ function reference(reference_id, entity_name, entity_type, role, url = `https://
   };
 }
 
+async function assertPromptOptimizerRejectsBeforeRagflow({ label, body, leaked }) {
+  let fetches = 0;
+  const { result, output } = await captureConsoleDuring(() => handlePromptOptimization(body, {
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error(`must not fetch ${label}`);
+    }
+  }));
+  assert.equal(result.statusCode, 400, label);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA", label);
+  assert.equal(fetches, 0, label);
+  assert.equal(JSON.stringify(result.payload).includes(leaked), false, label);
+  assert.equal(output.includes(leaked), false, label);
+  assertNoPublicLeaks(result.payload);
+}
+
 function assertTextImagePrompt(prompt) {
   assert.match(prompt, /普通文字生图|完整高质量|主体明确|构图稳定/);
   assert.doesNotMatch(prompt, /4 格横向布局|场景设定参考板结构|道具多视图资产参考板|左侧规划区和右侧剧情宫格区/);
@@ -1956,6 +2215,7 @@ function assertIncludesEntity(prompt, entityName) {
 }
 
 function assertNoPromptLeaks(prompt) {
+  const scanText = normalizeTextForSensitiveScan(prompt);
   for (const title of [
     "任务类型：",
     "原始需求：",
@@ -1969,18 +2229,19 @@ function assertNoPromptLeaks(prompt) {
     "optimization direction:",
     "negative constraints:"
   ]) {
-    assert.equal(prompt.includes(title), false, `field-summary title leaked: ${title}`);
+    assert.equal(scanText.includes(title), false, `field-summary title leaked: ${title}`);
   }
-  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "input_analysis", "storyboard_processing", "data:image"]) {
-    assert.equal(prompt.includes(token), false, `internal token leaked: ${token}`);
+  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "raw_provider", "input_analysis", "storyboard_processing", "data:image"]) {
+    assert.equal(scanText.includes(token), false, `internal token leaked: ${token}`);
   }
   assertNoSensitivePayload(prompt);
 }
 
 function assertNoPublicLeaks(payload) {
   const text = JSON.stringify(payload);
-  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "apiKey", "data:image"]) {
-    assert.equal(text.includes(token), false, `forbidden token leaked: ${token}`);
+  const scanText = normalizeTextForSensitiveScan(text);
+  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "raw_provider", "apiKey", "data:image"]) {
+    assert.equal(scanText.includes(token), false, `forbidden token leaked: ${token}`);
   }
   assertNoSensitivePayload(text);
 }

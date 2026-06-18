@@ -263,7 +263,7 @@
     {
       "id": "main01-fix09-prompt-optimizer-zero-security-debt",
       "title": "Fix prompt optimizer natural-language compatibility and strict deployment tier policy",
-      "status": "premerge_verified",
+      "status": "verified",
       "dependsOn": [
         "main01-fix08-prompt-optimizer-security-debt"
       ],
@@ -335,7 +335,7 @@
     {
       "id": "main01-fix10-prompt-optimizer-residual-security-gaps",
       "title": "Close prompt optimizer residual credential, resource, DNS, and natural-language safety gaps",
-      "status": "premerge_verified",
+      "status": "verified",
       "dependsOn": [
         "main01-fix09-prompt-optimizer-zero-security-debt"
       ],
@@ -402,7 +402,7 @@
     {
       "id": "main01-fix11-prompt-optimizer-ragflow-parser-differential",
       "title": "Close prompt optimizer RAGFlow parser differential and nested unsafe output gaps",
-      "status": "premerge_verified",
+      "status": "verified",
       "dependsOn": [
         "main01-fix10-prompt-optimizer-residual-security-gaps"
       ],
@@ -462,7 +462,7 @@
     {
       "id": "main01-fix12-prompt-optimizer-security-contract",
       "title": "Close prompt optimizer remaining security and error contract gaps",
-      "status": "premerge_verified",
+      "status": "verified",
       "dependsOn": [
         "main01-fix11-prompt-optimizer-ragflow-parser-differential"
       ],
@@ -519,6 +519,77 @@
         ".codex-agent-team/reports/final-integrator-main01-fix12-prompt-optimizer-security-contract.md",
         "prompt-optimizer-security-and-contract-debt-empty-2026-06-18-fix12",
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix12"
+      ]
+    },
+    {
+      "id": "main01-fix13-prompt-optimizer-credential-detection",
+      "title": "Close prompt optimizer Unicode credential detection, Authorization assignment, Cookie compatibility, and hidden output text gaps",
+      "status": "verified",
+      "dependsOn": [
+        "main01-fix12-prompt-optimizer-security-contract"
+      ],
+      "filesExpected": [
+        "src/core/sensitive-payload.js",
+        "src/core/runtime.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/unit/provider-poll-url-security.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        ".codex-agent-team/context/main01-fix13-prompt-optimizer-credential-detection.md",
+        ".codex-agent-team/reports/review-main01-fix13-prompt-optimizer-credential-detection.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix13-prompt-optimizer-credential-detection.md"
+      ],
+      "acceptance": [
+        "Credential scanner uses centralized security-only normalization with NFKC, fullwidth punctuation folding, and complete tested default-ignorable and format-control removal while preserving original business text",
+        "Credential detection scans both original and normalized copies and rejects Unicode-hidden Authorization and Proxy-Authorization credentials before RAGFlow fetch",
+        "Authorization and proxy_authorization assignment parsing inspects complete logical-line or quoted values without truncating Digest, AWS, ApiKey, Token, custom scheme, response, signature, credential, or escaped parameters at comma or semicolon boundaries",
+        "Cookie and Set-Cookie detection parses pairs, allows low-risk preference values like flavor=choco, theme=dark, and language=zh-CN, and rejects high-risk session/auth/JWT/OAuth/API-key cookie credentials even in product-copy wording",
+        "Request schema and public payload canonicalization remove default-ignorable and format-control characters for forbidden key checks, including nested RAGFlow/public output keys",
+        "RAGFlow enhancement and public output forbidden text checks scan raw and normalized copies, including hidden RAGFlow, provider_internal_payload, and final_prompt markers",
+        "Rejected prompt optimizer cases do not call RAGFlow fetch, provider, Generated Image Store, or callback paths and do not expose credentials in public error, logs, trace, reports, or evidence",
+        "Strict recursive schema, duplicate/prototype defense, malformed and oversized trace_id envelope, resource boundaries, strict tier, SSRF/DNS deadline/redirect, RAGFlow response/JSON limits, unsafe output scan, provider/store/callback isolation, deterministic fallback, public forbidden scan, and Chinese multi-task regressions remain covered",
+        "All required tests, security scans, subagent reviews, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node tests/unit/http-invalid-body.test.js",
+        "node tests/unit/provider-poll-url-security.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "npm run test:provider-config",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix13-prompt-optimizer-credential-detection.json",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-initial-fix13-pendingChanges-0-2026-06-18",
+        "branch-main01-fix13-from-origin-main01-6b6370d897a09e1bbf0500fe88e2df881f93f4bc",
+        "code-map-skill-refresh-fix-branch-pendingChanges-0-2026-06-18",
+        ".codex-agent-team/context/main01-fix13-prompt-optimizer-credential-detection.md",
+        "failing-test-repro-original-blockers-prompt-optimizer-47-pass-3-fail-2026-06-18",
+        "failing-test-repro-hidden-forbidden-text-prompt-optimizer-48-pass-3-fail-2026-06-19",
+        "npm-run-check-pass-2026-06-19-fix13",
+        "npm-test-187-pass-2026-06-19-fix13",
+        "prompt-optimizer-51-pass-2026-06-19-fix13",
+        "http-invalid-body-8-pass-2026-06-19-fix13",
+        "provider-poll-url-security-9-pass-2026-06-19-fix13",
+        "image-api-110-pass-2026-06-19-fix13",
+        "provider-config-real-provider-config-present-2026-06-19-fix13",
+        "final-v1-4-evidence-scan-pass-2026-06-19-fix13",
+        "git-diff-check-pass-2026-06-19-fix13",
+        "security-scan-pass-checked-10-files-0-findings-2026-06-19-fix13",
+        "code-map-skill-refresh-precommit-fix13-2026-06-19-pendingChanges-0-fileCount-29-nodeCount-922-edgeCount-2344",
+        ".codex-agent-team/reports/review-main01-fix13-prompt-optimizer-credential-detection.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix13-prompt-optimizer-credential-detection.md",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-19-fix13",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-19-fix13",
+        "review-gate-pass-blockingCount-0-2026-06-19-fix13",
+        "task-dag-validate-pass-10-tasks-no-next-2026-06-19-fix13"
       ]
     }
   ]

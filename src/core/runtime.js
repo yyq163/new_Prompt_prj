@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { clarification, fail } from "./errors.js";
+import { normalizeTextForSensitiveScan } from "./sensitive-payload.js";
 import { isUnsafeNetworkHost, normalizePublicHttpUrl } from "./url-security.js";
 import {
   ENTITY_TYPE_ALIASES,
@@ -83,8 +84,7 @@ export function stringValue(value) {
 }
 
 export function canonicalJsonKey(key) {
-  return stringValue(key)
-    .normalize("NFKC")
+  return normalizeTextForSensitiveScan(key)
     .trim()
     .toLowerCase()
     .replace(/[\s_.-]+/g, "");

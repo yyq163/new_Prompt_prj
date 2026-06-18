@@ -2,7 +2,7 @@ import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/
 import { extractEntityMentions } from "../core/entity-mentions.js";
 import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, hasUnsafeJsonObjectKeys, makeId, parseJsonWithoutDuplicateKeys, stringValue, walk } from "../core/runtime.js";
 import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
-import { containsHighConfidenceSensitivePayload } from "../core/sensitive-payload.js";
+import { containsHighConfidenceSensitivePayload, normalizeTextForSensitiveScan } from "../core/sensitive-payload.js";
 import {
   ENTITY_TYPE_ALIASES,
   ROLE_ALIASES,
@@ -179,6 +179,7 @@ const RAGFLOW_CONSUMED_FIELDS_BY_TASK = Object.freeze({
   storyboard: new Set(["story_function", "action_stages", "lighting_notes", "composition_notes", "missing_constraints"])
 });
 const RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT = /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|reference_id|asset_id|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
+const RAGFLOW_FORBIDDEN_INTERNAL_MARKER_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider_payload)/i;
 const PROMPT_PUBLIC_SUCCESS_FIELDS = new Set([
   "status",
   "request_id",
@@ -200,8 +201,9 @@ const PROMPT_PUBLIC_ERROR_FIELDS = new Set([
 ]);
 const PROMPT_PUBLIC_FORBIDDEN_KEY = /(?:final_prompt|compiled_prompt|internal_prompt|enhancement|ragflow|fallback|provider|callback|images?|b64_json|base64|data_url|authorization|cookie|bearer|api[_-]?key|token|secret|stack|raw)/i;
 const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:RAGFlow|fallback_status|ragflow_status|provider_internal_payload|data:image|stack trace)/i;
+const PROMPT_OPTIMIZER_FORBIDDEN_OUTPUT_TEXT = /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|data:image|enhancement|input_analysis|storyboard_processing/i;
+const PROMPT_HIDDEN_INTERNAL_MARKER_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider_payload)/i;
 const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
-const PROMPT_AUTHORIZATION_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization)\b\s*[:=]\s*([^\r\n,;]{8,})/giu;
 
 export async function handlePromptOptimization(body, options = {}) {
   const fallbackRequestId = safeRequestId(body && body.request_id) || makeId("req");
@@ -374,8 +376,7 @@ function isForbiddenSchemaKey(key) {
 }
 
 function canonicalSchemaKey(key) {
-  return stringValue(key)
-    .normalize("NFKC")
+  return normalizeTextForSensitiveScan(key)
     .trim()
     .toLowerCase()
     .replace(/[\s_.-]+/g, "");
@@ -473,31 +474,9 @@ function assertNoForbiddenInputText(value, field) {
 }
 
 function containsPromptOptimizationSensitivePayload(value) {
-  const text = promptOptimizationDetectionText(value);
+  const text = stringValue(value);
   if (!text) return false;
-  if (containsHighConfidenceSensitivePayload(text)) return true;
-  return containsPromptAuthorizationAssignment(text);
-}
-
-function promptOptimizationDetectionText(value) {
-  return stringValue(value)
-    .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
-    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "")
-    .replace(/[：﹕꞉︓]/gu, ":")
-    .replace(/[＝﹦]/gu, "=")
-    .replace(/文案|产品|包装/gu, "示例");
-}
-
-function containsPromptAuthorizationAssignment(text) {
-  PROMPT_AUTHORIZATION_ASSIGNMENT.lastIndex = 0;
-  let match;
-  while ((match = PROMPT_AUTHORIZATION_ASSIGNMENT.exec(text))) {
-    const value = stringValue(match[2]).trim();
-    if (!value) continue;
-    if (containsHighConfidenceSensitivePayload(`${match[1]}: ${value}`)) return true;
-  }
-  return false;
+  return containsHighConfidenceSensitivePayload(text);
 }
 
 function promptOptimizationLimits(env = process.env) {
@@ -1684,7 +1663,8 @@ function assertPromptOptimizationPublicPayload(payload, kind) {
     }
     if (!node || typeof node !== "object" || Array.isArray(node)) return;
     for (const key of Object.keys(node)) {
-      if (PROMPT_PUBLIC_FORBIDDEN_KEY.test(key)) {
+      const canonical = canonicalSchemaKey(key);
+      if (PROMPT_PUBLIC_FORBIDDEN_KEY.test(key) || PROMPT_PUBLIC_FORBIDDEN_KEY.test(canonical) || FORBIDDEN_CANONICAL_SCHEMA_KEYS.has(canonical)) {
         fail("INTERNAL_ERROR", "公共响应包含内部字段。", 500);
       }
     }
@@ -1692,23 +1672,48 @@ function assertPromptOptimizationPublicPayload(payload, kind) {
 }
 
 function containsForbiddenEnhancementText(text) {
-  return RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT.test(stringValue(text)) || containsPromptOptimizationSensitivePayload(text);
+  return containsPatternInScanCopies(RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT, text)
+    || containsPatternInScanCopies(RAGFLOW_FORBIDDEN_INTERNAL_MARKER_TEXT, text)
+    || containsPromptOptimizationSensitivePayload(text);
 }
 
 function containsForbiddenOptimizedPromptText(text) {
   const value = stringValue(text);
-  return /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|data:image|enhancement|input_analysis|storyboard_processing/i.test(value)
+  return containsPatternInScanCopies(PROMPT_OPTIMIZER_FORBIDDEN_OUTPUT_TEXT, value)
+    || containsHiddenInternalMarkerText(value)
     || containsPromptOptimizationPublicSensitivePayload(value);
 }
 
 function containsForbiddenPublicText(text) {
   const value = stringValue(text);
   if (/^RAGFLOW_(?:CONFIG_INVALID|OPENAI_ENDPOINT_NOT_FOUND|OPTIMIZER_FAILED)$/u.test(value)) return false;
-  return PROMPT_PUBLIC_FORBIDDEN_TEXT.test(value) || containsPromptOptimizationPublicSensitivePayload(value);
+  return containsPatternInScanCopies(PROMPT_PUBLIC_FORBIDDEN_TEXT, value)
+    || containsHiddenInternalMarkerText(value)
+    || containsPromptOptimizationPublicSensitivePayload(value);
+}
+
+function containsPatternInScanCopies(pattern, value) {
+  const original = stringValue(value);
+  if (testPattern(pattern, original)) return true;
+  const normalized = normalizeTextForSensitiveScan(original);
+  return normalized !== original && testPattern(pattern, normalized);
+}
+
+function containsHiddenInternalMarkerText(value) {
+  const original = stringValue(value);
+  const normalized = normalizeTextForSensitiveScan(original);
+  return normalized !== original
+    && !testPattern(PROMPT_HIDDEN_INTERNAL_MARKER_TEXT, original)
+    && testPattern(PROMPT_HIDDEN_INTERNAL_MARKER_TEXT, normalized);
+}
+
+function testPattern(pattern, value) {
+  pattern.lastIndex = 0;
+  return pattern.test(value);
 }
 
 function containsPromptOptimizationPublicSensitivePayload(value) {
-  const text = promptOptimizationDetectionText(value);
+  const text = stringValue(value);
   if (!text) return false;
   return containsHighConfidenceSensitivePayload(text);
 }

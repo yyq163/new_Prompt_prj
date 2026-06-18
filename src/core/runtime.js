@@ -16,6 +16,9 @@ export const TYPE_SCHEMAS = Object.freeze({
   ImageGenerationRequest: {
     fields: ["request_id", "task_type", "prompt", "references", "reference_policy", "output", "options", "callback_url", "callback"]
   },
+  PromptOptimizationRequest: {
+    fields: ["request_id", "task_type", "prompt", "references", "reference_policy"]
+  },
   ImageGenerationResponse: {
     fields: ["status", "images", "warnings"]
   },
@@ -38,7 +41,7 @@ export const TYPE_SCHEMAS = Object.freeze({
     fields: ["status", "images"]
   },
   RagflowEnhancement: {
-    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints", "input_analysis", "storyboard_processing"]
+    fields: ["scene_summary", "visual_focus", "story_function", "action_stages", "shot_plan", "normalized_shot_plan", "lighting_notes", "composition_notes", "negative_notes", "missing_constraints"]
   }
 });
 

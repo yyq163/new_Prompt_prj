@@ -181,8 +181,12 @@ professional templates such as character four-view sheets, scene 3x3 or
 multi-camera boards, prop front/side/back or material-detail boards, or
 storyboard left/right planning layouts.
 
-Allowed enhancement fields are tracked by `TYPE_SCHEMAS.RagflowEnhancement` and
-include:
+The prompt optimizer first applies a global safe-field allowlist, then applies a
+task-specific consumed-field allowlist. If an enhancement contains any field
+that the current `task_type` does not consume, the whole enhancement is
+discarded and deterministic fallback is used.
+
+Global safe enhancement fields:
 
 - `scene_summary`
 - `visual_focus`
@@ -194,15 +198,79 @@ include:
 - `composition_notes`
 - `negative_notes`
 - `missing_constraints`
-- `input_analysis`
-- `storyboard_processing`
+
+Task-specific consumed fields:
+
+- `text_image`: `visual_focus`, `lighting_notes`, `composition_notes`,
+  `missing_constraints`
+- `image_reference`: `visual_focus`, `lighting_notes`, `composition_notes`,
+  `missing_constraints`
+- `character_multiview`: `visual_focus`, `composition_notes`,
+  `missing_constraints`
+- `scene_multiview`: `scene_summary`, `visual_focus`, `lighting_notes`,
+  `composition_notes`, `missing_constraints`
+- `prop_multiview`: `visual_focus`, `composition_notes`, `missing_constraints`
+- `storyboard`: `story_function`, `action_stages`, `lighting_notes`,
+  `composition_notes`, `missing_constraints`
 
 The API discards unsafe enhancement when it leaks `final_prompt` or
 `compiled_prompt`, emits any `reference_id` / `reference_ids`, emits any URL,
-uses fields outside `TYPE_SCHEMAS.RagflowEnhancement`, returns a non-object or
-non-JSON value, changes explicit shot-list count/order, carries primary /
-auxiliary / weight / priority binding semantics, or places internal
-implementation language in any enhancement field.
+uses fields outside the prompt optimizer allowlist, returns a non-object or
+non-JSON value, carries primary / auxiliary / weight / priority binding
+semantics, emits credentials, base64, data URLs, provider payloads, callback
+state, unknown `asset_id`, or places internal implementation language in any
+enhancement field.
+
+RAGFlow URL configuration is server-side only. `RAGFLOW_BASE_URL`,
+`RAGFLOW_CHAT_ID`, `RAGFLOW_API_KEY`, optional `RAGFLOW_MODEL`, and resource
+limits such as `RAGFLOW_TIMEOUT_MS`, `RAGFLOW_MAX_RESPONSE_BYTES`,
+`RAGFLOW_MAX_JSON_DEPTH`, `RAGFLOW_MAX_JSON_KEYS`,
+`RAGFLOW_MAX_JSON_ARRAY_LENGTH`, `RAGFLOW_MAX_JSON_STRING_LENGTH`, and
+`RAGFLOW_MAX_ENHANCEMENT_CHARS` are never accepted from user request payloads.
+Production requires HTTPS plus `RAGFLOW_ALLOWED_ORIGINS`; development/test
+allow only loopback, RFC1918, or ULA private endpoints with
+`RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Metadata, link-local, multicast,
+reserved, and documentation ranges remain blocked even with the opt-in.
+
+### Prompt optimization response
+
+`POST /api/v1/prompt-optimizations` uses an independent request schema:
+
+- `request_id`
+- `task_type`
+- `prompt`
+- `references`
+- `reference_policy`
+
+Unknown request fields are rejected. The optimizer does not accept `output`,
+`options`, callback fields, provider/model fields, credentials, image payloads,
+base64, raw provider payloads, `final_prompt`, `compiled_prompt`, or
+`internal_prompt`.
+
+Public success fields:
+
+- `status`
+- `request_id`
+- `optimization_id`
+- `task_type`
+- `task_type_label`
+- `generation_mode`
+- `optimized_prompt`
+- `normalized`
+- `warnings`
+- `trace_id`
+
+Public error fields:
+
+- `status`
+- `request_id`
+- `error_code`
+- `message`
+- `trace_id`
+
+Prompt optimization responses never expose RAGFlow raw output/status, fallback
+status, internal prompt, enhancement object, provider details, callback state,
+image URLs, base64, secrets, or stack traces.
 
 ### Legacy route
 

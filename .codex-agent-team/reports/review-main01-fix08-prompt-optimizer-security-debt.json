@@ -1,0 +1,132 @@
+{
+  "taskId": "main01-fix08-prompt-optimizer-security-debt",
+  "task_id": "main01-fix08-prompt-optimizer-security-debt",
+  "status": "PASS_ZERO_SECURITY_DEBT_PROMPT_OPTIMIZER",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-18T11:10:00+08:00",
+  "summary": "main01-fix08 eliminates prompt optimizer backend/API security debt for /api/v1/prompt-optimizations, RAGFlow URL/resource/output handling, deterministic fallback, public response allowlist, isolation, and tests. ai-tu frontend/gateway source code was not modified.",
+  "browser_qa": "UNVERIFIED_NOT_APPLICABLE",
+  "findings": [],
+  "requirements": {
+    "branch_isolation": "PASS_BRANCH",
+    "latest_origin_main01_base": "PASS_BRANCH",
+    "code_map_skill_initial_refresh": "PASS_STATIC",
+    "code_map_skill_post_branch_refresh": "PASS_STATIC",
+    "context_capsule": "PASS_EVIDENCE",
+    "independent_prompt_optimization_schema": "PASS_CONTRACT",
+    "unknown_and_forbidden_input_rejection": "PASS_SECURITY",
+    "references_strict_validation": "PASS_CONTRACT",
+    "text_image_references_rejected": "PASS_CONTRACT",
+    "ragflow_url_ssrf_policy": "PASS_SECURITY",
+    "ragflow_tier_policy": "PASS_SECURITY",
+    "ragflow_pinned_dns_and_redirect_manual": "PASS_SECURITY",
+    "ragflow_resource_limits": "PASS_SECURITY",
+    "ragflow_untrusted_output_recursive_rejection": "PASS_SECURITY",
+    "ragflow_task_specific_consumed_fields": "PASS_SECURITY",
+    "deterministic_fallback": "PASS_CONTRACT",
+    "provider_store_callback_isolation": "PASS_SECURITY",
+    "public_response_allowlist_and_forbidden_scan": "PASS_SECURITY",
+    "stable_error_classification": "PASS_CONTRACT",
+    "image_api_regression": "PASS_TESTED",
+    "docs_updated": "PASS_DOCS",
+    "security_scan": "PASS_SECURITY",
+    "browser_qa": "UNVERIFIED_NOT_APPLICABLE"
+  },
+  "subagents": {
+    "Branch Auditor": "PASS_P0_P1_P2_P3_EMPTY",
+    "Code Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "Prompt Optimizer Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "API Schema Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "RAGFlow Security Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "SSRF/Credential Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "Security Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "Test Reviewer": "PASS_P0_P1_P2_P3_EMPTY",
+    "Evidence Auditor": "PASS_P0_P1_P2_P3_EMPTY",
+    "Final Integrator": "PASS_FINAL_INTEGRATOR_P0_P1_P2_P3_EMPTY"
+  },
+  "evidence": [
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard",
+      "status": "PASS_STATIC",
+      "details": "Code map skill refresh was run before edits and again after creating main01-fix08."
+    },
+    {
+      "command": "git fetch origin --prune; git checkout -b main01-fix08 origin/main01",
+      "status": "PASS_BRANCH",
+      "details": "main01-fix08 was created from origin/main01 at 24a49eb996a730c0abf9a1701b27f32ce4892b5c."
+    },
+    {
+      "command": "codegraph query PromptOptimizationRequest / callRagflowEnhancementIfAvailable / getRagflowEnhancement / normalizePublicHttpUrl",
+      "status": "PASS_STATIC",
+      "details": "Latest CodeGraph was used to inspect strict schema, prompt optimizer RAGFlow path, legacy RAGFlow enhancement helper, and shared URL sanitizer."
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS_STATIC",
+      "details": "exit 0 after final diff."
+    },
+    {
+      "command": "npm test",
+      "status": "PASS_TESTED",
+      "details": "158/158 unit tests passed after final diff."
+    },
+    {
+      "command": "node --test tests/unit/ai-tu-prompt-optimizer.test.js",
+      "status": "PASS_TESTED",
+      "details": "30/30 prompt optimizer backend/API tests passed."
+    },
+    {
+      "command": "node --test tests/unit/http-invalid-body.test.js",
+      "status": "PASS_TESTED",
+      "details": "5/5 HTTP invalid body tests passed."
+    },
+    {
+      "command": "node --test tests/unit/image-api.test.js",
+      "status": "PASS_TESTED",
+      "details": "105/105 image API regression tests passed."
+    },
+    {
+      "command": "node --test tests/unit/ai-tu-frontend-contract.test.js",
+      "status": "PASS_TESTED",
+      "details": "9/9 static ai-tu frontend/gateway contract tests passed after moving them out of the prompt optimizer test file."
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS_EVIDENCE",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS."
+    },
+    {
+      "command": "npm run test:provider-config",
+      "status": "PASS_CONTRACT",
+      "details": "REAL_PROVIDER_CONFIG_PRESENT using ./真实配置_toapis.md without exposing config values."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS_STATIC",
+      "details": "exit 0."
+    },
+    {
+      "command": "gitleaks detect --source . --no-git --redact --verbose",
+      "status": "UNVERIFIED_NOT_INSTALLED",
+      "details": "gitleaks was not installed in PATH."
+    },
+    {
+      "command": "fallback high-signal secret rg scan",
+      "status": "PASS_SECURITY",
+      "details": "No high-signal secret patterns matched after test fixture cleanup."
+    },
+    {
+      "command": "Browser QA",
+      "status": "UNVERIFIED_NOT_APPLICABLE",
+      "details": "No UI code was changed; this task is backend/API prompt optimizer hardening only."
+    }
+  ],
+  "blocking_items": [],
+  "evidence_debt": [
+    {
+      "status": "NON_BLOCKING_TOOL_NOTE",
+      "details": "Native CodeGraph CLI indexed the new ai-tu frontend contract test and queries return it, but status keeps pendingChanges.added=1 while the file is uncommitted. Final code-map skill refresh is required again after commit/merge."
+    }
+  ],
+  "decision": "PASS_ZERO_SECURITY_DEBT_PROMPT_OPTIMIZER_READY_TO_COMMIT_MERGE_MAIN01"
+}

@@ -16,6 +16,9 @@ export function normalizePublicHttpUrl(value, field, {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throwUrlError(field, "必须是 http 或 https URL。", statusCode, errorCode);
   }
+  if (parsed.username || parsed.password) {
+    throwUrlError(field, "不允许包含用户名或密码。", statusCode, errorCode);
+  }
   if (!allowLocal && isUnsafeNetworkHost(parsed.hostname)) {
     throwUrlError(field, "默认不允许 localhost、loopback、link-local 或内网地址。", statusCode, errorCode);
   }
@@ -51,6 +54,18 @@ export function isUnsafeNetworkHost(hostname) {
   return false;
 }
 
+export function isExplicitPrivateEndpointHost(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host) return false;
+  if (host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain") return true;
+  const mappedIpv4 = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mappedIpv4) return isExplicitPrivateIpv4(mappedIpv4[1]);
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) return isExplicitPrivateIpv4(host);
+  if (ipVersion === 6) return isExplicitPrivateIpv6(host);
+  return false;
+}
+
 function normalizeHost(hostname) {
   return stringValue(hostname)
     .trim()
@@ -71,7 +86,26 @@ function isUnsafeIpv4(host) {
   }
   const [a, b] = parts;
   if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
   if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 0) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 0 && parts[2] === 2) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a === 198 && b === 51 && parts[2] === 100) return true;
+  if (a === 203 && b === 0 && parts[2] === 113) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+function isExplicitPrivateIpv4(host) {
+  const parts = host.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = parts;
+  if (a === 10 || a === 127) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   return false;
@@ -82,12 +116,24 @@ function isUnsafeIpv6(host) {
   const mappedIpv4 = ipv4FromEmbeddedIpv6(host);
   if (mappedIpv4) return isUnsafeIpv4(mappedIpv4);
 
-  const first = host.split(":").find(Boolean);
-  const firstHextet = Number.parseInt(first || "0", 16);
+  const hextets = expandIpv6Hextets(host);
+  if (!hextets) return true;
+  const firstHextet = hextets[0];
   if (!Number.isFinite(firstHextet)) return true;
   if ((firstHextet & 0xfe00) === 0xfc00) return true;
   if ((firstHextet & 0xffc0) === 0xfe80) return true;
+  if ((firstHextet & 0xff00) === 0xff00) return true;
+  if (firstHextet === 0x2001 && hextets[1] === 0x0db8) return true;
   return false;
+}
+
+function isExplicitPrivateIpv6(host) {
+  if (host === "::1") return true;
+  const mappedIpv4 = ipv4FromEmbeddedIpv6(host);
+  if (mappedIpv4) return isExplicitPrivateIpv4(mappedIpv4);
+  const hextets = expandIpv6Hextets(host);
+  if (!hextets) return false;
+  return (hextets[0] & 0xfe00) === 0xfc00;
 }
 
 function ipv4FromEmbeddedIpv6(host) {
@@ -98,7 +144,6 @@ function ipv4FromEmbeddedIpv6(host) {
   const isCompatible = firstFiveZero && hextets[5] === 0;
   if (!isMapped && !isCompatible) return "";
   const value = ((hextets[6] << 16) | hextets[7]) >>> 0;
-  if (!value) return "";
   return [
     (value >>> 24) & 0xff,
     (value >>> 16) & 0xff,

@@ -142,7 +142,7 @@ function storyboardTemplate(request, enhancement, referencesDescription) {
     };
   }
 
-  if (enhancement.missing_constraints || enhancement.storyboard_processing === "preserve_full_prompt") {
+  if (enhancement.missing_constraints) {
     return {
       path: "preserve_full_prompt",
       text: [

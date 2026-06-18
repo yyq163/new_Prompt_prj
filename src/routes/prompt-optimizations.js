@@ -1,12 +1,30 @@
 import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/errors.js";
 import { extractEntityMentions } from "../core/entity-mentions.js";
-import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, normalizeRequest, stringValue } from "../core/runtime.js";
+import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, stringValue, walk } from "../core/runtime.js";
 import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
-import { roleLabel, taskTypeLabel, VALID_REFERENCE_ROLES } from "../core/labels.js";
+import {
+  ENTITY_TYPE_ALIASES,
+  ROLE_ALIASES,
+  roleLabel,
+  taskTypeLabel,
+  VALID_ENTITY_TYPES,
+  VALID_REFERENCE_ROLES,
+  VALID_TASK_TYPES
+} from "../core/labels.js";
+import { isExplicitPrivateEndpointHost, isUnsafeNetworkHost } from "../core/url-security.js";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
 
-const RAGFLOW_TIMEOUT_MS = 45_000;
+const RAGFLOW_TIMEOUT_MS = 8_000;
+const RAGFLOW_MAX_RESPONSE_BYTES = 64 * 1024;
+const RAGFLOW_MAX_JSON_DEPTH = 8;
+const RAGFLOW_MAX_JSON_KEYS = 120;
+const RAGFLOW_MAX_JSON_ARRAY_LENGTH = 64;
+const RAGFLOW_MAX_JSON_STRING_LENGTH = 4000;
+const RAGFLOW_MAX_ENHANCEMENT_CHARS = 8000;
 const ROOT = resolve(import.meta.dirname, "../..");
 const PROMPT_MIN_CJK = 80;
 const PROMPT_OPTIMIZATION_ALLOWED_FIELDS = new Set([
@@ -14,8 +32,21 @@ const PROMPT_OPTIMIZATION_ALLOWED_FIELDS = new Set([
   "task_type",
   "prompt",
   "references",
-  "reference_policy",
-  "output"
+  "reference_policy"
+]);
+const PROMPT_REFERENCE_ALLOWED_FIELDS = new Set([
+  "reference_id",
+  "entity_name",
+  "entity_type",
+  "role",
+  "url",
+  "mime_type",
+  "display_name",
+  "description",
+  "order"
+]);
+const PROMPT_REFERENCE_POLICY_ALLOWED_FIELDS = new Set([
+  "unbound_entity"
 ]);
 const PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS = new Set([
   "callback",
@@ -41,6 +72,11 @@ const PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS = new Set([
   "provider_raw_response",
   "raw_provider_payload",
   "raw_provider_response",
+  "images",
+  "image",
+  "b64_json",
+  "base64",
+  "data_url",
   "ragflow_status",
   "fallback_status"
 ]);
@@ -56,10 +92,40 @@ const RAGFLOW_ALLOWED_FIELDS = new Set([
   "negative_notes",
   "missing_constraints"
 ]);
-const RAGFLOW_FORBIDDEN_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image/i;
+const RAGFLOW_CONSUMED_FIELDS_BY_TASK = Object.freeze({
+  text_image: new Set(["visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]),
+  image_reference: new Set(["visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]),
+  character_multiview: new Set(["visual_focus", "composition_notes", "missing_constraints"]),
+  scene_multiview: new Set(["scene_summary", "visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]),
+  prop_multiview: new Set(["visual_focus", "composition_notes", "missing_constraints"]),
+  storyboard: new Set(["story_function", "action_stages", "lighting_notes", "composition_notes", "missing_constraints"])
+});
+const RAGFLOW_FORBIDDEN_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|authorization|cookie|bearer|api[_-]?key|token|secret|base64|b64_json|data:image|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
+const PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider\s*payload|provider_internal_payload|raw_provider|Authorization\s*:|authorization|Cookie\s*:|cookie|Bearer\s+|bearer|api[_-]?key|token|secret|data:image|base64|b64_json)/i;
+const PROMPT_PUBLIC_SUCCESS_FIELDS = new Set([
+  "status",
+  "request_id",
+  "optimization_id",
+  "task_type",
+  "task_type_label",
+  "generation_mode",
+  "optimized_prompt",
+  "normalized",
+  "warnings",
+  "trace_id"
+]);
+const PROMPT_PUBLIC_ERROR_FIELDS = new Set([
+  "status",
+  "request_id",
+  "error_code",
+  "message",
+  "trace_id"
+]);
+const PROMPT_PUBLIC_FORBIDDEN_KEY = /(?:final_prompt|compiled_prompt|internal_prompt|enhancement|ragflow|fallback|provider|callback|images?|b64_json|base64|data_url|authorization|cookie|bearer|api[_-]?key|token|secret|stack|raw)/i;
+const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|RAGFlow|fallback_status|ragflow_status|provider_internal_payload|provider payload|Authorization|Cookie|Bearer|api[_-]?key|token|secret|base64|b64_json|data:image|stack trace)/i;
 
 export async function handlePromptOptimization(body, options = {}) {
-  const fallbackRequestId = stringValue(body && body.request_id).trim() || makeId("req");
+  const fallbackRequestId = safeRequestId(body && body.request_id) || makeId("req");
   const traceId = makeId("trace");
   try {
     if (body && body.__invalid) {
@@ -77,13 +143,13 @@ export async function handlePromptOptimization(body, options = {}) {
     }
 
     const request = normalizePromptOptimizationRequest({
-      output: { aspect_ratio: "16:9", quality: "high", count: 1 },
       ...body,
       request_id: fallbackRequestId
     });
     const context = await buildPromptOptimizationContext(request, {
       fetchImpl: options.fetchImpl || globalThis.fetch,
-      env: options.env || process.env
+      env: options.env || process.env,
+      lookupHost: options.lookupHost || dnsLookup
     });
     const optimizedPrompt = compileOptimizedPrompt(context);
     validateOptimizedPrompt(optimizedPrompt, context);
@@ -103,12 +169,34 @@ export async function handlePromptOptimization(body, options = {}) {
       trace_id: traceId
     };
     assertNoForbiddenPublicFields(payload);
+    assertPromptOptimizationPublicPayload(payload, "error");
     return { statusCode: result.statusCode, payload };
   }
 }
 
 export function normalizePromptOptimizationRequest(body) {
-  const request = normalizeRequest(body);
+  assertPromptOptimizationBodyObject(body);
+  assertPromptOptimizationRequestFields(body);
+  const taskType = requiredStringField(body, "task_type").trim();
+  if (!VALID_TASK_TYPES.includes(taskType)) {
+    clarification("UNSUPPORTED_TASK_TYPE", "不支持的 task_type。");
+  }
+  const prompt = requiredStringField(body, "prompt").trim();
+  if (!prompt) {
+    clarification("PROMPT_REQUIRED", "prompt 不能为空。");
+  }
+  assertNoForbiddenInputText(prompt, "prompt");
+  const references = normalizePromptOptimizationReferences(body.references);
+  const referencePolicy = normalizePromptOptimizationReferencePolicy(body.reference_policy);
+  const requestId = safeRequestId(body.request_id) || makeId("req");
+  const request = {
+    request_id: requestId,
+    task_type: taskType,
+    prompt,
+    references,
+    reference_policy: referencePolicy,
+    generation_mode: references.length ? "image_to_image" : "text_to_image"
+  };
   return {
     ...request,
     entity_mentions: extractEntityMentions(request.prompt)
@@ -127,6 +215,152 @@ function assertPromptOptimizationRequestFields(body) {
       fail("INVALID_REQUEST_SCHEMA", "请求包含不允许的提示词优化字段。");
     }
   }
+  if (body.request_id != null && (typeof body.request_id !== "string" || !safeRequestId(body.request_id))) {
+    fail("INVALID_REQUEST_SCHEMA", "request_id 必须是安全字符串。");
+  }
+  assertNoForbiddenSchemaKeys(body);
+}
+
+function assertNoForbiddenSchemaKeys(value) {
+  walk(value, (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      if (PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key)) {
+        fail("INVALID_REQUEST_SCHEMA", "请求包含不允许的提示词优化字段。");
+      }
+    }
+  });
+}
+
+function requiredStringField(body, field) {
+  if (typeof body[field] !== "string") {
+    if (field === "prompt" && body[field] == null) return "";
+    if (field === "task_type" && body[field] == null) return "";
+    fail("INVALID_REQUEST_SCHEMA", `${field} 必须是字符串。`);
+  }
+  return body[field];
+}
+
+function safeRequestId(value) {
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  if (!text) return "";
+  return /^[A-Za-z0-9_-]{1,120}$/.test(text) ? text : "";
+}
+
+function normalizePromptOptimizationReferences(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) fail("INVALID_REQUEST_SCHEMA", "references 必须是数组。");
+  if (value.length > 16) fail("INVALID_REQUEST_SCHEMA", "references 最多支持 16 个。");
+  return value.map(normalizePromptOptimizationReference);
+}
+
+function normalizePromptOptimizationReference(ref, index) {
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
+    fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference 必须是对象。`);
+  }
+  for (const key of Object.keys(ref)) {
+    if (!PROMPT_REFERENCE_ALLOWED_FIELDS.has(key) || PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key)) {
+      fail("INVALID_REQUEST_SCHEMA", "reference 包含不允许的字段。");
+    }
+  }
+  const referenceId = requiredReferenceString(ref, "reference_id", index);
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(referenceId)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference_id 只能包含字母、数字、下划线和短横线，且必须以字母开头。");
+  }
+  const entityName = requiredReferenceString(ref, "entity_name", index, 120);
+  const entityType = normalizePromptReferenceEntityType(requiredReferenceString(ref, "entity_type", index, 80));
+  const role = normalizePromptReferenceRole(requiredReferenceString(ref, "role", index, 80));
+  const url = assertReferenceUrlAllowed(requiredReferenceString(ref, "url", index, 2048), "reference.url");
+  const mimeType = optionalReferenceString(ref, "mime_type", 80) || "image/png";
+  if (!/^image\/(?:png|jpeg|jpg|webp)$/i.test(mimeType)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference.mime_type 只支持 image/png、image/jpeg 或 image/webp。");
+  }
+  return {
+    reference_id: referenceId,
+    entity_name: entityName,
+    entity_type: entityType,
+    role,
+    url,
+    mime_type: mimeType.replace(/^image\/jpg$/i, "image/jpeg"),
+    display_name: optionalReferenceString(ref, "display_name", 160),
+    description: optionalReferenceString(ref, "description", 800),
+    order: normalizeReferenceOrder(ref.order, index)
+  };
+}
+
+function requiredReferenceString(ref, field, index, maxLength = 160) {
+  if (typeof ref[field] !== "string" || !ref[field].trim()) {
+    fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference.${field} 不能为空。`);
+  }
+  const text = ref[field].trim();
+  if (text.length > maxLength) {
+    fail("INVALID_REQUEST_SCHEMA", `reference.${field} 过长。`);
+  }
+  assertNoForbiddenInputText(text, `reference.${field}`);
+  return text;
+}
+
+function optionalReferenceString(ref, field, maxLength) {
+  if (ref[field] == null) return "";
+  if (typeof ref[field] !== "string") fail("INVALID_REQUEST_SCHEMA", `reference.${field} 必须是字符串。`);
+  const text = ref[field].trim();
+  if (text.length > maxLength) fail("INVALID_REQUEST_SCHEMA", `reference.${field} 过长。`);
+  assertNoForbiddenInputText(text, `reference.${field}`);
+  return text;
+}
+
+function assertNoForbiddenInputText(value, field) {
+  if (PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT.test(stringValue(value))) {
+    fail("INVALID_REQUEST_SCHEMA", `${field} 包含不允许的敏感内容。`);
+  }
+}
+
+function normalizePromptReferenceRole(value) {
+  const normalized = ROLE_ALIASES[value] || value;
+  if (!VALID_REFERENCE_ROLES.includes(normalized)) {
+    fail("INVALID_REFERENCE_ROLE", "参考图 role 不合法。");
+  }
+  return normalized;
+}
+
+function normalizePromptReferenceEntityType(value) {
+  const normalized = ENTITY_TYPE_ALIASES[value] || value;
+  if (!VALID_ENTITY_TYPES.includes(normalized)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference.entity_type 不合法。");
+  }
+  return normalized;
+}
+
+function normalizeReferenceOrder(value, index) {
+  if (value == null || value === "") return index + 1;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference.order 必须是数字。");
+  }
+  const order = Math.floor(value);
+  if (order < 1 || order > 1000) fail("INVALID_REQUEST_SCHEMA", "reference.order 不合法。");
+  return order;
+}
+
+function normalizePromptOptimizationReferencePolicy(value) {
+  if (value == null) return { unbound_entity: "warn" };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference_policy 必须是对象。");
+  }
+  for (const key of Object.keys(value)) {
+    if (!PROMPT_REFERENCE_POLICY_ALLOWED_FIELDS.has(key)) {
+      fail("INVALID_REQUEST_SCHEMA", "reference_policy 包含不允许的字段。");
+    }
+  }
+  if (value.unbound_entity != null && typeof value.unbound_entity !== "string") {
+    fail("INVALID_REQUEST_SCHEMA", "reference_policy.unbound_entity 必须是字符串。");
+  }
+  if (value.unbound_entity != null && !["warn", "block"].includes(value.unbound_entity)) {
+    fail("INVALID_REQUEST_SCHEMA", "reference_policy.unbound_entity 只支持 warn 或 block。");
+  }
+  return {
+    unbound_entity: value.unbound_entity === "block" ? "block" : "warn"
+  };
 }
 
 async function buildPromptOptimizationContext(request, options = {}) {
@@ -141,7 +375,8 @@ async function buildPromptOptimizationContext(request, options = {}) {
     binding,
     referencePlan,
     fetchImpl: options.fetchImpl,
-    env: options.env
+    env: options.env,
+    lookupHost: options.lookupHost
   });
   return {
     request,
@@ -264,7 +499,7 @@ function publicPromptReference(ref) {
   };
 }
 
-export async function callRagflowEnhancementIfAvailable({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export async function callRagflowEnhancementIfAvailable({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, lookupHost = dnsLookup } = {}) {
   let config;
   try {
     config = ragflowConfig(env);
@@ -278,25 +513,29 @@ export async function callRagflowEnhancementIfAvailable({ request, binding, refe
       referencePlan,
       fetchImpl,
       env,
-      config
+      config,
+      lookupHost
     });
-    return validateRagflowEnhancement(candidate, { request, binding, referencePlan });
+    return validateRagflowEnhancement(candidate, {
+      request,
+      binding,
+      referencePlan,
+      maxChars: config.maxEnhancementChars
+    });
   } catch {
     return null;
   }
 }
 
-export async function callRagflowPromptOptimizer({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, config = null } = {}) {
+export async function callRagflowPromptOptimizer({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, config = null, lookupHost = dnsLookup } = {}) {
   const activeConfig = config || ragflowConfig(env);
+  const resolution = await validateRagflowEndpointForFetch(activeConfig, lookupHost);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RAGFLOW_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), activeConfig.timeoutMs);
   try {
-    const response = await fetchImpl(activeConfig.endpoint, {
+    const requestInit = {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${activeConfig.apiKey}`,
-        "Content-Type": "application/json"
-      },
+      headers: ragflowRequestHeaders(activeConfig),
       body: JSON.stringify({
         model: activeConfig.model,
         stream: false,
@@ -306,9 +545,13 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
           { role: "user", content: ragflowUserPrompt(request, binding, referencePlan) }
         ]
       }),
+      redirect: "manual",
       signal: controller.signal
-    });
-    const text = await response.text();
+    };
+    const response = fetchImpl === globalThis.fetch
+      ? await fetchRagflowWithPinnedLookup(activeConfig.endpoint, requestInit, resolution, activeConfig.maxResponseBytes)
+      : await fetchImpl(activeConfig.endpoint, requestInit);
+    if (response.status >= 300 && response.status < 400) return null;
     if (!response.ok) {
       throw new ImageApiError({
         statusCode: response.status === 404 ? 503 : 502,
@@ -317,16 +560,15 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
         message: "提示词优化服务暂时不可用，请稍后重试。"
       });
     }
-    let json = {};
-    try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      return null;
-    }
+    if (!isJsonContentType(getHeader(response, "content-type"))) return null;
+    const text = await readBoundedResponseText(response, activeConfig.maxResponseBytes);
+    if (text == null) return null;
+    const json = parseBoundedJson(text, activeConfig.jsonLimits);
+    if (!json) return null;
     if (isRagflowErrorEnvelope(json)) return null;
-    return parseRagflowOptimizedPrompt(json);
+    return parseRagflowOptimizedPrompt(json, activeConfig.jsonLimits);
   } catch (error) {
-    if (error && error.name === "AbortError") return null;
+    if (error && (error.name === "AbortError" || error.name === "RagflowResponseLimitError")) return null;
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -335,7 +577,7 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
 
 export function ragflowConfig(env = process.env) {
   const fileConfig = readRagflowRuntimeConfig(env);
-  const baseUrl = stringValue(env.RAGFLOW_BASE_URL || fileConfig.baseUrl).trim().replace(/\/+$/u, "");
+  const baseUrl = stringValue(env.RAGFLOW_BASE_URL || fileConfig.baseUrl).trim();
   const apiKey = stringValue(env.RAGFLOW_API_KEY || fileConfig.apiKey).trim();
   const chatId = stringValue(env.RAGFLOW_CHAT_ID || fileConfig.chatId).trim();
   if (!baseUrl || !apiKey || !chatId) {
@@ -346,11 +588,273 @@ export function ragflowConfig(env = process.env) {
       message: "提示词优化服务配置缺失。"
     });
   }
+  const normalized = normalizeRagflowBaseUrl(baseUrl, env);
+  const endpoint = `${normalized.baseUrl}/api/v1/openai/${encodeURIComponent(chatId)}/chat/completions`;
   return {
     apiKey,
     model: stringValue(env.RAGFLOW_MODEL || fileConfig.model).trim() || "model",
-    endpoint: `${baseUrl}/api/v1/openai/${encodeURIComponent(chatId)}/chat/completions`
+    endpoint,
+    approvedOrigin: normalized.origin,
+    allowPrivateEndpoint: normalized.allowPrivateEndpoint,
+    timeoutMs: intEnv(env.RAGFLOW_TIMEOUT_MS, 1000, 60_000, RAGFLOW_TIMEOUT_MS),
+    maxResponseBytes: intEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES),
+    maxEnhancementChars: intEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS),
+    jsonLimits: {
+      maxDepth: intEnv(env.RAGFLOW_MAX_JSON_DEPTH, 2, 32, RAGFLOW_MAX_JSON_DEPTH),
+      maxKeys: intEnv(env.RAGFLOW_MAX_JSON_KEYS, 8, 1000, RAGFLOW_MAX_JSON_KEYS),
+      maxArrayLength: intEnv(env.RAGFLOW_MAX_JSON_ARRAY_LENGTH, 1, 1000, RAGFLOW_MAX_JSON_ARRAY_LENGTH),
+      maxStringLength: intEnv(env.RAGFLOW_MAX_JSON_STRING_LENGTH, 64, 64_000, RAGFLOW_MAX_JSON_STRING_LENGTH),
+      maxTotalChars: intEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS)
+    }
   };
+}
+
+function normalizeRagflowBaseUrl(raw, env) {
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throwRagflowConfigInvalid();
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throwRagflowConfigInvalid();
+  if (parsed.username || parsed.password) throwRagflowConfigInvalid();
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) throwRagflowConfigInvalid();
+  const tier = stringValue(env.RAGFLOW_DEPLOYMENT_TIER || env.NODE_ENV || "development").trim().toLowerCase();
+  const isProduction = tier === "production";
+  const allowPrivateEndpoint = !isProduction && stringValue(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS).trim() === "true";
+  const allowedOrigins = parseAllowedOrigins(env.RAGFLOW_ALLOWED_ORIGINS);
+  if (isProduction && parsed.protocol !== "https:") throwRagflowConfigInvalid();
+  if (isProduction && !allowedOrigins.size) throwRagflowConfigInvalid();
+  if (allowedOrigins.size && !allowedOrigins.has(parsed.origin)) throwRagflowConfigInvalid();
+  if (isUnsafeNetworkHost(parsed.hostname) && (!allowPrivateEndpoint || !isExplicitPrivateEndpointHost(parsed.hostname))) throwRagflowConfigInvalid();
+  return {
+    baseUrl: parsed.href.replace(/\/+$/u, ""),
+    origin: parsed.origin,
+    allowPrivateEndpoint
+  };
+}
+
+function parseAllowedOrigins(value) {
+  const origins = new Set();
+  for (const item of stringValue(value).split(",")) {
+    const raw = item.trim();
+    if (!raw) continue;
+    try {
+      const parsed = new URL(raw);
+      if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !parsed.username && !parsed.password && parsed.pathname === "/" && !parsed.search && !parsed.hash) {
+        origins.add(parsed.origin);
+      }
+    } catch {
+      throwRagflowConfigInvalid();
+    }
+  }
+  return origins;
+}
+
+function throwRagflowConfigInvalid() {
+  throw new ImageApiError({
+    statusCode: 503,
+    status: "failed",
+    errorCode: "RAGFLOW_CONFIG_INVALID",
+    message: "提示词优化服务配置无效。"
+  });
+}
+
+function intEnv(value, min, max, fallback) {
+  if (value == null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
+}
+
+async function validateRagflowEndpointForFetch(config, lookupHost) {
+  const parsed = new URL(config.endpoint);
+  if (parsed.origin !== config.approvedOrigin) throwRagflowConfigInvalid();
+  if (isUnsafeNetworkHost(parsed.hostname) && (!config.allowPrivateEndpoint || !isExplicitPrivateEndpointHost(parsed.hostname))) throwRagflowConfigInvalid();
+  if (isIpLiteral(parsed.hostname)) return { records: [] };
+
+  let records;
+  try {
+    records = await lookupHost(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    throwRagflowConfigInvalid();
+  }
+  const list = Array.isArray(records) ? records : [records];
+  if (!list.length) throwRagflowConfigInvalid();
+  for (const record of list) {
+    const address = stringValue(record && record.address).trim();
+    if (!address) throwRagflowConfigInvalid();
+    if (isUnsafeNetworkHost(address) && (!config.allowPrivateEndpoint || !isExplicitPrivateEndpointHost(address))) throwRagflowConfigInvalid();
+  }
+  return {
+    records: list.map((record) => ({
+      address: stringValue(record.address).trim(),
+      family: Number(record.family) === 6 ? 6 : 4
+    }))
+  };
+}
+
+function isIpLiteral(hostname) {
+  const host = stringValue(hostname).replace(/^\[|\]$/g, "");
+  return /^(\d{1,3}\.){3}\d{1,3}$/u.test(host) || host.includes(":");
+}
+
+function ragflowRequestHeaders(config) {
+  const parsed = new URL(config.endpoint);
+  if (parsed.origin !== config.approvedOrigin) throwRagflowConfigInvalid();
+  return {
+    "Authorization": `Bearer ${config.apiKey}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+}
+
+function fetchRagflowWithPinnedLookup(url, init, resolution, maxResponseBytes) {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    let settled = false;
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      rejectResponse(error);
+    };
+    const clientRequest = transport({
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: init.method || "GET",
+      headers: init.headers || {},
+      signal: init.signal,
+      lookup: makePinnedLookup(resolution.records)
+    }, (incoming) => {
+      const chunks = [];
+      let total = 0;
+      incoming.on("data", (chunk) => {
+        const buffer = Buffer.from(chunk);
+        total += buffer.length;
+        if (total > maxResponseBytes) {
+          const error = new Error("RAGFlow response exceeded byte limit.");
+          error.name = "RagflowResponseLimitError";
+          incoming.destroy(error);
+          clientRequest.destroy(error);
+          rejectOnce(error);
+          return;
+        }
+        chunks.push(buffer);
+      });
+      incoming.on("error", rejectOnce);
+      incoming.on("end", () => {
+        if (settled) return;
+        settled = true;
+        const body = Buffer.concat(chunks).toString("utf8");
+        resolveResponse({
+          ok: Number(incoming.statusCode) >= 200 && Number(incoming.statusCode) < 300,
+          status: Number(incoming.statusCode) || 0,
+          headers: {
+            get: (name) => stringValue(incoming.headers[String(name || "").toLowerCase()] || "")
+          },
+          text: async () => body
+        });
+      });
+    });
+    clientRequest.on("error", rejectOnce);
+    clientRequest.end(init.body || "");
+  });
+}
+
+function makePinnedLookup(records = []) {
+  if (!records.length) return undefined;
+  return (hostname, options, callback) => {
+    const done = typeof options === "function" ? options : callback;
+    const opts = typeof options === "function" ? {} : options || {};
+    if (opts.all) {
+      done(null, records.map((record) => ({
+        address: record.address,
+        family: record.family
+      })));
+      return;
+    }
+    const record = records[0];
+    done(null, record.address, record.family);
+  };
+}
+
+function getHeader(response, name) {
+  if (!response || !response.headers || typeof response.headers.get !== "function") return "";
+  return stringValue(response.headers.get(name)).trim();
+}
+
+function isJsonContentType(value) {
+  return /^application\/(?:json|[\w.+-]+\+json)\b/i.test(stringValue(value));
+}
+
+async function readBoundedResponseText(response, maxBytes) {
+  const contentLength = Number(getHeader(response, "content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) return null;
+  if (response.body && typeof response.body.getReader === "function") {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value);
+        total += chunk.length;
+        if (total > maxBytes) {
+          if (typeof reader.cancel === "function") await reader.cancel();
+          return null;
+        }
+        chunks.push(chunk);
+      }
+    } finally {
+      if (typeof reader.releaseLock === "function") reader.releaseLock();
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  }
+  const text = await response.text();
+  return Buffer.byteLength(text, "utf8") > maxBytes ? null : text;
+}
+
+function parseBoundedJson(text, limits) {
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    return null;
+  }
+  return jsonWithinResourceLimits(json, limits) ? json : null;
+}
+
+function jsonWithinResourceLimits(value, limits) {
+  const stack = [{ value, depth: 0 }];
+  let keyCount = 0;
+  let totalChars = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    if (current.depth > limits.maxDepth) return false;
+    const node = current.value;
+    if (typeof node === "string") {
+      if (node.length > limits.maxStringLength) return false;
+      totalChars += node.length;
+      if (totalChars > limits.maxTotalChars) return false;
+      continue;
+    }
+    if (Array.isArray(node)) {
+      if (node.length > limits.maxArrayLength) return false;
+      for (const item of node) stack.push({ value: item, depth: current.depth + 1 });
+      continue;
+    }
+    if (node && typeof node === "object") {
+      const entries = Object.entries(node);
+      keyCount += entries.length;
+      if (keyCount > limits.maxKeys) return false;
+      for (const [, item] of entries) stack.push({ value: item, depth: current.depth + 1 });
+    }
+  }
+  return true;
 }
 
 function readRagflowRuntimeConfig(env = process.env) {
@@ -379,7 +883,7 @@ function ragflowSystemPrompt() {
   return [
     "你是影视级 AIGC 生图提示词增强器，只输出可选结构化 enhancement。",
     "不要输出最终 prompt，不要输出 final_prompt，不要输出 compiled_prompt。",
-    "输出 JSON 对象，字段只能来自 scene_summary、visual_focus、story_function、action_stages、shot_plan、normalized_shot_plan、lighting_notes、composition_notes、negative_notes、missing_constraints。",
+    "输出 JSON 对象，字段只能来自安全 allowlist，且只能包含当前 task_type 实际需要的字段；不确定时输出空对象。",
     "必须根据 task_type、raw_prompt、references[] 动态提供补充建议。",
     "不得新增 reference_id，不得新增图片 URL，不得改变后端确定的参考图绑定关系，不得把任何样例实体写死为规则。"
   ].join("");
@@ -402,23 +906,34 @@ function ragflowUserPrompt(request, binding, referencePlan) {
   ].join("\n");
 }
 
-export function parseRagflowOptimizedPrompt(json) {
+export function parseRagflowOptimizedPrompt(json, limits = defaultJsonLimits()) {
   const candidates = extractPromptCandidates(json);
   for (const content of candidates) {
     const unwrapped = unwrapCodeFence(content);
     const parsed = parseJsonMaybe(unwrapped);
-    if (parsed && typeof parsed === "object") return parsed;
+    if (parsed && typeof parsed === "object" && jsonWithinResourceLimits(parsed, limits)) return parsed;
   }
   return null;
+}
+
+function defaultJsonLimits() {
+  return {
+    maxDepth: RAGFLOW_MAX_JSON_DEPTH,
+    maxKeys: RAGFLOW_MAX_JSON_KEYS,
+    maxArrayLength: RAGFLOW_MAX_JSON_ARRAY_LENGTH,
+    maxStringLength: RAGFLOW_MAX_JSON_STRING_LENGTH,
+    maxTotalChars: RAGFLOW_MAX_ENHANCEMENT_CHARS
+  };
 }
 
 export function validateRagflowEnhancement(candidate, context = {}) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
   if ("final_prompt" in candidate || "compiled_prompt" in candidate || "internal_prompt" in candidate || "provider_payload" in candidate) return null;
   if (Object.keys(candidate).some((key) => !RAGFLOW_ALLOWED_FIELDS.has(key))) return null;
+  if (Object.keys(candidate).some((key) => !consumedRagflowFieldsForTask(context.request?.task_type).has(key))) return null;
   if (containsForbiddenEnhancementKey(candidate)) return null;
   const jsonText = JSON.stringify(candidate);
-  if (jsonText.length > 8000) return null;
+  if (jsonText.length > (context.maxChars || RAGFLOW_MAX_ENHANCEMENT_CHARS)) return null;
   for (const title of forbiddenPromptHeadings()) {
     if (jsonText.includes(title)) return null;
   }
@@ -431,6 +946,10 @@ export function validateRagflowEnhancement(candidate, context = {}) {
   if (foundUrls.length) return null;
 
   return sanitizeEnhancement(candidate);
+}
+
+function consumedRagflowFieldsForTask(taskType) {
+  return RAGFLOW_CONSUMED_FIELDS_BY_TASK[taskType] || RAGFLOW_CONSUMED_FIELDS_BY_TASK.text_image;
 }
 
 function sanitizeEnhancement(candidate) {
@@ -449,9 +968,17 @@ function sanitizeEnhancement(candidate) {
   ]) {
     const value = candidate[key];
     if (typeof value === "string" && value.trim()) out[key] = value.trim().slice(0, 1200);
-    if (Array.isArray(value)) out[key] = value.slice(0, 24).map((item) => (
-      typeof item === "string" ? item.slice(0, 400) : item && typeof item === "object" ? sanitizePlainObject(item) : null
-    )).filter(Boolean);
+    if (Array.isArray(value)) {
+      const arrayValue = value.slice(0, 24).map((item) => {
+        if (typeof item === "string" && item.trim()) return item.slice(0, 400);
+        if (item && typeof item === "object") {
+          const cleaned = sanitizePlainObject(item);
+          return Object.keys(cleaned).length ? cleaned : null;
+        }
+        return null;
+      }).filter(Boolean);
+      if (arrayValue.length) out[key] = arrayValue;
+    }
   }
   return Object.keys(out).length ? out : null;
 }
@@ -467,7 +994,7 @@ function sanitizePlainObject(value) {
 }
 
 function isForbiddenEnhancementKey(key) {
-  return /^(?:final_prompt|compiled_prompt|internal_prompt|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|token|secret|api[_-]?key|enhancement)$/i.test(stringValue(key));
+  return /^(?:final_prompt|compiled_prompt|internal_prompt|provider|model|images?|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|bearer|token|secret|api[_-]?key|enhancement|primary|auxiliary|weight|priority|url|b64_json|base64|data_url)$/i.test(stringValue(key));
 }
 
 function containsForbiddenEnhancementKey(value) {
@@ -734,9 +1261,6 @@ export function buildPromptOptimizationResponse({ request, context, optimizedPro
     task_type: request.task_type,
     task_type_label: taskTypeLabel(request.task_type),
     generation_mode: context.referencePlan.generationMode,
-    input: {
-      prompt: request.prompt
-    },
     optimized_prompt: optimizedPrompt,
     normalized: {
       entity_mentions: context.binding.entity_mentions,
@@ -746,7 +1270,32 @@ export function buildPromptOptimizationResponse({ request, context, optimizedPro
     trace_id: traceId
   };
   assertNoForbiddenPublicFields(payload);
+  assertPromptOptimizationPublicPayload(payload, "success");
   return payload;
+}
+
+function assertPromptOptimizationPublicPayload(payload, kind) {
+  const allowed = kind === "success" ? PROMPT_PUBLIC_SUCCESS_FIELDS : PROMPT_PUBLIC_ERROR_FIELDS;
+  for (const key of Object.keys(payload)) {
+    if (!allowed.has(key)) {
+      fail("INTERNAL_ERROR", "公共响应包含非正式字段。", 500);
+    }
+  }
+  walk(payload, (node) => {
+    if (node == null) return;
+    if (typeof node === "string") {
+      if (PROMPT_PUBLIC_FORBIDDEN_TEXT.test(node)) {
+        fail("INTERNAL_ERROR", "公共响应包含内部信息。", 500);
+      }
+      return;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of Object.keys(node)) {
+      if (PROMPT_PUBLIC_FORBIDDEN_KEY.test(key)) {
+        fail("INTERNAL_ERROR", "公共响应包含内部字段。", 500);
+      }
+    }
+  });
 }
 
 export function buildReferencePlan(input = {}) {
@@ -916,7 +1465,7 @@ function findUrls(value) {
   const out = [];
   walkValue(value, (node) => {
     if (typeof node !== "string") return;
-    const matches = node.match(/https?:\/\/[^\s"'<>]+/giu);
+    const matches = node.match(/(?:https?|ftp|file|data|javascript|blob):[^\s"'<>]*|\/\/[^\s"'<>]+|\b(?:[a-z0-9-]+\.)+(?:com|net|org|cn|io|ai|dev|app|local|localhost|example)(?:[/:?#][^\s"'<>]*)?/giu);
     if (matches) out.push(...matches);
   });
   return out;

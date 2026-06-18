@@ -52,7 +52,11 @@ Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、
 - API 响应不返回 final prompt、compiled prompt、enhancement、RAGFlow 状态、fallback 状态、storyboard 路径或 provider payload。
 - 专业模板内容由 RAGFlow 知识库命中后返回 JSON enhancement，再由 Prompt Compiler 确定性拼接；Prompt Compiler 本地只保留最小安全骨架、参考绑定、输出说明和通用负向规则。
 - RAGFlow 未配置、调用失败、无知识命中或 enhancement 被安全校验丢弃时，服务仍可继续生图，但不会自动补人物四视图、场景 3×3、多机位、道具多角度或故事板左右分区等完整专业模板。
+- RAGFlow enhancement 还会按当前 `task_type` 做 consumed-field 校验；只要包含当前任务不消费的字段，整段 enhancement 会被丢弃，避免未使用字段改变模板路径。
 - RAGFlow 系统提示词和知识库 seed 见 `docs/ragflow/`；系统提示词只定义 JSON 协议和防幻觉边界，模板正文在 `docs/ragflow/knowledge/`。
+- Prompt optimizer 的 RAGFlow URL 只接受服务端配置的固定 `RAGFLOW_BASE_URL` + `RAGFLOW_CHAT_ID` 拼出的 OpenAI-compatible endpoint；请求体不能覆盖 endpoint、provider、model、callback 或 credentials。
+- 生产环境需设置 `RAGFLOW_DEPLOYMENT_TIER=production`、使用 HTTPS，并通过 `RAGFLOW_ALLOWED_ORIGINS` 显式允许 RAGFlow origin。开发/测试默认同样拒绝 localhost、loopback、private、link-local、multicast、reserved 地址；只有显式 `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` 才允许 loopback、RFC1918 或 ULA 本地 RAGFlow，metadata/link-local/multicast/reserved 仍拒绝。
+- RAGFlow fetch 禁止 userinfo、自动跨域 redirect 和不安全 DNS 解析结果；Authorization 只发给已批准 origin。响应会校验 `Content-Type`、最大字节数、JSON 深度、键数、数组长度、字符串长度和总字符数，任何失败都丢弃 enhancement 并走 deterministic fallback。
 - 当前阶段不宣称完成工业级高并发能力；现状见 `docs/concurrency-status.md`。
 
 ## 测试

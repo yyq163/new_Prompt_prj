@@ -12,8 +12,8 @@
     "THREAT_MODEL.md": "Security and privacy threat model",
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
-  "currentPhase": "repair",
-  "currentTask": "main01-main-merge-review",
+  "currentPhase": "verified",
+  "currentTask": "main01-fix08-prompt-optimizer-security-debt",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -242,7 +242,62 @@
         "codegraph-status-pendingChanges-0-2026-06-17-main01"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix08-prompt-optimizer-security-debt",
+      "status": "verified",
+      "owner": "lead-codex",
+      "files": [
+        "server.js",
+        "src/routes/prompt-optimizations.js",
+        "src/core/errors.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/prompt-compiler.js",
+        "src/core/runtime.js",
+        "src/core/url-security.js",
+        "README.md",
+        "API_CONTRACTS.md",
+        "BACKEND_DESIGN.md",
+        "THREAT_MODEL.md",
+        "docs/ragflow/ragflow_system_prompt_knowledge_driven_v1.md",
+        "docs/ragflow/knowledge/storyboard_template.md",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/unit/ai-tu-frontend-contract.test.js",
+        ".codex-agent-team/context/main01-fix08-prompt-optimizer-security-debt.md",
+        ".codex-agent-team/reports/final-integrator-main01-fix08-prompt-optimizer-security-debt.md",
+        ".codex-agent-team/reports/review-main01-fix08-prompt-optimizer-security-debt.json",
+        ".codex-agent-team/state/evidence-ledger.jsonl",
+        ".codex-agent-team/state/review-ledger.jsonl",
+        ".codex-agent-team/state/project-state.json",
+        ".codex-agent-team/state/task-dag.json"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-before-work-2026-06-18",
+        "branch-main01-fix08-from-origin-main01-2026-06-18",
+        "code-map-skill-refresh-after-branch-2026-06-18",
+        "codegraph-context-critical-symbols-2026-06-18",
+        "npm-run-check-pass-2026-06-18-fix08",
+        "npm-test-158-pass-2026-06-18-fix08",
+        "prompt-optimizer-test-30-pass-2026-06-18-fix08",
+        "http-invalid-body-test-5-pass-2026-06-18-fix08",
+        "image-api-test-105-pass-2026-06-18-fix08",
+        "ai-tu-frontend-contract-test-9-pass-2026-06-18-fix08",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix08",
+        "provider-config-present-2026-06-18-fix08",
+        "git-diff-check-pass-2026-06-18-fix08",
+        "fallback-secret-scan-pass-2026-06-18-fix08",
+        "review-gate-pass-main01-fix08-prompt-optimizer-security-debt-2026-06-18",
+        ".codex-agent-team/reports/review-main01-fix08-prompt-optimizer-security-debt.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix08-prompt-optimizer-security-debt.md",
+        "evidence-auditor-pass-2026-06-18",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18",
+        "final-integrator-pass-p0-p1-p2-p3-empty-2026-06-18"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-17T17:42:00+08:00"
+  "updatedAt": "2026-06-18T11:10:00+08:00"
 }

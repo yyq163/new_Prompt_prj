@@ -33,21 +33,19 @@ complete storyboard board.
 - `lighting_notes`
 - `composition_notes`
 - `negative_notes`
-- `storyboard_processing`
 - `missing_constraints`
 
 ## template_rules
 
-- For an existing explicit shot list, set
-  `storyboard_processing: "normalize_shot_list"` and return
-  `normalized_shot_plan` while preserving the original shot count and order.
-- For a complete user-authored storyboard prompt, set
-  `storyboard_processing: "preserve_full_prompt"` and use
-  `missing_constraints` or notes only for constraints that are absent.
-- For script-to-storyboard conversion, set
-  `storyboard_processing: "script_to_storyboard"` and return a supported
-  `shot_plan` only when user input or retrieved knowledge gives enough story
-  content.
+- For an existing explicit shot list, return `normalized_shot_plan` only when it
+  preserves the original shot count and order.
+- For a complete user-authored storyboard prompt, use `missing_constraints` or
+  notes only for constraints that are absent.
+- For script-to-storyboard conversion, return a supported `shot_plan` only when
+  user input or retrieved knowledge gives enough story content.
+- `/api/v1/prompt-optimizations` applies a task-specific consumed-field
+  allowlist. If a storyboard field is not consumed by that optimizer path, the
+  optimizer discards the whole enhancement and uses deterministic fallback.
 - Optional production board layout may include a planning area and story panels
   only when the user asks for it or this knowledge is retrieved as applicable.
 - Do not default to a fixed shot count, fixed total duration, nine-grid,

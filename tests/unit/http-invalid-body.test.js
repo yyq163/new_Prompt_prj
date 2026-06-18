@@ -93,6 +93,52 @@ test("HTTP invalid JSON body handling for final and prompt optimization routes",
     body: JSON.stringify({ task_type: "text_image", prompt: "生成一张山间晨雾图。", final_prompt: "secret" }),
     expectedMessage: "请求包含不允许的提示词优化字段"
   });
+
+  for (const payload of [
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", output: { provider_payload: "x" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", provider_config: { api_key: "test" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", provider_options: { model: "gpt-image-2" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", api_key: "test-key" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", token: "test-token" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", compiled_prompt: "secret compiled prompt" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", internal_prompt: "secret internal prompt" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", base64: "abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", b64_json: "abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", data_url: "data:image/png;base64,abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } },
+    {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图。",
+      references: [{
+        reference_id: "ref_poster",
+        entity_name: "海报参考",
+        entity_type: "style",
+        role: "style_reference",
+        url: "https://example.com/ref.png",
+        mime_type: "image/png",
+        provider_payload: "x"
+      }]
+    },
+    {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图。",
+      references: [{
+        reference_id: "ref_poster",
+        entity_name: "海报参考",
+        entity_type: "style",
+        role: "style_reference",
+        url: "https://example.com/ref.png",
+        mime_type: "image/png",
+        images: [{ base64: "abc" }]
+      }]
+    }
+  ]) {
+    await assertPromptInvalidBody({
+      url: `${app.baseUrl}/api/v1/prompt-optimizations`,
+      body: JSON.stringify(payload),
+      expectedMessage: "不允许|不允许的字段"
+    });
+  }
 });
 
 test("HTTP final route still accepts legal V1.4 JSON into the normal provider-gated path", async (t) => {

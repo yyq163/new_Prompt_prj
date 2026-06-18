@@ -32,8 +32,6 @@ Allowed top-level fields:
 - `lighting_notes`
 - `composition_notes`
 - `negative_notes`
-- `input_analysis`
-- `storyboard_processing`
 - `missing_constraints`
 
 Rules:
@@ -52,6 +50,9 @@ Rules:
 - If retrieval has no applicable knowledge, return `{}` or the smallest useful
   JSON object with `missing_constraints`.
 - Do not output a professional template merely because of `task_type`.
+- For `/api/v1/prompt-optimizations`, the backend applies a task-specific
+  consumed-field allowlist after this global field allowlist. If you are not
+  sure a field is consumed by the current task, omit it or return `{}`.
 - For `character_multiview`, do not automatically output four-view, head detail,
   side, back, stance, background, or layout rules unless they appear in the user
   prompt or retrieved knowledge.
@@ -68,17 +69,6 @@ Rules:
 - For `storyboard`, you may use `negative_notes` or `missing_constraints` to say
   not to default to a fixed shot count, total duration, nine-grid, four-grid,
   2x2, or 3x3 layout.
-
-Storyboard processing:
-
-- Use `storyboard_processing: "normalize_shot_list"` only when the user already
-  provided an explicit shot list and the returned `normalized_shot_plan`
-  preserves the original count and order.
-- Use `storyboard_processing: "preserve_full_prompt"` when the user already
-  provided a complete storyboard prompt that should not be rewritten.
-- Use `storyboard_processing: "script_to_storyboard"` only when retrieved
-  knowledge or the user prompt gives enough basis to transform script content
-  into a shot plan.
 
 Response shape examples:
 

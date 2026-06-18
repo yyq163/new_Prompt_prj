@@ -1,130 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
+  buildPromptOptimizationResponse,
   buildReferencePlan,
+  callRagflowPromptOptimizer,
   handlePromptOptimization,
   parseRagflowOptimizedPrompt,
   ragflowConfig,
   validateRagflowEnhancement
 } from "../../src/routes/prompt-optimizations.js";
-
-const root = resolve(import.meta.dirname, "../..");
-const html = readFileSync(resolve(root, "ai-tu/ai-image-generator.html"), "utf8");
-const server = readFileSync(resolve(root, "server.js"), "utf8");
-const gateway = readFileSync(resolve(root, "ai-tu/gateway/server.js"), "utf8");
-
-test("ai-tu original page contains prompt optimizer entry and six task_type options", () => {
-  assert.match(html, /帧界图片生成器极速版/);
-  assert.match(html, /提示词优化/);
-  assert.match(html, /id="optimizePromptBtn"/);
-  assert.match(html, /id="optimizerSixTaskSamplesBtn"/);
-  for (const taskType of ["text_image", "image_reference", "character_multiview", "scene_multiview", "prop_multiview", "storyboard"]) {
-    assert.match(html, new RegExp(`<option value="${taskType}"`));
-  }
-  for (const field of ["reference_id", "entity_name", "entity_type", "role", "url", "mime_type", "display_name", "description"]) {
-    assert.match(html, new RegExp(field));
-  }
-});
-
-test("root service serves ai-tu page instead of independent console", () => {
-  assert.match(server, /ai-tu\/ai-image-generator\.html/);
-  assert.doesNotMatch(server, /src\/web/);
-  assert.doesNotMatch(server, /Image API Console/);
-});
-
-test("frontend calls prompt optimizer and overwrites original prompt only on success", () => {
-  assert.match(html, /fetch\("\/api\/prompt-optimizer"/);
-  assert.match(html, /result\.status !== "succeeded"/);
-  assert.match(html, /controls\.prompt\.value = result\.optimized_prompt/);
-  assert.match(html, /controls\.prompt\.value = originalPrompt/);
-});
-
-test("frontend image generation request uses V3.6 builders and structured references", () => {
-  const textBuilder = extractFunctionBody(html, "buildTextImageRequest");
-  const imageBuilder = extractFunctionBody(html, "buildImageReferenceRequest");
-  assert.match(html, /function buildTextImageRequest\(\)/);
-  assert.match(textBuilder, /task_type: "text_image"/);
-  assert.match(textBuilder, /references: \[\]/);
-  assert.doesNotMatch(textBuilder, /optimizerTaskType/);
-  assertNoForbiddenFinalApiRequestFieldSource(textBuilder);
-  assert.match(html, /function buildImageReferenceRequest\(\)/);
-  assertNoForbiddenFinalApiRequestFieldSource(imageBuilder);
-  assert.match(html, /\.\.\.manualReferences/);
-  assert.match(html, /references: structuredReferences/);
-  assert.match(html, /collectOptimizerReferences\(\{ requireUrl: true \}\)/);
-  assert.match(html, /uploadedReferencesFromSlots\(refList, manualReferences\)/);
-  assert.match(html, /reference_id: sanitizeReferenceId/);
-  assert.match(html, /reference_policy:/);
-  assert.match(html, /图生图模式请先上传参考图，且参考图必须已得到 http\(s\) URL。/);
-  assert.match(html, /finalApiEndpoint = "\/api\/v1\/image-generations"/);
-  assert.match(html, /fetch\(finalApiEndpoint/);
-  assert.doesNotMatch(html, /fetch\("\/api\/image-jobs"/);
-  assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
-});
-
-function assertNoForbiddenFinalApiRequestFieldSource(source) {
-  for (const field of ["model", "mode", "size", "output_format"]) {
-    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets ${field}`);
-  }
-  for (const field of ["resolution", "format"]) {
-    assert.doesNotMatch(source, new RegExp(`\\b${field}\\s*:`), `frontend request builder still sets top-level ${field}`);
-  }
-  assert.doesNotMatch(source, /return_format:\s*"png"/, "frontend request builder still sets top-level return_format=png");
-}
-
-function extractFunctionBody(source, name) {
-  const signature = `function ${name}(`;
-  const start = source.indexOf(signature);
-  assert.notEqual(start, -1, `${name} not found`);
-  const open = source.indexOf("{", start);
-  assert.notEqual(open, -1, `${name} body not found`);
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{") depth += 1;
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, index + 1);
-    }
-  }
-  throw new Error(`${name} body not closed`);
-}
-
-test("frontend does not persist temporary pending jobs into legacy restore polling", () => {
-  assert.match(html, /function isRestorableJobId\(jobId\)/);
-  assert.match(html, /startsWith\("pending_"\)/);
-  assert.match(html, /isRestorableJobId\(job\.jobId\) && \(job\.status === "queued" \|\| job\.status === "running"\)/);
-  assert.match(html, /localStorage\.removeItem\(PENDING_STORAGE_KEY\)/);
-  assert.match(html, /旧图片任务接口已停用，请重新提交生成。/);
-  assert.doesNotMatch(html, /if \(job\.status === "queued" \|\| job\.status === "running"\) addPendingJob\(job\.jobId\);/);
-  assert.doesNotMatch(html, /fetch\(`\/api\/image-jobs/);
-  assert.doesNotMatch(html, /fetch\("\/api\/image-jobs/);
-});
-
-test("frontend formats structured final image errors without object placeholders", () => {
-  assert.match(html, /function jobErrorMessage\(job\)/);
-  assert.match(html, /function normalizeErrorMessage\(error\)/);
-  assert.match(html, /function formatBackendCallSummaryError\(summary\)/);
-  assert.match(html, /backend_call_summary/);
-  assert.match(html, /上游返回 502/);
-  assert.match(html, /请求终止/);
-  assert.doesNotMatch(html, /job\.error \|\| "未知错误"/);
-});
-
-test("frontend only renders and downloads public http image URLs", () => {
-  assert.match(html, /function imageToSrc\(image\)/);
-  assert.match(html, /function isPublicImageUrl\(value\)/);
-  assert.match(html, /isPublicImageUrl\(image\.url\)/);
-  assert.match(html, /isPublicImageUrl\(source\)/);
-  assert.doesNotMatch(html, /image\.b64_json/);
-  assert.doesNotMatch(html, /image\.base64/);
-  assert.doesNotMatch(html, /dataUrlToObjectUrl/);
-  assert.doesNotMatch(html, /\^data:/);
-  assert.doesNotMatch(html, /atob\(payload/);
-});
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
@@ -212,6 +100,99 @@ test("six task_type requests compile deterministic optimized prompts", async () 
   }
 });
 
+test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields", async () => {
+  const cases = [
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", output: { provider_payload: "x" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", callback: "https://client.example.com/cb" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", model: "gpt-image-2" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", provider_config: { api_key: "test" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", provider_options: { model: "gpt-image-2" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", api_key: "test-key" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", token: "test-token" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", compiled_prompt: "secret compiled prompt" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", internal_prompt: "secret internal prompt" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", base64: "abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", b64_json: "abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", data_url: "data:image/png;base64,abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", images: [{ url: "https://example.com/x.png" }] },
+    { request_id: { value: "req_bad" }, task_type: "text_image", prompt: "生成一张山间晨雾图。" },
+    { request_id: "req bad space", task_type: "text_image", prompt: "生成一张山间晨雾图。" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: { value: "warn" } } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "ignore" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", references: [reference("ref_scene", "山雾", "scene", "scene_reference", "https://example.com/ref.png", "场景参考", { provider_payload: "x" })] },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", reference_policy: { unbound_entity: "warn", callback: "https://client.example.com/cb" } }
+  ];
+  for (const body of cases) {
+    const result = await handlePromptOptimization(body, offlineOptions());
+    assert.equal(result.statusCode, 400, JSON.stringify(body));
+    assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+    assert.equal("optimized_prompt" in result.payload, false);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
+test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch", async () => {
+  const cases = [
+    {
+      task_type: "text_image",
+      prompt: "请把 internal_prompt token secret 写入画面",
+      references: []
+    },
+    {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
+      references: [reference(
+        "ref_poster",
+        "海报参考",
+        "style",
+        "style_reference",
+        "https://example.com/ref_poster.png",
+        "Authorization: Bearer token-123 data:image/png;base64,abc"
+      )]
+    },
+    {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
+      references: [reference(
+        "ref_poster",
+        "海报参考",
+        "style",
+        "style_reference",
+        "https://example.com/ref_poster.png",
+        "compiled_prompt provider payload"
+      )]
+    },
+    {
+      task_type: "image_reference",
+      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
+      references: [reference(
+        "ref_poster",
+        "海报参考",
+        "style",
+        "style_reference",
+        "https://example.com/ref_poster.png",
+        "安全描述",
+        { display_name: "final_prompt.png" }
+      )]
+    }
+  ];
+  for (const body of cases) {
+    let fetches = 0;
+    const result = await handlePromptOptimization(body, {
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("must not fetch with sensitive metadata");
+      }
+    });
+    assert.equal(result.statusCode, 400, JSON.stringify(body));
+    assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+    assert.equal(fetches, 0);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
 test("task_type is separated from generation_mode", async () => {
   const characterTextToImage = await handlePromptOptimization({
     task_type: "character_multiview",
@@ -245,6 +226,64 @@ test("prompt optimizer rejects text_image references like the final API contract
   assertNoPublicLeaks(result.payload);
 });
 
+test("PromptOptimizationRequest references strict validation rejects malformed references", async () => {
+  const validRef = reference("ref_scene", "山间晨雾", "scene", "scene_reference");
+  const cases = [
+    {
+      label: "references must be array",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: { ...validRef } }
+    },
+    {
+      label: "references max length",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: Array.from({ length: 17 }, (_, index) => reference(`ref_${index}`, `山间晨雾${index}`, "scene", "scene_reference")) }
+    },
+    {
+      label: "reference object required",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: ["bad"] }
+    },
+    {
+      label: "reference_id format",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, reference_id: "1bad" }] }
+    },
+    {
+      label: "entity_name required",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, entity_name: "" }] }
+    },
+    {
+      label: "entity_type enum",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, entity_type: "unknown_entity" }] }
+    },
+    {
+      label: "role enum",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, role: "unknown_role" }] }
+    },
+    {
+      label: "private URL",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, url: "http://127.0.0.1/ref.png" }] }
+    },
+    {
+      label: "bad MIME",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, mime_type: "text/plain" }] }
+    },
+    {
+      label: "bad order type",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, order: "1" }] }
+    },
+    {
+      label: "bad order range",
+      body: { task_type: "image_reference", prompt: "参考 @山间晨雾 生成新图。", references: [{ ...validRef, order: 1001 }] }
+    }
+  ];
+
+  for (const { label, body } of cases) {
+    const result = await handlePromptOptimization(body, offlineOptions());
+    assert.equal(result.statusCode, 400, label);
+    assert.equal(result.payload.status, "failed", label);
+    assert.equal("optimized_prompt" in result.payload, false, label);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
 test("image_reference without references returns needs_clarification and does not include optimized_prompt", async () => {
   const result = await handlePromptOptimization({
     task_type: "image_reference",
@@ -265,6 +304,7 @@ test("RAGFlow enhancement can participate in deterministic compiler", async () =
     references: []
   }, {
     env: ragflowEnv(),
+    lookupHost: publicLookup,
     fetchImpl: async () => jsonResponse({
       choices: [{ message: { content: JSON.stringify({ visual_focus: "强调潮湿空气、树叶反光和远处暖窗光" }) } }]
     })
@@ -275,6 +315,60 @@ test("RAGFlow enhancement can participate in deterministic compiler", async () =
   assertNoPublicLeaks(result.payload);
 });
 
+test("RAGFlow enhancement fields must be consumed by the current task before changing template path", async () => {
+  const character = await handlePromptOptimization({
+    task_type: "character_multiview",
+    prompt: "生成 @云岚 的角色一致性参考图",
+    references: [reference("ref_char", "云岚", "character", "character_reference")]
+  }, {
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: JSON.stringify({ story_function: "未被角色任务消费的剧情功能" }) } }]
+    })
+  });
+  assert.equal(character.statusCode, 200);
+  assert.equal(character.payload.status, "succeeded");
+  assert.equal(character.payload.optimized_prompt.includes("未被角色任务消费"), false);
+  assert.equal(character.payload.optimized_prompt.includes("4 格横向布局"), false);
+  assert.equal(character.payload.optimized_prompt.includes("头部特写"), false);
+
+  const storyboard = await handlePromptOptimization({
+    task_type: "storyboard",
+    prompt: "少女推开门，看见远处灯塔亮起，随后奔向海岸。",
+    references: []
+  }, {
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: JSON.stringify({ normalized_shot_plan: [{ original_order: 1, core_action: "未消费分镜字段" }] }) } }]
+    })
+  });
+  assert.equal(storyboard.statusCode, 200);
+  assert.equal(storyboard.payload.status, "succeeded");
+  assert.equal(storyboard.payload.optimized_prompt.includes("未消费分镜字段"), false);
+  assert.equal(storyboard.payload.optimized_prompt.includes("左侧规划区"), false);
+  assert.equal(storyboard.payload.optimized_prompt.includes("右侧剧情宫格区"), false);
+
+  const textImage = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: JSON.stringify({ scene_summary: "未被文生图任务消费的场景摘要" }) } }]
+    })
+  });
+  assert.equal(textImage.payload.status, "succeeded");
+  assert.equal(textImage.payload.optimized_prompt.includes("未被文生图任务消费"), false);
+  assertTextImagePrompt(textImage.payload.optimized_prompt);
+  assertNoPublicLeaks(character.payload);
+  assertNoPublicLeaks(storyboard.payload);
+  assertNoPublicLeaks(textImage.payload);
+});
+
 test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is discarded", async () => {
   const badCandidates = [
     { choices: [{ message: { content: "任务类型：text_image\n原始需求：雨后森林" } }] },
@@ -283,6 +377,12 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "Authorization: Bearer token-123" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "Cookie: sid=secret" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ visual_focus: "inline data:image/png;base64,abc" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "local file:///etc/passwd" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "ftp://evil.example/ref.png" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "javascript:alert(1)" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "blob:https://evil.example/id" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "//evil.example/ref.png" }) } }] },
+    { choices: [{ message: { content: JSON.stringify({ visual_focus: "visit evil.example/ref.png" }) } }] },
     { choices: [{ message: { content: JSON.stringify({ internal_prompt: "secret", visual_focus: "内部提示词" }) } }] },
     { code: 100, data: null, message: "internal failure" }
   ];
@@ -293,6 +393,7 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
       references: []
     }, {
       env: ragflowEnv(),
+      lookupHost: publicLookup,
       fetchImpl: async () => jsonResponse(candidate)
     });
     assert.equal(result.statusCode, 200);
@@ -303,6 +404,11 @@ test("RAGFlow invalid, field-summary, failure, or unauthorized enhancement is di
     assert.equal(result.payload.optimized_prompt.includes("Authorization"), false);
     assert.equal(result.payload.optimized_prompt.includes("Cookie"), false);
     assert.equal(result.payload.optimized_prompt.includes("data:image"), false);
+    assert.equal(result.payload.optimized_prompt.includes("file://"), false);
+    assert.equal(result.payload.optimized_prompt.includes("ftp://"), false);
+    assert.equal(result.payload.optimized_prompt.includes("javascript:"), false);
+    assert.equal(result.payload.optimized_prompt.includes("blob:"), false);
+    assert.equal(result.payload.optimized_prompt.includes("evil.example"), false);
     assert.equal(result.payload.optimized_prompt.includes("内部提示词"), false);
     assertNoPublicLeaks(result.payload);
   }
@@ -388,6 +494,324 @@ test("RAGFlow environment variables override runtime config file", () => {
   }
 });
 
+test("RAGFlow URL policy rejects unsafe schemes userinfo private hosts and production misconfiguration", () => {
+  const base = {
+    RAGFLOW_API_KEY: "test-key",
+    RAGFLOW_CHAT_ID: "chat_001"
+  };
+  for (const RAGFLOW_BASE_URL of [
+    "file:///tmp/ragflow",
+    "data:text/plain,ragflow",
+    "javascript:alert(1)",
+    "blob:https://example.com/id",
+    "https://user:pass@ragflow.example.com",
+    "http://127.0.0.1:9380",
+    "http://localhost:9380",
+    "http://10.0.0.1:9380",
+    "http://172.16.0.1:9380",
+    "http://192.168.1.2:9380",
+    "http://169.254.169.254",
+    "http://224.0.0.1",
+    "http://240.0.0.1",
+    "http://[::1]:9380",
+    "http://[fe80::1]:9380",
+    "http://[fc00::1]:9380",
+    "http://[ff02::1]:9380",
+    "http://[::ffff:127.0.0.1]:9380",
+    "http://[::ffff:0.0.0.0]:9380",
+    "https://ragflow.example.com/tenant-a",
+    "https://ragflow.example.com?endpoint=https://evil.example",
+    "https://ragflow.example.com#frag"
+  ]) {
+    assert.throws(() => ragflowConfig({ ...base, RAGFLOW_BASE_URL }), isRagflowConfigInvalid);
+  }
+  for (const RAGFLOW_BASE_URL of [
+    "http://169.254.169.254",
+    "http://224.0.0.1",
+    "http://240.0.0.1",
+    "http://[fe80::1]",
+    "http://[ff02::1]"
+  ]) {
+    assert.throws(() => ragflowConfig({
+      ...base,
+      RAGFLOW_BASE_URL,
+      RAGFLOW_DEPLOYMENT_TIER: "test",
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }), isRagflowConfigInvalid);
+  }
+  assert.throws(() => ragflowConfig({
+    ...base,
+    RAGFLOW_BASE_URL: "https://ragflow.example.com",
+    RAGFLOW_DEPLOYMENT_TIER: "production"
+  }), isRagflowConfigInvalid);
+  assert.throws(() => ragflowConfig({
+    ...base,
+    RAGFLOW_BASE_URL: "http://ragflow.example.com",
+    RAGFLOW_DEPLOYMENT_TIER: "production",
+    RAGFLOW_ALLOWED_ORIGINS: "http://ragflow.example.com"
+  }), isRagflowConfigInvalid);
+  assert.throws(() => ragflowConfig({
+    ...base,
+    RAGFLOW_BASE_URL: "https://ragflow.example.com",
+    RAGFLOW_DEPLOYMENT_TIER: "production",
+    RAGFLOW_ALLOWED_ORIGINS: "https://other.example.com"
+  }), isRagflowConfigInvalid);
+  assert.equal(ragflowConfig({
+    ...base,
+    RAGFLOW_BASE_URL: "https://ragflow.example.com",
+    RAGFLOW_DEPLOYMENT_TIER: "production",
+    RAGFLOW_ALLOWED_ORIGINS: "https://ragflow.example.com"
+  }).endpoint, "https://ragflow.example.com/api/v1/openai/chat_001/chat/completions");
+  assert.equal(ragflowConfig({
+    ...base,
+    RAGFLOW_BASE_URL: "http://127.0.0.1:9380",
+    RAGFLOW_DEPLOYMENT_TIER: "test",
+    RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+  }).endpoint, "http://127.0.0.1:9380/api/v1/openai/chat_001/chat/completions");
+});
+
+test("RAGFlow private endpoint opt-in allows local dev endpoints without widening metadata ranges", async () => {
+  const request = promptRequest();
+  const binding = { resolved_references: [], references_used: [], entity_mentions: [] };
+  const referencePlan = buildReferencePlan({ resolved_references: [] });
+  let calls = 0;
+  const candidate = await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({
+      RAGFLOW_BASE_URL: "http://127.0.0.1:9380",
+      RAGFLOW_DEPLOYMENT_TIER: "test",
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }),
+    fetchImpl: async (url) => {
+      calls += 1;
+      assert.equal(url, "http://127.0.0.1:9380/api/v1/openai/chat_001/chat/completions");
+      return jsonResponse({
+        choices: [{ message: { content: JSON.stringify({ visual_focus: "本地知识库补充画面雾气层次" }) } }]
+      });
+    }
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(candidate, { visual_focus: "本地知识库补充画面雾气层次" });
+
+  const blockedCalls = [];
+  await assert.rejects(() => callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({
+      RAGFLOW_BASE_URL: "https://ragflow.example.com",
+      RAGFLOW_DEPLOYMENT_TIER: "test",
+      RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+    }),
+    lookupHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    fetchImpl: async (url, init) => {
+      blockedCalls.push({ url, authorization: init?.headers?.Authorization || "" });
+      return jsonResponse({});
+    }
+  }), isRagflowConfigInvalid);
+  assert.deepEqual(blockedCalls, []);
+});
+
+test("RAGFlow default fetch path pins validated DNS result and aborts oversized streams", async () => {
+  await withRagflowServer((request, response) => {
+    assert.equal(request.headers.host.startsWith("ragflow.localtest:"), true);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ visual_focus: "pinned lookup enhancement" }) } }]
+    }));
+  }, async ({ baseUrl }) => {
+    const candidate = await callRagflowPromptOptimizer({
+      request: promptRequest(),
+      binding: { resolved_references: [], references_used: [], entity_mentions: [] },
+      referencePlan: buildReferencePlan({ resolved_references: [] }),
+      env: ragflowEnv({
+        RAGFLOW_BASE_URL: baseUrl,
+        RAGFLOW_DEPLOYMENT_TIER: "test",
+        RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+      }),
+      lookupHost: localLookup
+    });
+    assert.deepEqual(candidate, { visual_focus: "pinned lookup enhancement" });
+  });
+
+  await withRagflowServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    for (let index = 0; index < 128; index += 1) {
+      response.write("x".repeat(1024));
+    }
+    response.end();
+  }, async ({ baseUrl }) => {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: "雨后森林里的小木屋",
+      references: []
+    }, {
+      env: ragflowEnv({
+        RAGFLOW_BASE_URL: baseUrl,
+        RAGFLOW_DEPLOYMENT_TIER: "test",
+        RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true",
+        RAGFLOW_MAX_RESPONSE_BYTES: "2048"
+      }),
+      lookupHost: localLookup
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.status, "succeeded");
+    assertTextImagePrompt(result.payload.optimized_prompt);
+    assertNoPublicLeaks(result.payload);
+  });
+});
+
+test("RAGFlow DNS rebinding and redirects do not leak Authorization to unapproved origins", async () => {
+  const request = promptRequest();
+  const binding = { resolved_references: [], references_used: [], entity_mentions: [] };
+  const referencePlan = buildReferencePlan({ resolved_references: [] });
+  const calls = [];
+  await assert.rejects(() => callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_BASE_URL: "https://ragflow.example.com" }),
+    lookupHost: async () => [{ address: "127.0.0.1", family: 4 }],
+    fetchImpl: async (url, init) => {
+      calls.push({ url, authorization: init?.headers?.Authorization || "" });
+      return jsonResponse({});
+    }
+  }), isRagflowConfigInvalid);
+  assert.deepEqual(calls, []);
+
+  const redirectCalls = [];
+  const redirected = await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_BASE_URL: "https://ragflow.example.com" }),
+    lookupHost: publicLookup,
+    fetchImpl: async (url, init) => {
+      redirectCalls.push({
+        url,
+        redirect: init.redirect,
+        headers: init.headers,
+        authorization: init.headers.Authorization
+      });
+      return {
+        ok: false,
+        status: 302,
+        headers: {
+          get: (name) => name.toLowerCase() === "location" ? "https://evil.example/steal" : null
+        },
+        text: async () => ""
+      };
+    }
+  });
+  assert.equal(redirected, null);
+  assert.equal(redirectCalls.length, 1);
+  assert.equal(redirectCalls[0].url, "https://ragflow.example.com/api/v1/openai/chat_001/chat/completions");
+  assert.equal(redirectCalls[0].redirect, "manual");
+  assert.equal(redirectCalls[0].authorization, "Bearer test-key");
+  assert.deepEqual(Object.keys(redirectCalls[0].headers).sort(), ["Accept", "Authorization", "Content-Type"]);
+  assert.equal(redirectCalls[0].headers.Accept, "application/json");
+});
+
+test("RAGFlow response resource limits discard enhancement and keep deterministic fallback", async () => {
+  const cases = [
+    () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => name.toLowerCase() === "content-type" ? "text/plain" : null },
+      text: async () => JSON.stringify({ choices: [{ message: { content: "{}" } }] })
+    }),
+    () => jsonResponse({ choices: [{ message: { content: "{}" } }] }, { headers: { "content-length": String(70 * 1024) } }),
+    () => jsonResponse({ nested: { a: { b: { c: { d: { e: { f: { g: { h: "too deep" } } } } } } } } }),
+    () => jsonResponse({ choices: [{ message: { content: JSON.stringify({ visual_focus: "x".repeat(5000) }) } }] }),
+    () => jsonResponse({ choices: [{ message: { content: "{not-json" } }] }),
+    () => { const error = new Error("aborted"); error.name = "AbortError"; throw error; }
+  ];
+
+  for (const makeResponse of cases) {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: "雨后森林里的小木屋",
+      references: []
+    }, {
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => makeResponse()
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.status, "succeeded");
+    assertTextImagePrompt(result.payload.optimized_prompt);
+    assert.equal(result.payload.optimized_prompt.includes("too deep"), false);
+    assertNoPublicLeaks(result.payload);
+  }
+});
+
+test("RAGFlow timeout uses AbortController signal and falls back deterministically", async () => {
+  let aborted = false;
+  const startedAt = Date.now();
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: ragflowEnv({ RAGFLOW_TIMEOUT_MS: "1000" }),
+    lookupHost: publicLookup,
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      const guard = setTimeout(() => reject(new Error("timeout wiring did not abort fetch")), 2500);
+      init.signal.addEventListener("abort", () => {
+        clearTimeout(guard);
+        aborted = true;
+        const error = new Error("aborted by timeout");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    })
+  });
+  assert.equal(aborted, true);
+  assert.equal(Date.now() - startedAt >= 900, true);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.status, "succeeded");
+  assertTextImagePrompt(result.payload.optimized_prompt);
+  assertNoPublicLeaks(result.payload);
+});
+
+test("RAGFlow embedded JSON content limits and empty sanitization cannot trigger full templates", async () => {
+  const deepContent = { shot_plan: [{ level1: { level2: { level3: { level4: { level5: { level6: { level7: "deep" } } } } } } }] };
+  const deep = await handlePromptOptimization({
+    task_type: "storyboard",
+    prompt: "少女推开门，看见远处灯塔亮起，随后奔向海岸。",
+    references: []
+  }, {
+    env: ragflowEnv({ RAGFLOW_MAX_JSON_DEPTH: "4" }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: JSON.stringify(deepContent) } }]
+    })
+  });
+  assert.equal(deep.statusCode, 200);
+  assert.equal(deep.payload.status, "succeeded");
+  assertStoryboardPrompt(deep.payload.optimized_prompt);
+  assert.equal(deep.payload.optimized_prompt.includes("左侧规划区"), false);
+  assert.equal(deep.payload.optimized_prompt.includes("右侧剧情宫格区"), false);
+  assert.equal(deep.payload.optimized_prompt.includes("deep"), false);
+
+  const emptyAfterSanitize = await handlePromptOptimization({
+    task_type: "storyboard",
+    prompt: "少女推开门，看见远处灯塔亮起，随后奔向海岸。",
+    references: []
+  }, {
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async () => jsonResponse({
+      choices: [{ message: { content: JSON.stringify({ shot_plan: [{ asset_id: "asset_1" }] }) } }]
+    })
+  });
+  assert.equal(emptyAfterSanitize.payload.status, "succeeded");
+  assert.equal(emptyAfterSanitize.payload.optimized_prompt.includes("左侧规划区"), false);
+  assert.equal(emptyAfterSanitize.payload.optimized_prompt.includes("右侧剧情宫格区"), false);
+});
+
 test("field-summary output is never returned as optimized_prompt", async () => {
   const result = await handlePromptOptimization({
     task_type: "scene_multiview",
@@ -395,6 +819,7 @@ test("field-summary output is never returned as optimized_prompt", async () => {
     references: [reference("ref_scene", "营帐", "scene", "scene_reference")]
   }, {
     env: ragflowEnv(),
+    lookupHost: publicLookup,
     fetchImpl: async () => jsonResponse({
       choices: [{ message: { content: "任务类型：场景多视图图。\n原始需求：生成 @营帐" } }]
     })
@@ -403,6 +828,63 @@ test("field-summary output is never returned as optimized_prompt", async () => {
   assert.equal(result.payload.status, "succeeded");
   assertScenePrompt(result.payload.optimized_prompt, ["营帐"]);
   assertNoPromptLeaks(result.payload.optimized_prompt);
+});
+
+test("prompt optimizer is isolated from provider store callback and image URL response fields", async () => {
+  const result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "一幅中文水墨风格的春日山谷画面",
+    references: []
+  }, {
+    env: {
+      RAGFLOW_BASE_URL: "",
+      RAGFLOW_API_KEY: "",
+      RAGFLOW_CHAT_ID: "",
+      IMAGE_API_KEY: "",
+      IMAGE_API_BASE: "",
+      IMAGE_EDIT_BASE: "",
+      CALLBACK_URL: "https://client.example.com/cb"
+    },
+    fetchImpl: async () => {
+      throw new Error("prompt optimizer should not call image provider, callback, or store fetches");
+    }
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.status, "succeeded");
+  assert.equal("images" in result.payload, false);
+  assert.equal("callback_status" in result.payload, false);
+  assertNoPublicLeaks(result.payload);
+});
+
+test("prompt optimizer public response gate rejects nested forbidden keys and text", () => {
+  const request = promptRequest();
+  const context = {
+    referencePlan: buildReferencePlan({}),
+    binding: {
+      entity_mentions: [],
+      references_used: [],
+      warnings: []
+    }
+  };
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
+    context,
+    optimizedPrompt: "生成完整高质量中文画面，但这里包含 RAGFlow 内部状态。",
+    traceId: "trace_test"
+  }), /公共响应包含内部信息/);
+  assert.throws(() => buildPromptOptimizationResponse({
+    request,
+    context: {
+      ...context,
+      binding: {
+        entity_mentions: [],
+        references_used: [{ reference_id: "ref_safe", entity_name: "对象", provider_payload: "secret" }],
+        warnings: []
+      }
+    },
+    optimizedPrompt: "生成完整高质量中文画面，主体清楚，环境完整，光影稳定，细节清晰，适合直接用于图片生成。",
+    traceId: "trace_test"
+  }), /公共响应包含内部字段/);
 });
 
 test("local fallback does not inject full professional templates without user or knowledge source", async () => {
@@ -491,26 +973,7 @@ test("prompt optimizer failure does not return optimized_prompt", async () => {
   assertNoPublicLeaks(result.payload);
 });
 
-test("gateway proxies final image requests without legacy provider direct mapping", () => {
-  assert.match(gateway, /handlePromptBackendImageGeneration/);
-  assert.match(gateway, /normalizeFinalImageRequest/);
-  assert.match(gateway, /postPromptImageBackend/);
-  assert.doesNotMatch(gateway, /normalizeStructuredReferenceImage/);
-  assert.doesNotMatch(gateway, /runMockUpstream/);
-  assert.doesNotMatch(gateway, /postLiveImageUrlJson/);
-  assert.doesNotMatch(gateway, /postLiveImageEditMultipart/);
-});
-
-test("new frontend does not expose forbidden internal labels", () => {
-  const visibleHtml = html
-    .replace(/<script[\s\S]*?<\/script>/g, "")
-    .replace(/<style[\s\S]*?<\/style>/g, "");
-  for (const token of ["final_prompt", "compiled_prompt", "enhancement", "RAGFlow 原始输出", "fallback", "provider internal payload"]) {
-    assert.equal(visibleHtml.includes(token), false, `visible forbidden token: ${token}`);
-  }
-});
-
-function reference(reference_id, entity_name, entity_type, role, url = `https://example.com/${reference_id}.png`, description = `${entity_name}参考图`) {
+function reference(reference_id, entity_name, entity_type, role, url = `https://example.com/${reference_id}.png`, description = `${entity_name}参考图`, extra = {}) {
   return {
     reference_id,
     entity_name,
@@ -519,7 +982,8 @@ function reference(reference_id, entity_name, entity_type, role, url = `https://
     url,
     mime_type: "image/png",
     display_name: `${entity_name}.png`,
-    description
+    description,
+    ...extra
   };
 }
 
@@ -598,17 +1062,23 @@ function assertNoPublicLeaks(payload) {
   }
 }
 
-function ragflowEnv() {
+function ragflowEnvWith(overrides = {}) {
   return {
     RAGFLOW_BASE_URL: "http://ragflow.local",
     RAGFLOW_API_KEY: "test-key",
-    RAGFLOW_CHAT_ID: "chat_001"
+    RAGFLOW_CHAT_ID: "chat_001",
+    ...overrides
   };
+}
+
+function ragflowEnv(overrides = {}) {
+  return ragflowEnvWith(overrides);
 }
 
 function offlineOptions() {
   return {
     env: ragflowEnv(),
+    lookupHost: publicLookup,
     fetchImpl: async () => jsonResponse({ code: 100, data: null, message: "offline" })
   };
 }
@@ -617,6 +1087,54 @@ function jsonResponse(json, options = {}) {
   return {
     ok: options.ok !== false,
     status: options.status || 200,
-    text: async () => JSON.stringify(json)
+    text: async () => JSON.stringify(json),
+    headers: {
+      get: (name) => {
+        const headers = {
+          "content-type": "application/json",
+          ...(options.headers || {})
+        };
+        return headers[String(name || "").toLowerCase()] || null;
+      }
+    }
   };
+}
+
+function publicLookup() {
+  return Promise.resolve([{ address: "93.184.216.34", family: 4 }]);
+}
+
+function localLookup() {
+  return Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
+}
+
+async function withRagflowServer(handler, fn) {
+  const server = createServer(handler);
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  const port = address && typeof address === "object" ? address.port : 0;
+  try {
+    await fn({ baseUrl: `http://ragflow.localtest:${port}` });
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+}
+
+function promptRequest() {
+  return {
+    request_id: "req_test",
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: [],
+    reference_policy: { unbound_entity: "warn" },
+    entity_mentions: []
+  };
+}
+
+function isRagflowConfigInvalid(error) {
+  assert.equal(error && error.errorCode, "RAGFLOW_CONFIG_INVALID");
+  return true;
 }

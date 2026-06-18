@@ -112,6 +112,29 @@ service or a production image-hosting layer.
 
 RAGFlow is optional. It can provide structured enhancement only. Invalid, unsafe, oversized, prompt-leaking, unknown-reference, or unknown-URL enhancement is discarded for public callers. The backend Prompt Compiler remains the final prompt owner.
 
+Prompt optimizer RAGFlow configuration is deployment-scoped, not user-scoped.
+`RAGFLOW_BASE_URL`, `RAGFLOW_CHAT_ID`, and `RAGFLOW_API_KEY` are read only from
+server environment/runtime config. Users cannot provide callback, provider,
+model, endpoint, token, API key, raw provider payload, image, base64, or final
+prompt fields in `POST /api/v1/prompt-optimizations`.
+
+Production RAGFlow requires `RAGFLOW_DEPLOYMENT_TIER=production`, HTTPS, and a
+matching `RAGFLOW_ALLOWED_ORIGINS` entry. Development and test reject private
+RAGFlow endpoints by default; `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` is the only
+local opt-in, and it is limited to loopback, RFC1918, and ULA endpoints.
+Metadata, link-local, multicast, reserved, and documentation ranges remain
+blocked. The fetch path rejects userinfo, unsafe schemes, non-origin base URL
+paths, localhost/private endpoints without the opt-in above, IPv4-mapped IPv6,
+and unsafe DNS results. Redirects are handled manually and never followed
+across origins. Authorization is attached only when the endpoint origin matches
+the approved origin.
+
+RAGFlow responses are resource-bounded by timeout, max response bytes,
+content-type, JSON depth, total keys, array length, string length, and total
+character count. Timeout, oversize, non-JSON, wrong content-type, unsafe output,
+or invalid JSON never fails the public optimizer request; it discards
+enhancement and falls back deterministically.
+
 Professional templates are no longer unconditional compiler behavior. Character
 four-view, scene 3x3 or multi-camera, prop multi-angle/detail, and storyboard
 layout details belong in RAGFlow knowledge seed documents under
@@ -127,10 +150,21 @@ The Prompt Compiler fallback keeps only:
 - minimal task safety notes
 - common negative rules
 
-When validated enhancement exists, the compiler appends supported fields:
-`scene_summary`, `visual_focus`, `story_function`, `action_stages`,
-`shot_plan`, `normalized_shot_plan`, `lighting_notes`, `composition_notes`,
-`negative_notes`, and `missing_constraints`.
+When validated enhancement exists, the prompt optimizer first checks the global
+safe-field list, then rejects the whole enhancement unless every field is
+actually consumed by the current `task_type`. Current consumed fields are:
+
+- `text_image`: `visual_focus`, `lighting_notes`, `composition_notes`,
+  `missing_constraints`
+- `image_reference`: `visual_focus`, `lighting_notes`, `composition_notes`,
+  `missing_constraints`
+- `character_multiview`: `visual_focus`, `composition_notes`,
+  `missing_constraints`
+- `scene_multiview`: `scene_summary`, `visual_focus`, `lighting_notes`,
+  `composition_notes`, `missing_constraints`
+- `prop_multiview`: `visual_focus`, `composition_notes`, `missing_constraints`
+- `storyboard`: `story_function`, `action_stages`, `lighting_notes`,
+  `composition_notes`, `missing_constraints`
 
 Storyboard internal paths remain:
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleImageGeneration } from "../../src/routes/image-generations.js";
@@ -9,7 +10,7 @@ import { extractEntityMentions } from "../../src/core/entity-mentions.js";
 import { resolveReferences } from "../../src/core/reference-binding.js";
 import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, normalizeRequest, FORBIDDEN_PUBLIC_FIELDS, TYPE_SCHEMAS } from "../../src/core/runtime.js";
 import { VALID_ENTITY_TYPES, VALID_REFERENCE_ROLES } from "../../src/core/labels.js";
-import { validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
+import { getRagflowEnhancement, validateEnhancement, extractShotKeys } from "../../src/core/ragflow-enhancement.js";
 import { compilePrompt, inferStoryboardPathForTest } from "../../src/core/prompt-compiler.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "../../src/core/legacy-api.js";
 import {
@@ -111,8 +112,10 @@ test("callback_url rejects localhost private link-local IPv6 and unsafe schemes"
     "http://[fc00::1]/cb",
     "http://[::ffff:127.0.0.1]/cb",
     "http://[::ffff:7f00:1]/cb",
+    "http://[::ffff:0.0.0.0]/cb",
     "http://2130706433/cb",
     "http://0177.0.0.1/cb",
+    "https://user:pass@example.com/cb",
     "file:///tmp/cb",
     "data:text/plain,cb",
     "javascript:alert(1)"
@@ -147,7 +150,9 @@ test("reference URL security rejects private hosts by default and allows dev ove
       "http://169.254.1.2/ref.png",
       "http://[::1]/ref.png",
       "http://[::ffff:7f00:1]/ref.png",
+      "http://[::ffff:0.0.0.0]/ref.png",
       "http://2130706433/ref.png",
+      "https://user:pass@example.com/ref.png",
       "file:///tmp/ref.png"
     ]) {
       assert.throws(() => assertReferenceUrlAllowed(url), /reference\.url|http 或 https/);
@@ -215,6 +220,7 @@ test("PUBLIC_BASE_URL controls generated image public URL and production require
     ]) {
       assert.throws(() => publicImageUrl(unsafeGeneratedPath), /provider image url/);
     }
+    assert.throws(() => publicImageUrl("https://user:pass@example.com/generated.png"), /provider image url/);
 
     process.env.PUBLIC_BASE_URL = "ftp://bad.example.com";
     assert.throws(() => resolveGeneratedImagePublicBaseUrl(), /PUBLIC_BASE_URL/);
@@ -418,7 +424,6 @@ test("role enum and entity_type enum accept the full PRD set", () => {
 test("storyboard script enhancement uses script-to-storyboard path internally", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt: "萧昭宁入营，烛火摇动。", references: [] });
   const path = inferStoryboardPathForTest(request, {
-    storyboard_processing: "script_to_storyboard",
     scene_summary: "入营",
     action_stages: ["入场", "对视"],
     shot_plan: ["镜头1 入营", "镜头2 对视"]
@@ -431,7 +436,6 @@ test("storyboard existing shot list preserves count and order", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt, references: [] });
   const binding = { resolved_references: [] };
   const validation = validateEnhancement({
-    storyboard_processing: "normalize_shot_list",
     normalized_shot_plan: [
       { original_order: 1, core_action: "推门入营", camera: "中景" },
       { original_order: 2, core_action: "抬头看向烛火", camera: "近景" }
@@ -445,7 +449,6 @@ test("storyboard existing shot list preserves count and order", () => {
 test("storyboard complete prompt preserve path", () => {
   const request = normalizeRequest({ task_type: "storyboard", prompt: "完整故事板提示词：左侧规划区，右侧剧情宫格。", references: [] });
   const path = inferStoryboardPathForTest(request, {
-    storyboard_processing: "preserve_full_prompt",
     missing_constraints: ["补充左侧光影变化示意"]
   });
   assert.equal(path, "preserve_full_prompt");
@@ -531,7 +534,6 @@ test("Prompt Compiler appends knowledge-driven enhancement fields including miss
     request: normalizeRequest({ task_type: "storyboard", prompt: "少女推门入营。", references: [] }),
     binding: emptyBinding(),
     enhancement: {
-      storyboard_processing: "script_to_storyboard",
       shot_plan: ["镜头1 推门", "镜头2 看见烛火"],
       lighting_notes: "冷暖对比"
     }
@@ -544,7 +546,6 @@ test("Prompt Compiler appends knowledge-driven enhancement fields including miss
     request: normalizeRequest({ task_type: "storyboard", prompt: "镜头1：推门\n镜头2：回头", references: [] }),
     binding: emptyBinding(),
     enhancement: {
-      storyboard_processing: "normalize_shot_list",
       normalized_shot_plan: [
         { original_order: 1, core_action: "推门" },
         { original_order: 2, core_action: "回头" }
@@ -559,7 +560,6 @@ test("Prompt Compiler appends knowledge-driven enhancement fields including miss
     request: normalizeRequest({ task_type: "storyboard", prompt: "完整故事板提示词，保留全部结构。", references: [] }),
     binding: emptyBinding(),
     enhancement: {
-      storyboard_processing: "preserve_full_prompt",
       missing_constraints: ["知识库未命中具体布局，保留用户原文"]
     }
   });
@@ -567,8 +567,10 @@ test("Prompt Compiler appends knowledge-driven enhancement fields including miss
   assert.match(preserve.compiled_prompt, /保留用户原文/);
 });
 
-test("RagflowEnhancement schema includes missing_constraints without public exposure", () => {
+test("RagflowEnhancement schema exposes only consumed fields without public exposure", () => {
   assert.ok(TYPE_SCHEMAS.RagflowEnhancement.fields.includes("missing_constraints"));
+  assert.equal(TYPE_SCHEMAS.RagflowEnhancement.fields.includes("input_analysis"), false);
+  assert.equal(TYPE_SCHEMAS.RagflowEnhancement.fields.includes("storyboard_processing"), false);
   assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("input_analysis"));
   assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("storyboard_processing"));
   assert.ok(FORBIDDEN_PUBLIC_FIELDS.includes("storyboard_path"));
@@ -599,6 +601,93 @@ test("RAGFlow missing/failing enhancement still succeeds with local compiler and
   restoreEnv("RAGFLOW_ENHANCEMENT_URL", old);
   assert.equal(result.payload.status, "succeeded");
   assertNoForbidden(result.payload);
+});
+
+test("legacy RAGFlow enhancement endpoint rejects unsafe URL targets before fetch", async () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "少女推开门。", references: [] });
+  const binding = emptyBinding();
+  for (const endpoint of [
+    "http://127.0.0.1:9380/enhance",
+    "http://169.254.169.254/latest/meta-data",
+    "https://user:pass@ragflow.example.com/enhance",
+    "file:///tmp/ragflow"
+  ]) {
+    let fetches = 0;
+    const result = await getRagflowEnhancement({
+      request,
+      binding,
+      env: {
+        RAGFLOW_ENHANCEMENT_URL: endpoint
+      },
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error("unsafe endpoint must not fetch");
+      }
+    });
+    assert.equal(result.enhancement, null);
+    assert.equal(fetches, 0);
+  }
+
+  const redirects = [];
+  const redirectResult = await getRagflowEnhancement({
+    request,
+    binding,
+    env: {
+      RAGFLOW_ENHANCEMENT_URL: "https://ragflow.example.com/enhance"
+    },
+    lookupHost: publicLookup,
+    fetchImpl: async (url, init) => {
+      redirects.push({ url, redirect: init.redirect });
+      return {
+        ok: false,
+        status: 302,
+        headers: { get: (name) => name.toLowerCase() === "content-type" ? "application/json" : null },
+        text: async () => ""
+      };
+    }
+  });
+  assert.equal(redirectResult.enhancement, null);
+  assert.equal(redirects[0].redirect, "manual");
+});
+
+test("legacy RAGFlow enhancement default fetch pins DNS and enforces response byte limit", async () => {
+  const request = normalizeRequest({ task_type: "storyboard", prompt: "少女推开门。", references: [] });
+  const binding = emptyBinding();
+  await withLegacyRagflowServer((incoming, response) => {
+    assert.equal(incoming.headers.host.startsWith("ragflow.localtest:"), true);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ visual_focus: "旧版增强服务安全命中" }));
+  }, async ({ endpoint }) => {
+    const result = await getRagflowEnhancement({
+      request,
+      binding,
+      env: {
+        RAGFLOW_ENHANCEMENT_URL: endpoint,
+        RAGFLOW_DEPLOYMENT_TIER: "test",
+        RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+      },
+      lookupHost: localLookup
+    });
+    assert.deepEqual(result.enhancement, { visual_focus: "旧版增强服务安全命中" });
+  });
+
+  await withLegacyRagflowServer((_incoming, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ visual_focus: "x".repeat(13000) }));
+  }, async ({ endpoint }) => {
+    const result = await getRagflowEnhancement({
+      request,
+      binding,
+      env: {
+        RAGFLOW_ENHANCEMENT_URL: endpoint,
+        RAGFLOW_DEPLOYMENT_TIER: "test",
+        RAGFLOW_ALLOW_PRIVATE_ENDPOINTS: "true"
+      },
+      lookupHost: localLookup
+    });
+    assert.equal(result.enhancement, null);
+    assert.equal(result.discarded, "ragflow_failed");
+  });
 });
 
 test("RAGFlow output final_prompt is discarded", () => {
@@ -636,6 +725,8 @@ test("RAGFlow may not emit any reference id URL or unknown enhancement fields", 
     [{ composition_notes: "inline data:image/png;base64,abc" }, "url_emitted"],
     [{ composition_notes: "local file:///tmp/reference.png" }, "url_emitted"],
     [{ composition_notes: "remote ftp://example.com/reference.png" }, "url_emitted"],
+    [{ input_analysis: "not allowed" }, "unknown_field"],
+    [{ storyboard_processing: "script_to_storyboard" }, "unknown_field"],
     [{ template_guidance: "not allowed" }, "unknown_field"]
   ];
 
@@ -693,7 +784,7 @@ test("RAGFlow internal implementation terms are discarded across enhancement fie
     { composition_notes: "Do not mention RAGFlow retrieval state." },
     { visual_focus: "避免暴露本地模板处理。" },
     { missing_constraints: ["不要输出 fallback 状态。"] },
-    { composition_notes: "Authorization: Bearer secret-token" },
+    { composition_notes: "Authorization header with Bearer credential" },
     { composition_notes: "Cookie: sid=secret" },
     { composition_notes: "raw_provider_response should stay hidden." },
     { composition_notes: "b64_json and base64 should stay hidden." },
@@ -3020,6 +3111,28 @@ function assertV36Error(result, code, statusCode = null, status = "failed") {
 function restoreEnv(name, oldValue) {
   if (oldValue == null) delete process.env[name];
   else process.env[name] = oldValue;
+}
+
+function publicLookup() {
+  return Promise.resolve([{ address: "93.184.216.34", family: 4 }]);
+}
+
+function localLookup() {
+  return Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
+}
+
+async function withLegacyRagflowServer(handler, callback) {
+  const server = createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const { port } = server.address();
+    await callback({ endpoint: `http://ragflow.localtest:${port}/enhance` });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
 function samplePngBase64() {

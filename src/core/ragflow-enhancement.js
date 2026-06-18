@@ -1,21 +1,27 @@
 import { TYPE_SCHEMAS, walk } from "./runtime.js";
+import { isExplicitPrivateEndpointHost, isUnsafeNetworkHost } from "./url-security.js";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 
 const DEFAULT_MAX_ENHANCEMENT_CHARS = 12000;
 const INTERNAL_TERMS = /RAGFlow|fallback|兜底|本地模板|compiled_prompt|final_prompt|internal_prompt|provider_internal_payload|provider_payload|raw_provider|Authorization|Cookie|Bearer|token|secret|api[_-]?key|base64|b64_json|data:image/i;
 const BINDING_DECISION_TERMS = /primary|auxiliary|main\s*reference|secondary\s*reference|weight(?:ed|ing)?|priority|主参考|辅参考|主图|辅图|主辅|权重|优先级/i;
 const ALLOWED_TOP_LEVEL_FIELDS = new Set(TYPE_SCHEMAS.RagflowEnhancement.fields);
 
-export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch } = {}) {
-  const endpoint = String(process.env.RAGFLOW_ENHANCEMENT_URL || "").trim();
+export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000, fetchImpl = globalThis.fetch, lookupHost = dnsLookup, env = process.env } = {}) {
+  const endpoint = String(env.RAGFLOW_ENHANCEMENT_URL || "").trim();
   if (!endpoint) return { enhancement: null, discarded: "not_configured" };
-  if (!/^https?:\/\//i.test(endpoint)) return { enhancement: null, discarded: "invalid_endpoint" };
+  const endpointPolicy = await validateEnhancementEndpoint(endpoint, env, lookupHost);
+  if (!endpointPolicy.ok) return { enhancement: null, discarded: endpointPolicy.discarded };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(endpoint, {
+    const init = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      redirect: "manual",
       body: JSON.stringify({
         task_type: request.task_type,
         prompt: request.prompt,
@@ -24,7 +30,12 @@ export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000
         output: request.output
       }),
       signal: controller.signal
-    });
+    };
+    const response = fetchImpl === globalThis.fetch
+      ? await fetchEnhancementWithPinnedLookup(endpoint, init, endpointPolicy.records, DEFAULT_MAX_ENHANCEMENT_CHARS)
+      : await fetchImpl(endpoint, init);
+    if (response.status >= 300 && response.status < 400) return { enhancement: null, discarded: "redirect" };
+    if (!isJsonResponse(response)) return { enhancement: null, discarded: "non_json" };
     const text = await response.text();
     if (!response.ok) return { enhancement: null, discarded: "ragflow_failed" };
     return validateEnhancement(text, { request, binding });
@@ -33,6 +44,130 @@ export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function validateEnhancementEndpoint(endpoint, env, lookupHost) {
+  let parsed;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return { ok: false, discarded: "invalid_endpoint" };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, discarded: "invalid_endpoint" };
+  if (parsed.username || parsed.password) return { ok: false, discarded: "invalid_endpoint" };
+  const tier = String(env.RAGFLOW_DEPLOYMENT_TIER || env.NODE_ENV || "development").trim().toLowerCase();
+  const allowPrivate = tier !== "production" && String(env.RAGFLOW_ALLOW_PRIVATE_ENDPOINTS || "").trim() === "true";
+  if (tier === "production" && parsed.protocol !== "https:") return { ok: false, discarded: "invalid_endpoint" };
+  if (isUnsafeNetworkHost(parsed.hostname) && (!allowPrivate || !isExplicitPrivateEndpointHost(parsed.hostname))) {
+    return { ok: false, discarded: "invalid_endpoint" };
+  }
+  if (isIpLiteral(parsed.hostname)) return { ok: true, discarded: "", records: [] };
+  let records;
+  try {
+    records = await lookupHost(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    return { ok: false, discarded: "invalid_endpoint" };
+  }
+  const list = Array.isArray(records) ? records : [records];
+  if (!list.length) return { ok: false, discarded: "invalid_endpoint" };
+  for (const record of list) {
+    const address = String(record && record.address || "").trim();
+    if (!address) return { ok: false, discarded: "invalid_endpoint" };
+    if (isUnsafeNetworkHost(address) && (!allowPrivate || !isExplicitPrivateEndpointHost(address))) {
+      return { ok: false, discarded: "invalid_endpoint" };
+    }
+  }
+  return {
+    ok: true,
+    discarded: "",
+    records: list.map((record) => ({
+      address: String(record.address || "").trim(),
+      family: Number(record.family) === 6 ? 6 : 4
+    }))
+  };
+}
+
+function isIpLiteral(hostname) {
+  const host = String(hostname || "").replace(/^\[|\]$/g, "");
+  return /^(\d{1,3}\.){3}\d{1,3}$/u.test(host) || host.includes(":");
+}
+
+function isJsonResponse(response) {
+  if (!response || !response.headers || typeof response.headers.get !== "function") return false;
+  const contentType = String(response.headers.get("content-type") || "").trim();
+  return /^application\/(?:json|[\w.+-]+\+json)\b/i.test(contentType);
+}
+
+function fetchEnhancementWithPinnedLookup(url, init, records = [], maxBytes) {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    let settled = false;
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      rejectResponse(error);
+    };
+    const clientRequest = transport({
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: init.method || "GET",
+      headers: init.headers || {},
+      signal: init.signal,
+      lookup: makePinnedLookup(records)
+    }, (incoming) => {
+      const chunks = [];
+      let total = 0;
+      incoming.on("data", (chunk) => {
+        const buffer = Buffer.from(chunk);
+        total += buffer.length;
+        if (total > maxBytes) {
+          const error = new Error("RAGFlow enhancement response exceeded byte limit.");
+          error.name = "RagflowEnhancementResponseLimitError";
+          incoming.destroy(error);
+          clientRequest.destroy(error);
+          rejectOnce(error);
+          return;
+        }
+        chunks.push(buffer);
+      });
+      incoming.on("error", rejectOnce);
+      incoming.on("end", () => {
+        if (settled) return;
+        settled = true;
+        const body = Buffer.concat(chunks).toString("utf8");
+        resolveResponse({
+          ok: Number(incoming.statusCode) >= 200 && Number(incoming.statusCode) < 300,
+          status: Number(incoming.statusCode) || 0,
+          headers: {
+            get: (name) => String(incoming.headers[String(name || "").toLowerCase()] || "")
+          },
+          text: async () => body
+        });
+      });
+    });
+    clientRequest.on("error", rejectOnce);
+    clientRequest.end(init.body || "");
+  });
+}
+
+function makePinnedLookup(records = []) {
+  if (!records.length) return undefined;
+  return (hostname, options, callback) => {
+    const done = typeof options === "function" ? options : callback;
+    const opts = typeof options === "function" ? {} : options || {};
+    if (opts.all) {
+      done(null, records.map((record) => ({
+        address: record.address,
+        family: record.family
+      })));
+      return;
+    }
+    const record = records[0];
+    done(null, record.address, record.family);
+  };
 }
 
 export function validateEnhancement(raw, { request, binding, maxChars = DEFAULT_MAX_ENHANCEMENT_CHARS } = {}) {
@@ -138,10 +273,6 @@ function containsForbiddenPromptField(value) {
 function validStoryboardShape(value) {
   if ("shot_plan" in value && !Array.isArray(value.shot_plan)) return false;
   if ("normalized_shot_plan" in value && !Array.isArray(value.normalized_shot_plan)) return false;
-  if (!value.storyboard_processing) return true;
-  if (value.storyboard_processing === "normalize_shot_list") return Array.isArray(value.normalized_shot_plan);
-  if (value.storyboard_processing === "script_to_storyboard") return !("normalized_shot_plan" in value);
-  if (value.storyboard_processing === "preserve_full_prompt") return !("shot_plan" in value) && !("normalized_shot_plan" in value);
   return true;
 }
 

@@ -1,21 +1,39 @@
 const CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^\s,;]{8,}))/giu;
-const AUTHORIZATION_HEADER_VALUE = /\b(?:proxy-authorization|authorization)\s*:\s*([^\r\n]+)/giu;
-const AUTHORIZATION_ASSIGNMENT_VALUE = /\b(proxy[_-]?authorization|authorization)\b\s*[:=]\s*([^\r\n,;]{8,})/giu;
 const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/giu;
 const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/giu;
-const COOKIE_HEADER_VALUE = /\b(?:set-cookie|cookie)\s*:\s*([^\r\n]+)/giu;
-const COOKIE_ASSIGNMENT = /\b(?:cookie|session|sessionid|sid|jwt|csrf|xsrf)\b\s*=\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^;\s,]{8,}))/giu;
+const COOKIE_HEADER_VALUE = /\b(set-cookie|cookie)\s*:\s*([^\r\n]+)/giu;
+const COOKIE_ASSIGNMENT_KEY = /\b(cookie|session|sessionid|sid|jwt|csrf|xsrf|auth[_-]?token|access[_-]?token|refresh[_-]?token|token|credential|api[_-]?key)\b\s*=\s*/giu;
 const KNOWN_CREDENTIAL_VALUE = /\b(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
 const PRIVATE_KEY_BLOCK = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/i;
 const BASE64_DATA_URI = /\bdata:[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*(?:;[a-z0-9._+-]+=[^,;\s]+|;[a-z0-9._+-]+)*;base64,[A-Za-z0-9+/=\s]*/gi;
 const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=$|[^A-Za-z0-9+/=])/g;
 const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
 const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret)\s*=\s*"?([^",\s]{8,})"?/giu;
+const AUTH_ASSIGNMENT_KEY = /(^|[^A-Za-z0-9_-])(proxy[-_]?authorization|authorization)\s*([:=])/giu;
 const TEACHING_CONTEXT = /教学|示例|占位|占位符|说明|语法|格式|流程|文案|产品|包装|不是|非真实|not\s+real|placeholder|example|sample|dummy/iu;
 const PLACEHOLDER_CREDENTIAL = /^(?:[<{[]?\s*)?(?:(?:your|replace|replace_me|placeholder|example|sample|dummy|fake|test)(?:[\s_:-]*(?:token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|session|value|bearer))*|(?:token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|password|cookie|session|value|bearer)[\s_:-]*(?:placeholder|example|sample|dummy|fake|test))\s*(?:[>}\]]?)$/iu;
+const DEFAULT_IGNORABLE_AND_FORMAT_CONTROLS = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+const FULLWIDTH_PUNCTUATION = /[：﹕꞉︓]/gu;
+const FULLWIDTH_EQUALS = /[＝﹦]/gu;
+const MAX_AUTHORIZATION_VALUE_CHARS = 4096;
+const MAX_COOKIE_VALUE_CHARS = 4096;
 
 export function containsHighConfidenceSensitivePayload(value) {
-  const text = normalizeDetectionText(value);
+  const original = stringValue(value);
+  const normalized = normalizeTextForSensitiveScan(original);
+  const candidates = original === normalized ? [original] : [original, normalized];
+  return candidates.some((text) => containsSensitivePayloadInText(text));
+}
+
+export function normalizeTextForSensitiveScan(value) {
+  return stringValue(value)
+    .normalize("NFKC")
+    .replace(DEFAULT_IGNORABLE_AND_FORMAT_CONTROLS, "")
+    .replace(FULLWIDTH_PUNCTUATION, ":")
+    .replace(FULLWIDTH_EQUALS, "=");
+}
+
+function containsSensitivePayloadInText(text) {
   if (!text) return false;
   if (PRIVATE_KEY_BLOCK.test(text)) return true;
   if (containsAuthorizationHeader(text)) return true;
@@ -30,32 +48,10 @@ export function containsHighConfidenceSensitivePayload(value) {
   return containsVerifiableLongBase64(text);
 }
 
-function normalizeDetectionText(value) {
-  return stringValue(value)
-    .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
-    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "")
-    .replace(/[：﹕꞉︓]/gu, ":")
-    .replace(/[＝﹦]/gu, "=");
-}
-
 function containsAuthorizationHeader(text) {
-  AUTHORIZATION_HEADER_VALUE.lastIndex = 0;
-  let match;
-  while ((match = AUTHORIZATION_HEADER_VALUE.exec(text))) {
-    const headerValue = firstHeaderExampleSegment(stripOuterQuotes(match[1]));
-    if (!headerValue) continue;
-    const parts = headerValue.match(/^([A-Za-z][A-Za-z0-9._+-]{0,63})(?:\s+(.+))?$/u);
-    if (!parts) {
-      if (isLikelyCredentialValue(headerValue)) return true;
-      continue;
-    }
-    const scheme = parts[1];
-    const credential = stripOuterQuotes(parts[2] || "");
-    if (!AUTH_SCHEME.test(scheme) || !credential) continue;
-    if (containsCredentialParameter(credential)) return true;
-    if (TEACHING_CONTEXT.test(headerValue) && !containsLikelyCredentialToken(credential)) continue;
-    if (isLikelyCredentialValue(credential)) return true;
+  for (const item of extractAuthorizationValues(text, new Set([":"]))) {
+    if (item.tooLong) return true;
+    if (containsAssignedAuthorizationCredential(item.value)) return true;
   }
   return false;
 }
@@ -79,10 +75,9 @@ function containsCredentialParameter(value) {
 }
 
 function containsAuthorizationAssignment(text) {
-  AUTHORIZATION_ASSIGNMENT_VALUE.lastIndex = 0;
-  let match;
-  while ((match = AUTHORIZATION_ASSIGNMENT_VALUE.exec(text))) {
-    const value = stringValue(match[2]).trim();
+  for (const item of extractAuthorizationValues(text, new Set(["="]))) {
+    if (item.tooLong) return true;
+    const value = stringValue(item.value).trim();
     if (!value || isPlaceholderCredential(value)) continue;
     if (containsAssignedAuthorizationCredential(value)) return true;
   }
@@ -90,12 +85,15 @@ function containsAuthorizationAssignment(text) {
 }
 
 function containsCookieAssignment(text) {
-  COOKIE_ASSIGNMENT.lastIndex = 0;
-  let match;
-  while ((match = COOKIE_ASSIGNMENT.exec(text))) {
-    const value = stringValue(match[1] || match[2] || match[3]).trim();
-    if (isPlaceholderCredential(value)) continue;
-    if (value.length >= 16 || shannonEntropy(value) >= 3.0) return true;
+  for (const line of logicalLines(text)) {
+    COOKIE_ASSIGNMENT_KEY.lastIndex = 0;
+    let match;
+    while ((match = COOKIE_ASSIGNMENT_KEY.exec(line))) {
+      const parsed = parseAssignmentValueAt(line, COOKIE_ASSIGNMENT_KEY.lastIndex, MAX_COOKIE_VALUE_CHARS);
+      if (parsed.tooLong) return true;
+      if (isHighConfidenceCookieCredential(match[1], parsed.value, { assignment: true })) return true;
+      COOKIE_ASSIGNMENT_KEY.lastIndex = Math.max(COOKIE_ASSIGNMENT_KEY.lastIndex + 1, parsed.end);
+    }
   }
   return false;
 }
@@ -104,23 +102,14 @@ function containsCookieHeader(text) {
   COOKIE_HEADER_VALUE.lastIndex = 0;
   let match;
   while ((match = COOKIE_HEADER_VALUE.exec(text))) {
-    const headerValue = firstHeaderExampleSegment(match[1]);
-    const teachingExample = TEACHING_CONTEXT.test(headerValue);
-    const pairs = headerValue.split(";").map((item) => item.trim()).filter(Boolean);
+    const headerName = stringValue(match[1]).toLowerCase();
+    const headerValue = boundedHeaderValue(match[2]);
+    const pairs = parseCookiePairs(headerValue, headerName === "set-cookie");
     for (const pair of pairs) {
-      const separator = pair.indexOf("=");
-      if (separator <= 0) continue;
-      const value = stripOuterQuotes(pair.slice(separator + 1));
-      if (isPlaceholderCredential(value)) continue;
-      if (isLikelyCredentialValue(value)) return true;
-      if (!teachingExample && value.length >= 4) return true;
+      if (isHighConfidenceCookieCredential(pair.name, pair.value)) return true;
     }
   }
   return false;
-}
-
-function firstHeaderExampleSegment(value) {
-  return stringValue(value).split(/[。；，、]/u)[0].trim();
 }
 
 function containsCredentialAssignment(text) {
@@ -145,7 +134,7 @@ function isAuthorizationAssignmentKey(key) {
 function containsAssignedAuthorizationCredential(value) {
   const compact = stripOuterQuotes(value).trim();
   if (!compact) return false;
-  const segment = firstHeaderExampleSegment(compact);
+  const segment = compact;
   if (containsCredentialParameter(segment)) return true;
   const parts = segment.match(/^([A-Za-z][A-Za-z0-9._+-]{0,63})(?:\s+(.+))?$/u);
   if (!parts) return isCredentialAssignmentValue(segment);
@@ -153,6 +142,236 @@ function containsAssignedAuthorizationCredential(value) {
   if (!AUTH_SCHEME.test(parts[1]) || !credential || isPlaceholderCredential(credential)) return false;
   if (TEACHING_CONTEXT.test(segment) && !containsLikelyCredentialToken(credential)) return false;
   return isLikelyCredentialValue(credential) || isCredentialAssignmentValue(credential);
+}
+
+function extractAuthorizationValues(text, allowedSeparators) {
+  const values = [];
+  for (const line of logicalLines(text)) {
+    AUTH_ASSIGNMENT_KEY.lastIndex = 0;
+    let match;
+    while ((match = AUTH_ASSIGNMENT_KEY.exec(line))) {
+      const separator = match[3];
+      if (!allowedSeparators.has(separator)) continue;
+      const parsed = parseAssignmentValueAt(line, AUTH_ASSIGNMENT_KEY.lastIndex, MAX_AUTHORIZATION_VALUE_CHARS);
+      values.push(parsed);
+      AUTH_ASSIGNMENT_KEY.lastIndex = Math.max(AUTH_ASSIGNMENT_KEY.lastIndex + 1, parsed.end);
+    }
+  }
+  return values;
+}
+
+function logicalLines(text) {
+  return stringValue(text).split(/\r?\n/u);
+}
+
+function parseAssignmentValueAt(line, start, maxChars) {
+  let index = start;
+  while (index < line.length && /\s/u.test(line[index])) index += 1;
+  if (line[index] === "\"" || line[index] === "'") {
+    return parseQuotedValueAt(line, index, maxChars);
+  }
+  const raw = line.slice(index).trim();
+  return {
+    value: raw.slice(0, maxChars),
+    end: line.length,
+    tooLong: Array.from(raw).length > maxChars,
+    malformed: false
+  };
+}
+
+function parseQuotedValueAt(line, start, maxChars) {
+  const quote = line[start];
+  let escaped = false;
+  let value = "";
+  for (let index = start + 1; index < line.length; index += 1) {
+    const char = line[index];
+    if (escaped) {
+      value += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === quote) {
+      return {
+        value: value.slice(0, maxChars),
+        end: index + 1,
+        tooLong: Array.from(value).length > maxChars,
+        malformed: false
+      };
+    } else {
+      value += char;
+    }
+    if (Array.from(value).length > maxChars) {
+      return {
+        value: value.slice(0, maxChars),
+        end: index + 1,
+        tooLong: true,
+        malformed: false
+      };
+    }
+  }
+  return {
+    value: value.slice(0, maxChars),
+    end: line.length,
+    tooLong: Array.from(value).length > maxChars,
+    malformed: true
+  };
+}
+
+function parseCookiePairs(headerValue, setCookie) {
+  const segments = splitCookieSegments(headerValue);
+  const pairs = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    if (setCookie && index > 0 && isSetCookieAttribute(segments[index])) continue;
+    const separator = segments[index].indexOf("=");
+    if (separator <= 0) continue;
+    const name = segments[index].slice(0, separator).trim();
+    const value = stripOuterQuotes(unescapeCookieValue(segments[index].slice(separator + 1).trim()));
+    if (!name || !value) continue;
+    pairs.push({ name, value });
+    if (setCookie) break;
+  }
+  return pairs;
+}
+
+function boundedHeaderValue(value) {
+  return stringValue(value).split(/\\r|\\n|",(?=[A-Za-z_"])/u)[0].trim();
+}
+
+function splitCookieSegments(value) {
+  const segments = [];
+  let current = "";
+  let quote = "";
+  let escaped = false;
+  for (const char of stringValue(value)) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      current += char;
+      if (char === quote) quote = "";
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      current += char;
+      quote = char;
+      continue;
+    }
+    if (char === ";") {
+      if (current.trim()) segments.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+
+function isSetCookieAttribute(segment) {
+  const name = stringValue(segment).split("=", 1)[0].trim().toLowerCase();
+  return new Set([
+    "domain",
+    "expires",
+    "httponly",
+    "max-age",
+    "partitioned",
+    "path",
+    "priority",
+    "samesite",
+    "secure"
+  ]).has(name);
+}
+
+function isHighConfidenceCookieCredential(name, value, options = {}) {
+  const cleanValue = stripOuterQuotes(value).trim();
+  if (!cleanValue || isPlaceholderCredential(cleanValue)) return false;
+  if (containsBase64DataUri(cleanValue)) return true;
+  if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, cleanValue)) return true;
+  if (containsVerifiableLongBase64(cleanValue)) return true;
+  if (/^eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}$/u.test(cleanValue)) return true;
+  if (/\s/u.test(cleanValue)) return containsLikelyCookieCredentialToken(cleanValue);
+
+  const tokenLike = /^[A-Za-z0-9._~+/=-]+$/u.test(cleanValue);
+  const canonicalName = canonicalCookieName(name);
+  if (isStrictCredentialCookieName(canonicalName)) return true;
+  const highRiskName = isHighRiskCookieName(canonicalName) || (options.assignment && canonicalName === "cookie");
+  if (highRiskName) {
+    if (/^(?:secret|token|auth|session|credential|password|jwt)$/iu.test(cleanValue)) return true;
+    if (isLikelyCredentialValue(cleanValue)) return true;
+    if (tokenLike && cleanValue.length >= 16 && /[A-Za-z0-9]/u.test(cleanValue)) return true;
+    return tokenLike && cleanValue.length >= 8 && shannonEntropy(cleanValue) >= 3.0;
+  }
+
+  if (/^(?:sid|sess|session|tok|token|jwt|auth)[_-]?[A-Za-z0-9._~+/=-]{12,}$/iu.test(cleanValue)) return true;
+  return tokenLike
+    && cleanValue.length >= 32
+    && /[A-Za-z]/u.test(cleanValue)
+    && /\d/u.test(cleanValue)
+    && shannonEntropy(cleanValue) >= 3.2;
+}
+
+function containsLikelyCookieCredentialToken(value) {
+  return stringValue(value)
+    .split(/[\s,;"'，；。、“”‘’()（）<>《》]+/u)
+    .map((part) => part.trim())
+    .filter((part) => /^[A-Za-z0-9._~+/=-]+$/u.test(part))
+    .some((part) => {
+      if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, part)) return true;
+      if (isPlaceholderCredential(part)) return false;
+      if (/^(?:sid|sess|session|tok|token|jwt|auth)[_-]?[A-Za-z0-9._~+/=-]{12,}$/iu.test(part)) return true;
+      return part.length >= 24 && /[A-Za-z]/u.test(part) && /\d/u.test(part) && shannonEntropy(part) >= 3.2;
+    });
+}
+
+function isHighRiskCookieName(name) {
+  return new Set([
+    "session",
+    "sessionid",
+    "sid",
+    "auth",
+    "authtoken",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "jwt",
+    "csrf",
+    "xsrf",
+    "rememberme",
+    "credential",
+    "apikey"
+  ]).has(canonicalCookieName(name));
+}
+
+function isStrictCredentialCookieName(canonicalName) {
+  return new Set([
+    "sessionid",
+    "sid",
+    "auth",
+    "authtoken",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "jwt",
+    "credential",
+    "apikey"
+  ]).has(canonicalName);
+}
+
+function canonicalCookieName(name) {
+  return normalizeTextForSensitiveScan(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function unescapeCookieValue(value) {
+  return stringValue(value).replace(/\\(["'\\])/g, "$1");
 }
 
 function isCredentialAssignmentValue(value) {

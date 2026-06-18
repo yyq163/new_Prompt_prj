@@ -12,8 +12,8 @@
     "THREAT_MODEL.md": "Security and privacy threat model",
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
-  "currentPhase": "verified",
-  "currentTask": "main01-fix08-prompt-optimizer-security-debt",
+  "currentPhase": "review",
+  "currentTask": "main01-fix09-prompt-optimizer-zero-security-debt",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -297,7 +297,50 @@
         "final-integrator-pass-p0-p1-p2-p3-empty-2026-06-18"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix09-prompt-optimizer-zero-security-debt",
+      "status": "premerge_verified",
+      "owner": "lead-orchestrated-codex-subagents",
+      "files": [
+        "src/routes/prompt-optimizations.js",
+        "src/core/runtime.js",
+        "src/core/url-security.js",
+        "tests/**",
+        ".codex-agent-team/context/**",
+        ".codex-agent-team/reports/**",
+        "src/core/sensitive-payload.js",
+        "src/core/ragflow-enhancement.js",
+        "package.json",
+        "API_CONTRACTS.md",
+        "BACKEND_DESIGN.md",
+        "README.md",
+        "THREAT_MODEL.md",
+        "docs/spec/final_image_generation_api_spec_codex_autonomous_v1_4.md"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix09-2026-06-18-pendingChanges-0",
+        "branch-main01-fix09-from-origin-main01-1cb1ffaed353ff256b8fc81d5bc36f604753cc1a",
+        "code-map-skill-refresh-after-branch-fix09-2026-06-18-pendingChanges-0",
+        ".codex-agent-team/context/main01-fix09-prompt-optimizer-zero-security-debt.md",
+        "npm-run-check-pass-2026-06-18-fix09",
+        "npm-test-166-pass-2026-06-18-fix09",
+        "prompt-optimizer-test-35-pass-2026-06-18-fix09",
+        "http-invalid-body-test-5-pass-2026-06-18-fix09",
+        "image-api-test-108-pass-2026-06-18-fix09",
+        "provider-config-present-2026-06-18-fix09",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix09",
+        "git-diff-check-pass-2026-06-18-fix09",
+        "git-diff-cached-check-pass-2026-06-18-fix09",
+        "runtime-secret-scan-pass-no-dependencies-2026-06-18-fix09",
+        "code-map-skill-refresh-precommit-fix09-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-825-edgeCount-2086",
+        ".codex-agent-team/reports/review-main01-fix09-prompt-optimizer-zero-security-debt.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix09-prompt-optimizer-zero-security-debt.md",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix09",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix09"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-18T11:10:00+08:00"
+  "updatedAt": "2026-06-18T12:47:12+08:00"
 }

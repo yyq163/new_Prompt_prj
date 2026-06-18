@@ -44,6 +44,7 @@ Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、
 - `references[]` 采用严格结构化协议，不支持只有 URL 的引用对象：`reference_id`、`entity_name`、`entity_type`、`role`、`url` 均为必填字段，且 `reference_id` 在单次请求内必须唯一。
 - `entity_type` 与 `role` 必须使用 API 合同中的枚举值；`pattern_reference` 仅兼容映射为 `ornament_reference`。
 - 旧请求中的 `usage` 字段可以被接收，但当前版本会忽略它，不参与权重、排序或阻断，也不会在响应中返回。
+- `POST /api/v1/prompt-optimizations` 使用独立且更窄的请求 schema；它的 `references[]` 不接收旧 `usage` 字段，也不接收 output、provider、callback、credential、image、base64、final prompt、compiled prompt 或 internal prompt 字段。
 - 同一 `entity_name + role` 可以有多张参考图，系统会全部使用；未被 prompt 显式 mention 的参考图也会参与编译和 provider 请求。
 - Provider 返回的 URL、base64、data URL 或 binary 生成图会统一标准化为 `images[].url`；其中真实上游 bytes 会通过短期内存 Generated Image Store 暴露为 `/api/v1/generated-images/:image_id`。
 - Provider 返回的外部图片 URL 也会经过公网 URL 安全校验；localhost、loopback、link-local、内网或非 HTTP(S) URL 不会进入公共成功响应。
@@ -55,7 +56,7 @@ Final API provider 模型固定为 `gpt-image-2`，不会使用 `IMAGE_MODEL`、
 - RAGFlow enhancement 还会按当前 `task_type` 做 consumed-field 校验；只要包含当前任务不消费的字段，整段 enhancement 会被丢弃，避免未使用字段改变模板路径。
 - RAGFlow 系统提示词和知识库 seed 见 `docs/ragflow/`；系统提示词只定义 JSON 协议和防幻觉边界，模板正文在 `docs/ragflow/knowledge/`。
 - Prompt optimizer 的 RAGFlow URL 只接受服务端配置的固定 `RAGFLOW_BASE_URL` + `RAGFLOW_CHAT_ID` 拼出的 OpenAI-compatible endpoint；请求体不能覆盖 endpoint、provider、model、callback 或 credentials。
-- 生产环境需设置 `RAGFLOW_DEPLOYMENT_TIER=production`、使用 HTTPS，并通过 `RAGFLOW_ALLOWED_ORIGINS` 显式允许 RAGFlow origin。开发/测试默认同样拒绝 localhost、loopback、private、link-local、multicast、reserved 地址；只有显式 `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` 才允许 loopback、RFC1918 或 ULA 本地 RAGFlow，metadata/link-local/multicast/reserved 仍拒绝。
+- `RAGFLOW_DEPLOYMENT_TIER` 必须严格为 `production`、`staging`、`development` 或 `test`；缺失、`prod`、`stage`、`qa` 或未知值都是配置错误。production/staging 必须使用 HTTPS，并通过 `RAGFLOW_ALLOWED_ORIGINS` 精确允许 scheme/host/effective port，且即使 `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` 也永远拒绝私网端点。development/test 默认拒绝 localhost、loopback、private、link-local、multicast、reserved 地址；只有显式 `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` 才允许 loopback、RFC1918 或 ULA 本地 RAGFlow，metadata/link-local/multicast/reserved 仍拒绝。
 - RAGFlow fetch 禁止 userinfo、自动跨域 redirect 和不安全 DNS 解析结果；Authorization 只发给已批准 origin。响应会校验 `Content-Type`、最大字节数、JSON 深度、键数、数组长度、字符串长度和总字符数，任何失败都丢弃 enhancement 并走 deterministic fallback。
 - 当前阶段不宣称完成工业级高并发能力；现状见 `docs/concurrency-status.md`。
 

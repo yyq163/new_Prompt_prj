@@ -35,6 +35,7 @@
 - Multiple references with the same `entity_name + role` are allowed and all are used.
 - `callback_url` and `callback.url` are accepted and validated as public HTTP(S) URLs but not executed.
 - Callback URL validation rejects localhost, loopback, link-local, private network ranges, IPv6 local/private ranges, and non-HTTP(S) schemes by default.
+- `POST /api/v1/prompt-optimizations` uses an independent, narrower request schema. Its references do not accept legacy `usage`, and the route rejects output, provider, callback, credential, image, base64, final prompt, compiled prompt, and internal prompt fields.
 
 ## Reference Binding
 
@@ -118,14 +119,19 @@ server environment/runtime config. Users cannot provide callback, provider,
 model, endpoint, token, API key, raw provider payload, image, base64, or final
 prompt fields in `POST /api/v1/prompt-optimizations`.
 
-Production RAGFlow requires `RAGFLOW_DEPLOYMENT_TIER=production`, HTTPS, and a
-matching `RAGFLOW_ALLOWED_ORIGINS` entry. Development and test reject private
+`RAGFLOW_DEPLOYMENT_TIER` must be exactly one of `production`, `staging`,
+`development`, or `test`; missing values and aliases such as `prod`, `stage`,
+`qa`, or unknown tiers are configuration errors. Production and staging require
+HTTPS plus a `RAGFLOW_ALLOWED_ORIGINS` entry that exactly matches scheme, host,
+and effective port, and they always reject private RAGFlow endpoints even if
+`RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Development and test reject private
 RAGFlow endpoints by default; `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true` is the only
 local opt-in, and it is limited to loopback, RFC1918, and ULA endpoints.
-Metadata, link-local, multicast, reserved, and documentation ranges remain
-blocked. The fetch path rejects userinfo, unsafe schemes, non-origin base URL
-paths, localhost/private endpoints without the opt-in above, IPv4-mapped IPv6,
-and unsafe DNS results. Redirects are handled manually and never followed
+Malformed allowlist entries, metadata, link-local, multicast, reserved, and
+documentation ranges remain blocked. The fetch path rejects userinfo, unsafe
+schemes, non-origin base URL paths, localhost/private endpoints without the
+opt-in above, IPv4-mapped IPv6, and unsafe DNS results. Redirects are handled
+manually and never followed
 across origins. Authorization is attached only when the endpoint origin matches
 the approved origin.
 

@@ -227,10 +227,16 @@ limits such as `RAGFLOW_TIMEOUT_MS`, `RAGFLOW_MAX_RESPONSE_BYTES`,
 `RAGFLOW_MAX_JSON_DEPTH`, `RAGFLOW_MAX_JSON_KEYS`,
 `RAGFLOW_MAX_JSON_ARRAY_LENGTH`, `RAGFLOW_MAX_JSON_STRING_LENGTH`, and
 `RAGFLOW_MAX_ENHANCEMENT_CHARS` are never accepted from user request payloads.
-Production requires HTTPS plus `RAGFLOW_ALLOWED_ORIGINS`; development/test
-allow only loopback, RFC1918, or ULA private endpoints with
-`RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Metadata, link-local, multicast,
-reserved, and documentation ranges remain blocked even with the opt-in.
+`RAGFLOW_DEPLOYMENT_TIER` is strict and must be one of `production`,
+`staging`, `development`, or `test`; missing values and aliases such as `prod`,
+`stage`, `qa`, or unknown tiers are configuration errors. Production and staging
+require HTTPS plus an explicit `RAGFLOW_ALLOWED_ORIGINS` entry that exactly
+matches scheme, host, and effective port, and they always reject private
+endpoints even when `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Development and test
+reject private endpoints by default and allow only loopback, RFC1918, or ULA
+private endpoints with `RAGFLOW_ALLOW_PRIVATE_ENDPOINTS=true`. Metadata,
+link-local, multicast, reserved, and documentation ranges remain blocked even
+with the opt-in. Malformed allowlist entries are configuration errors.
 
 ### Prompt optimization response
 
@@ -245,7 +251,10 @@ reserved, and documentation ranges remain blocked even with the opt-in.
 Unknown request fields are rejected. The optimizer does not accept `output`,
 `options`, callback fields, provider/model fields, credentials, image payloads,
 base64, raw provider payloads, `final_prompt`, `compiled_prompt`, or
-`internal_prompt`.
+`internal_prompt`. Its `references[]` sub-schema is narrower than
+`POST /api/v1/image-generations`: it accepts only `reference_id`, `entity_name`,
+`entity_type`, `role`, `url`, `mime_type`, `display_name`, `description`, and
+`order`; legacy `usage` is rejected for prompt optimization requests.
 
 Public success fields:
 
@@ -312,6 +321,7 @@ Forbidden public fields:
 - `ENTITY_REFERENCE_NOT_FOUND`
 - `PROMPT_REQUIRED`
 - `UNSUPPORTED_TASK_TYPE`
+- `OPTIMIZED_PROMPT_INVALID`
 - `PROVIDER_CONFIG_MISSING`
 - `IMAGE_PROVIDER_CALL_FAILED`
 - `IMAGE_PROVIDER_TIMEOUT`

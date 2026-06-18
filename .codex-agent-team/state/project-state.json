@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "review",
-  "currentTask": "main01-fix13-prompt-optimizer-credential-detection",
+  "currentTask": "main01-fix14-prompt-optimizer-trailing-credential-gaps",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -499,7 +499,46 @@
         "task-dag-validate-pass-10-tasks-no-next-2026-06-19-fix13"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix14-prompt-optimizer-trailing-credential-gaps",
+      "status": "verified",
+      "owner": "lead-codex-with-subagents",
+      "files": [
+        "src/core/sensitive-payload.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/image-api.test.js",
+        ".codex-agent-team/context/main01-fix14-prompt-optimizer-trailing-credential-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix14-prompt-optimizer-trailing-credential-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix14-prompt-optimizer-trailing-credential-gaps.md"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-initial-fix14-pendingChanges-0-2026-06-19",
+        "branch-main01-fix14-from-origin-main01-6ebba6220b2627b1c1bfb68f3f86eac5e0d2754f",
+        "code-map-skill-refresh-fix-branch-pendingChanges-0-2026-06-19",
+        "failing-test-repro-quoted-auth-tail-and-cookie-assignment-50-pass-2-fail-2026-06-19",
+        "failing-test-repro-benign-auth-tail-52-pass-1-fail-2026-06-19",
+        "failing-test-repro-schemeless-auth-assignment-53-pass-1-fail-2026-06-19",
+        "code-map-skill-refresh-implementation-fix14-pendingChanges-0-fileCount-29-nodeCount-930-edgeCount-2360",
+        "code-map-skill-refresh-final-precommit-fix14-pendingChanges-0-fileCount-29-nodeCount-931-edgeCount-2366",
+        "npm-run-check-pass-2026-06-19-fix14",
+        "npm-test-190-pass-2026-06-19-fix14",
+        "prompt-optimizer-54-pass-2026-06-19-fix14",
+        "http-invalid-body-8-pass-2026-06-19-fix14",
+        "provider-poll-url-security-9-pass-2026-06-19-fix14",
+        "image-api-110-pass-2026-06-19-fix14",
+        "provider-config-real-provider-config-present-2026-06-19-fix14",
+        "final-v1-4-evidence-scan-pass-2026-06-19-fix14",
+        "git-diff-check-pass-2026-06-19-fix14",
+        "security-scan-pass-synthetic-fixtures-only-2026-06-19-fix14",
+        ".codex-agent-team/reports/review-main01-fix14-prompt-optimizer-trailing-credential-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix14-prompt-optimizer-trailing-credential-gaps.md",
+        "subagent-code-auth-cookie-natural-ragflow-regression-security-test-evidence-zero-p0-p1-p2-p3-2026-06-19-fix14",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-19-fix14",
+        "review-gate-pass-blockingCount-0-2026-06-19-fix14"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-19T00:12:53+08:00"
+  "updatedAt": "2026-06-19T04:44:31+08:00"
 }

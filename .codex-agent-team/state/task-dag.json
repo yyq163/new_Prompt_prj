@@ -591,6 +591,71 @@
         "review-gate-pass-blockingCount-0-2026-06-19-fix13",
         "task-dag-validate-pass-10-tasks-no-next-2026-06-19-fix13"
       ]
+    },
+    {
+      "id": "main01-fix14-prompt-optimizer-trailing-credential-gaps",
+      "title": "Close prompt optimizer trailing authorization parameters and low-risk cookie assignment gaps",
+      "status": "verified",
+      "dependsOn": [
+        "main01-fix13-prompt-optimizer-credential-detection"
+      ],
+      "filesExpected": [
+        "src/core/sensitive-payload.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        ".codex-agent-team/context/main01-fix14-prompt-optimizer-trailing-credential-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix14-prompt-optimizer-trailing-credential-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix14-prompt-optimizer-trailing-credential-gaps.md"
+      ],
+      "acceptance": [
+        "Authorization and proxy authorization assignment parsing consumes complete logical lines after a quoted primary value and rejects trailing response, signature, credential, token, key, or secret parameters",
+        "Authorization parser supports comma and semicolon parameters, quoted delimiters, escaped quotes, Digest, AWS4, ApiKey, Token, Custom, malformed quote rejection, and bounded line, parameter, and value sizes",
+        "Cookie header and assignment forms share one pair parser and allow low-risk preference pairs such as flavor=choco, theme=dark, language=zh-CN, and layout=grid without requiring product or teaching context",
+        "Cookie parser still rejects high-risk session/auth/token/JWT/API-key names, JWT/OAuth/known credential formats, high-entropy long values, and encoded payloads even in product copy",
+        "Rejected prompt optimizer cases do not call RAGFlow fetch, provider, Generated Image Store, or callback paths and do not expose synthetic credentials in public errors, logs, reports, or evidence",
+        "Fix13 Unicode default-ignorable scanning, fullwidth and bidi normalization, unquoted multi-parameter Authorization parsing, Cookie Header compatibility, strict request schema, duplicate/prototype defense, trace_id contract, resources, tier, SSRF/DNS, RAGFlow bounds, unsafe output scan, provider/store/callback isolation, public forbidden scan, and Chinese multi-task regressions remain covered",
+        "All required tests, security scans, subagent reviews, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node tests/unit/http-invalid-body.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix14-prompt-optimizer-trailing-credential-gaps.json",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-initial-fix14-pendingChanges-0-2026-06-19",
+        "branch-main01-fix14-from-origin-main01-6ebba6220b2627b1c1bfb68f3f86eac5e0d2754f",
+        "code-map-skill-refresh-fix-branch-pendingChanges-0-2026-06-19",
+        "failing-test-repro-quoted-auth-tail-and-cookie-assignment-50-pass-2-fail-2026-06-19",
+        "failing-test-repro-benign-auth-tail-52-pass-1-fail-2026-06-19",
+        "failing-test-repro-schemeless-auth-assignment-53-pass-1-fail-2026-06-19",
+        "code-map-skill-refresh-implementation-fix14-pendingChanges-0-fileCount-29-nodeCount-930-edgeCount-2360",
+        "code-map-skill-refresh-final-precommit-fix14-pendingChanges-0-fileCount-29-nodeCount-931-edgeCount-2366",
+        "npm-run-check-pass-2026-06-19-fix14",
+        "npm-test-190-pass-2026-06-19-fix14",
+        "prompt-optimizer-54-pass-2026-06-19-fix14",
+        "http-invalid-body-8-pass-2026-06-19-fix14",
+        "provider-poll-url-security-9-pass-2026-06-19-fix14",
+        "image-api-110-pass-2026-06-19-fix14",
+        "provider-config-real-provider-config-present-2026-06-19-fix14",
+        "final-v1-4-evidence-scan-pass-2026-06-19-fix14",
+        "git-diff-check-pass-2026-06-19-fix14",
+        "security-scan-pass-synthetic-fixtures-only-2026-06-19-fix14",
+        ".codex-agent-team/reports/review-main01-fix14-prompt-optimizer-trailing-credential-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix14-prompt-optimizer-trailing-credential-gaps.md",
+        "subagent-code-auth-cookie-natural-ragflow-regression-security-test-evidence-zero-p0-p1-p2-p3-2026-06-19-fix14",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-19-fix14",
+        "review-gate-pass-blockingCount-0-2026-06-19-fix14"
+      ]
     }
   ]
 }

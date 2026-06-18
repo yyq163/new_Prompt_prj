@@ -114,6 +114,19 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", base64: "abc" },
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", b64_json: "abc" },
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", data_url: "data:image/png;base64,abc" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", metadata: { topic: "x" } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", options: { safe: true } },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", extra: {} },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", context: {} },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", headers: null },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", authorization: false },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", "final-prompt": null },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", Final_Prompt: false },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", "ｆｉｎａｌ＿ｐｒｏｍｐｔ": 0 },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", apiKey: "" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", "proxy-authorization": "" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", "image-url": "" },
+    { task_type: "text_image", prompt: "生成一张山间晨雾图。", baseUrl: "" },
     { task_type: "text_image", prompt: "生成一张山间晨雾图。", images: [{ url: "https://example.com/x.png" }] },
     { request_id: { value: "req_bad" }, task_type: "text_image", prompt: "生成一张山间晨雾图。" },
     { request_id: "req bad space", task_type: "text_image", prompt: "生成一张山间晨雾图。" },
@@ -129,10 +142,17 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
     assert.equal("optimized_prompt" in result.payload, false);
     assertNoPublicLeaks(result.payload);
   }
+
+  const nullPrototypeBody = Object.create(null);
+  nullPrototypeBody.task_type = "text_image";
+  nullPrototypeBody.prompt = "生成一张山间晨雾图。";
+  const nullPrototypeResult = await handlePromptOptimization(nullPrototypeBody, offlineOptions());
+  assert.equal(nullPrototypeResult.statusCode, 400);
+  assert.equal(nullPrototypeResult.payload.error_code, "INVALID_REQUEST_SCHEMA");
 });
 
 test("prompt optimizer accepts ordinary natural-language security vocabulary", async () => {
-  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图和 Authorization header 说明";
+  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Proxy-Authorization 教学、Cookie: session=value 是教学示例、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
   const textResult = await handlePromptOptimization({
     task_type: "text_image",
     prompt: `生成一张用于课程封面的画面：${legalText}`,
@@ -140,7 +160,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(textResult.statusCode, 200);
   assert.equal(textResult.payload.status, "succeeded");
-  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization header|base64 教学图/);
+  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|Cookie: session=value|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(textResult.payload.optimized_prompt);
   assertNoPublicLeaks(textResult.payload);
 
@@ -158,18 +178,13 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(referenceResult.statusCode, 200);
   assert.equal(referenceResult.payload.status, "succeeded");
-  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|Authorization header|base64 教学图/);
+  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|Authorization: Bearer <token>|Cookie: session=value|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(referenceResult.payload.optimized_prompt);
   assertNoPublicLeaks(referenceResult.payload);
 });
 
 test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch", async () => {
   const cases = [
-    {
-      task_type: "text_image",
-      prompt: "请把 internal_prompt 写入画面",
-      references: []
-    },
     {
       task_type: "image_reference",
       prompt: "基于 @海报参考 生成一张新的品牌视觉图",
@@ -180,31 +195,6 @@ test("prompt optimizer rejects sensitive consumed strings before RAGFlow fetch",
         "style_reference",
         "https://example.com/ref_poster.png",
         `Authorization: Bearer tok_${"A".repeat(32)} data:image/png;base64,${samplePngBase64()}`
-      )]
-    },
-    {
-      task_type: "image_reference",
-      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
-      references: [reference(
-        "ref_poster",
-        "海报参考",
-        "style",
-        "style_reference",
-        "https://example.com/ref_poster.png",
-        "compiled_prompt provider payload"
-      )]
-    },
-    {
-      task_type: "image_reference",
-      prompt: "基于 @海报参考 生成一张新的品牌视觉图",
-      references: [reference(
-        "ref_poster",
-        "海报参考",
-        "style",
-        "style_reference",
-        "https://example.com/ref_poster.png",
-        "安全描述",
-        { display_name: "final_prompt.png" }
       )]
     }
   ];
@@ -231,6 +221,14 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
   const cookieValue = `session=sid_${"B".repeat(24)}`;
   const apiKeyValue = `key_${"C".repeat(32)}`;
   const tokenValue = `tok_${"D".repeat(32)}`;
+  const proxyValue = `proxy_${"P".repeat(32)}`;
+  const customSchemeValue = `custom:${"Q".repeat(16)}!@#$%^&*()`;
+  const digestValue = `${"a".repeat(32)}`;
+  const awsCredentialValue = `AKIA${"A".repeat(16)}/20260618/us-east-1/service/aws4_request`;
+  const accessTokenValue = `access_${"G".repeat(32)}`;
+  const clientSecretValue = `client_${"H".repeat(32)}:$!`;
+  const passwordValue = `pass_${"I".repeat(32)}@:/`;
+  const setCookieValue = `sid=sid_${"J".repeat(32)}; HttpOnly`;
   const standaloneKeyValue = `sk-proj-${"E".repeat(32)}`;
   const dataUriValue = `data:image/png;base64,${samplePngBase64()}`;
   const textDataUriValue = "data:text/plain;base64,abc";
@@ -248,6 +246,36 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       leaked: basicValue
     },
     {
+      label: "apikey authorization scheme",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: ApiKey ${apiKeyValue}`, references: [] },
+      leaked: apiKeyValue
+    },
+    {
+      label: "token authorization scheme",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: Token ${tokenValue}`, references: [] },
+      leaked: tokenValue
+    },
+    {
+      label: "digest authorization response",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: Digest username="tester", response="${digestValue}"`, references: [] },
+      leaked: digestValue
+    },
+    {
+      label: "aws4 authorization credential",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: AWS4-HMAC-SHA256 Credential=${awsCredentialValue}, Signature=${"b".repeat(40)}`, references: [] },
+      leaked: awsCredentialValue
+    },
+    {
+      label: "custom authorization scheme",
+      body: { task_type: "text_image", prompt: `请绘制 Authorization: X-Custom ${customSchemeValue}`, references: [] },
+      leaked: customSchemeValue
+    },
+    {
+      label: "proxy authorization scheme",
+      body: { task_type: "text_image", prompt: `请绘制 Proxy-Authorization: Fancy ${proxyValue}`, references: [] },
+      leaked: proxyValue
+    },
+    {
       label: "bare bearer credential",
       body: { task_type: "text_image", prompt: `请绘制 Bearer ${bearerValue}`, references: [] },
       leaked: bearerValue
@@ -261,6 +289,11 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       label: "cookie header value",
       body: { task_type: "text_image", prompt: `请绘制 Cookie: ${cookieValue}`, references: [] },
       leaked: cookieValue
+    },
+    {
+      label: "set-cookie header value",
+      body: { task_type: "text_image", prompt: `请绘制 Set-Cookie: ${setCookieValue}`, references: [] },
+      leaked: setCookieValue
     },
     {
       label: "cookie assignment value",
@@ -281,6 +314,26 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
       label: "token assignment",
       body: { task_type: "text_image", prompt: `token=${tokenValue}`, references: [] },
       leaked: tokenValue
+    },
+    {
+      label: "quoted authorization assignment with special characters",
+      body: { task_type: "text_image", prompt: `authorization="X-Custom ${customSchemeValue}"`, references: [] },
+      leaked: customSchemeValue
+    },
+    {
+      label: "access_token assignment",
+      body: { task_type: "text_image", prompt: `access_token='${accessTokenValue}'`, references: [] },
+      leaked: accessTokenValue
+    },
+    {
+      label: "client_secret assignment",
+      body: { task_type: "text_image", prompt: `client_secret="${clientSecretValue}"`, references: [] },
+      leaked: clientSecretValue
+    },
+    {
+      label: "password assignment",
+      body: { task_type: "text_image", prompt: `password="${passwordValue}"`, references: [] },
+      leaked: passwordValue
     },
     {
       label: "real image data URI",
@@ -342,6 +395,279 @@ test("prompt optimizer rejects high-confidence credentials and data payloads bef
     assert.equal(output.includes(leaked), false, label);
     assertNoPublicLeaks(result.payload);
   }
+});
+
+test("prompt optimizer enforces prompt and reference character and byte boundaries", async () => {
+  const promptAtLimit = "山".repeat(86);
+  const promptEnv = {
+    PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS: "86",
+    PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES: String(Buffer.byteLength(promptAtLimit, "utf8"))
+  };
+  let result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: promptAtLimit,
+    references: []
+  }, { env: promptEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 200);
+
+  result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: `${promptAtLimit}山`,
+    references: []
+  }, { env: promptEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  const emojiPromptAtLimit = `${"山".repeat(84)}😀`;
+  const emojiEnv = {
+    PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS: "85",
+    PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES: String(Buffer.byteLength(emojiPromptAtLimit, "utf8"))
+  };
+  result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: emojiPromptAtLimit,
+    references: []
+  }, { env: emojiEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 200);
+
+  result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: `${emojiPromptAtLimit}a`,
+    references: []
+  }, {
+    env: { ...emojiEnv, PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS: "86" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  const refAtLimit = reference(
+    "ref_packaging",
+    "包装参考",
+    "style",
+    "style_reference",
+    "https://example.com/ref_packaging.png",
+    "山".repeat(40)
+  );
+  const refTextAtLimit = [refAtLimit.entity_name, refAtLimit.display_name, refAtLimit.description].join("\n");
+  const referenceEnv = {
+    PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_CHARS: String(Array.from(refTextAtLimit).length),
+    PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_BYTES: String(Buffer.byteLength(refTextAtLimit, "utf8"))
+  };
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @包装参考 生成一张安全培训海报",
+    references: [refAtLimit]
+  }, { env: referenceEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 200);
+
+  const refOverLimit = { ...refAtLimit, description: `${refAtLimit.description}山` };
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @包装参考 生成一张安全培训海报",
+    references: [refOverLimit]
+  }, { env: referenceEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  const aggregateRefs = [
+    reference("ref_style", "风格参考", "style", "style_reference", "https://example.com/ref_style.png", "青".repeat(36)),
+    reference("ref_light", "光线参考", "lighting", "lighting_reference", "https://example.com/ref_light.png", "蓝".repeat(36))
+  ];
+  const aggregateText = aggregateRefs.map((ref) => [ref.entity_name, ref.display_name, ref.description].join("\n")).join("\n");
+  const aggregateEnv = {
+    PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_CHARS: String(Array.from(aggregateText).length),
+    PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_BYTES: String(Buffer.byteLength(aggregateText, "utf8"))
+  };
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @风格参考 和 @光线参考 生成一张安全培训海报",
+    references: aggregateRefs
+  }, { env: aggregateEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 200);
+
+  const aggregateOverRefs = [aggregateRefs[0], { ...aggregateRefs[1], description: `${aggregateRefs[1].description}蓝` }];
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @风格参考 和 @光线参考 生成一张安全培训海报",
+    references: aggregateOverRefs
+  }, { env: aggregateEnv, fetchImpl: async () => { throw new Error("must not fetch"); } });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+});
+
+test("PromptOptimizationRequest JSON depth key array and string limits are exact", async () => {
+  let result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "山".repeat(86),
+    references: []
+  }, {
+    env: {
+      PROMPT_OPTIMIZATION_MAX_JSON_KEYS: "3",
+      PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH: "0",
+      PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS: "86"
+    },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 200);
+
+  result = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: `${"山".repeat(86)}山`,
+    references: []
+  }, {
+    env: { PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS: "86" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  result = await handlePromptOptimization({
+    request_id: "req_key_over",
+    task_type: "text_image",
+    prompt: "山".repeat(86),
+    references: []
+  }, {
+    env: { PROMPT_OPTIMIZATION_MAX_JSON_KEYS: "3" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  const oneRef = reference("ref_style", "风格参考", "style", "style_reference");
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @风格参考 生成一张安全培训海报",
+    references: [oneRef]
+  }, {
+    env: { PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH: "1", PROMPT_OPTIMIZATION_MAX_JSON_DEPTH: "3" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 200);
+
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @风格参考 生成一张安全培训海报",
+    references: [oneRef, reference("ref_light", "光线参考", "lighting", "lighting_reference")]
+  }, {
+    env: { PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH: "1" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+
+  result = await handlePromptOptimization({
+    task_type: "image_reference",
+    prompt: "基于 @风格参考 生成一张安全培训海报",
+    references: [oneRef]
+  }, {
+    env: { PROMPT_OPTIMIZATION_MAX_JSON_DEPTH: "2" },
+    fetchImpl: async () => { throw new Error("must not fetch"); }
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA");
+});
+
+test("RAGFlow request body and message limits are exact and block fetch on overrun", async () => {
+  const request = promptRequest();
+  const binding = { resolved_references: [], references_used: [], entity_mentions: [] };
+  const referencePlan = buildReferencePlan({ resolved_references: [] });
+  let capturedBodyBytes = 0;
+  let capturedMessageChars = 0;
+
+  await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv(),
+    lookupHost: publicLookup,
+    fetchImpl: async (_url, init) => {
+      capturedBodyBytes = Buffer.byteLength(init.body, "utf8");
+      const body = JSON.parse(init.body);
+      capturedMessageChars = body.messages.reduce((total, message) => total + Array.from(message.content).length, 0);
+      return jsonResponse({
+        choices: [{ message: { content: JSON.stringify({ visual_focus: "边界内增强" }) } }]
+      });
+    }
+  });
+  assert.equal(capturedBodyBytes > 512, true);
+  assert.equal(capturedMessageChars > 128, true);
+
+  let fetches = 0;
+  await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_MAX_REQUEST_BYTES: String(capturedBodyBytes) }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      return jsonResponse({
+        choices: [{ message: { content: JSON.stringify({ visual_focus: "恰好上限增强" }) } }]
+      });
+    }
+  });
+  assert.equal(fetches, 1);
+
+  fetches = 0;
+  await assert.rejects(() => callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_MAX_REQUEST_BYTES: String(capturedBodyBytes - 1) }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch oversized request body");
+    }
+  }), isInvalidRequestSchema);
+  assert.equal(fetches, 0);
+
+  fetches = 0;
+  await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_MAX_REQUEST_MESSAGE_CHARS: String(capturedMessageChars) }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      return jsonResponse({
+        choices: [{ message: { content: JSON.stringify({ visual_focus: "消息恰好上限增强" }) } }]
+      });
+    }
+  });
+  assert.equal(fetches, 1);
+
+  fetches = 0;
+  await assert.rejects(() => callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_MAX_REQUEST_MESSAGE_CHARS: String(capturedMessageChars - 1) }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch oversized request messages");
+    }
+  }), isInvalidRequestSchema);
+  assert.equal(fetches, 0);
+
+  const wrappedResult = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: ragflowEnv({ RAGFLOW_MAX_REQUEST_MESSAGE_CHARS: "128" }),
+    lookupHost: publicLookup,
+    fetchImpl: async () => {
+      throw new Error("must not fetch oversized wrapped request");
+    }
+  });
+  assert.equal(wrappedResult.statusCode, 400);
+  assert.equal(wrappedResult.payload.error_code, "INVALID_REQUEST_SCHEMA");
+  assert.equal(wrappedResult.payload.message.includes("RAGFlow"), false);
+  assertNoPublicLeaks(wrappedResult.payload);
 });
 
 test("task_type is separated from generation_mode", async () => {
@@ -576,6 +902,15 @@ test("validateRagflowEnhancement rejects internal and unauthorized content", () 
   assert.equal(validateRagflowEnhancement({ reference_id: "bad_ref", visual_focus: "x" }, context), null);
   assert.equal(validateRagflowEnhancement({ shot_plan: [{ asset_id: "asset_1", text: "x" }] }, context), null);
   assert.equal(validateRagflowEnhancement({ template_guidance: "旧字段" }, context), null);
+  assert.equal(validateRagflowEnhancement(JSON.parse("{\"action_stages\":[{\"constructor\":\"构造器泄漏\",\"prototype\":\"原型泄漏\",\"＿＿ｐｒｏｔｏ＿＿\":\"全角proto泄漏\",\"ｃｏｎｓｔｒｕｃｔｏｒ\":\"全角泄漏\",\"stage\":\"安全阶段\"}]}"), {
+    request: { task_type: "storyboard" },
+    binding: { resolved_references: [] }
+  }), null);
+  const safeStageEnhancement = validateRagflowEnhancement(JSON.parse("{\"action_stages\":[{\"stage\":\"安全阶段\"}]}"), {
+    request: { task_type: "storyboard" },
+    binding: { resolved_references: [] }
+  });
+  assert.equal(safeStageEnhancement?.action_stages?.[0]?.stage, "安全阶段");
   assert.deepEqual(validateRagflowEnhancement({ missing_constraints: "补充用户未写明的可见约束" }, context), { missing_constraints: "补充用户未写明的可见约束" });
   assert.deepEqual(validateRagflowEnhancement({ visual_focus: "保留庭院空间层次" }, context), { visual_focus: "保留庭院空间层次" });
 });
@@ -1049,6 +1384,85 @@ test("RAGFlow timeout uses AbortController signal and falls back deterministical
   assertNoPublicLeaks(result.payload);
 });
 
+test("RAGFlow DNS lookup timeout and elapsed lookup time constrain fetch budget", async () => {
+  const request = promptRequest();
+  const binding = { resolved_references: [], references_used: [], entity_mentions: [] };
+  const referencePlan = buildReferencePlan({ resolved_references: [] });
+
+  let lateResolved = false;
+  let fetches = 0;
+  const lateCandidate = await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_TIMEOUT_MS: "80", RAGFLOW_DNS_TIMEOUT_MS: "20" }),
+    lookupHost: async () => new Promise((resolveLookup) => {
+      setTimeout(() => {
+        lateResolved = true;
+        resolveLookup([{ address: "93.184.216.34", family: 4 }]);
+      }, 60);
+    }),
+    fetchImpl: async (_url, init) => {
+      fetches += 1;
+      assert.equal(init?.headers?.Authorization, undefined);
+      throw new Error("must not fetch after DNS timeout");
+    }
+  });
+  assert.equal(lateCandidate, null);
+  assert.equal(fetches, 0);
+  await delay(80);
+  assert.equal(lateResolved, true);
+  assert.equal(fetches, 0);
+
+  const neverResult = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env: ragflowEnv({ RAGFLOW_TIMEOUT_MS: "80", RAGFLOW_DNS_TIMEOUT_MS: "20" }),
+    lookupHost: async () => new Promise(() => {}),
+    fetchImpl: async () => {
+      fetches += 1;
+      throw new Error("must not fetch after never-resolving DNS");
+    }
+  });
+  assert.equal(neverResult.statusCode, 200);
+  assert.equal(neverResult.payload.status, "succeeded");
+  assert.equal(fetches, 0);
+  assertTextImagePrompt(neverResult.payload.optimized_prompt);
+  assertNoPublicLeaks(neverResult.payload);
+
+  let aborted = false;
+  let fetchAbortDelay = 0;
+  fetches = 0;
+  const budgetCandidate = await callRagflowPromptOptimizer({
+    request,
+    binding,
+    referencePlan,
+    env: ragflowEnv({ RAGFLOW_TIMEOUT_MS: "140", RAGFLOW_DNS_TIMEOUT_MS: "100" }),
+    lookupHost: async () => {
+      await delay(60);
+      return [{ address: "93.184.216.34", family: 4 }];
+    },
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      fetches += 1;
+      const startedAt = Date.now();
+      init.signal.addEventListener("abort", () => {
+        aborted = true;
+        fetchAbortDelay = Date.now() - startedAt;
+        const error = new Error("aborted by remaining deadline");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    })
+  });
+  assert.equal(budgetCandidate, null);
+  assert.equal(fetches, 1);
+  assert.equal(aborted, true);
+  assert.equal(fetchAbortDelay < 120, true);
+  assert.equal(fetchAbortDelay >= 40, true);
+});
+
 test("RAGFlow embedded JSON content limits and empty sanitization cannot trigger full templates", async () => {
   const deepContent = { shot_plan: [{ level1: { level2: { level3: { level4: { level5: { level6: { level7: "deep" } } } } } } }] };
   const deep = await handlePromptOptimization({
@@ -1323,7 +1737,7 @@ function assertNoPromptLeaks(prompt) {
   ]) {
     assert.equal(prompt.includes(title), false, `field-summary title leaked: ${title}`);
   }
-  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider payload", "provider_internal_payload", "input_analysis", "storyboard_processing", "data:image"]) {
+  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "input_analysis", "storyboard_processing", "data:image"]) {
     assert.equal(prompt.includes(token), false, `internal token leaked: ${token}`);
   }
   assertNoSensitivePayload(prompt);
@@ -1331,16 +1745,16 @@ function assertNoPromptLeaks(prompt) {
 
 function assertNoPublicLeaks(payload) {
   const text = JSON.stringify(payload);
-  for (const token of ["final_prompt", "compiled_prompt", "internal_prompt", "enhancement", "RAGFlow", "fallback", "provider_internal_payload", "provider payload", "apiKey", "data:image"]) {
+  for (const token of ["enhancement", "RAGFlow", "fallback", "provider_internal_payload", "apiKey", "data:image"]) {
     assert.equal(text.includes(token), false, `forbidden token leaked: ${token}`);
   }
   assertNoSensitivePayload(text);
 }
 
 function assertNoSensitivePayload(text) {
-  assert.doesNotMatch(text, /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+[A-Za-z0-9._~+/\-=]{16,}/i);
-  assert.doesNotMatch(text, /\bCookie\s*:\s*[^;\s=]{1,80}=[^;\s]{4,}/i);
-  assert.doesNotMatch(text, /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*["']?[A-Za-z0-9._~+/\-=]{12,}/i);
+  assert.doesNotMatch(text, /\b(?:Proxy-Authorization|Authorization)\s*:\s*[A-Za-z][A-Za-z0-9._+-]{0,63}\s+[A-Za-z0-9._~+/=-]{16,}/i);
+  assert.doesNotMatch(text, /\b(?:Set-Cookie|Cookie)\s*:\s*[^;\s=]{1,80}=[A-Za-z0-9._~+/%-]{16,}/i);
+  assert.doesNotMatch(text, /\b(?:proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*["']?[^\s"',;]{20,}/i);
   assert.doesNotMatch(text, /\bdata:image\/(?:png|jpeg|jpg|webp|gif);base64,/i);
 }
 
@@ -1436,6 +1850,10 @@ function jsonResponse(json, options = {}) {
 
 function publicLookup() {
   return Promise.resolve([{ address: "93.184.216.34", family: 4 }]);
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function localLookup() {

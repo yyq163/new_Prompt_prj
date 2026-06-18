@@ -20,7 +20,10 @@ import { request as httpsRequest } from "node:https";
 import { resolve } from "node:path";
 
 const RAGFLOW_TIMEOUT_MS = 8_000;
+const RAGFLOW_DNS_TIMEOUT_MS = 1_000;
 const RAGFLOW_MAX_RESPONSE_BYTES = 64 * 1024;
+const RAGFLOW_MAX_REQUEST_BYTES = 64 * 1024;
+const RAGFLOW_MAX_REQUEST_MESSAGE_CHARS = 16_000;
 const RAGFLOW_MAX_JSON_DEPTH = 8;
 const RAGFLOW_MAX_JSON_KEYS = 120;
 const RAGFLOW_MAX_JSON_ARRAY_LENGTH = 64;
@@ -28,6 +31,16 @@ const RAGFLOW_MAX_JSON_STRING_LENGTH = 4000;
 const RAGFLOW_MAX_ENHANCEMENT_CHARS = 8000;
 const ROOT = resolve(import.meta.dirname, "../..");
 const PROMPT_MIN_CJK = 80;
+const PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS = 4000;
+const PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES = 12_000;
+const PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_CHARS = 1200;
+const PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_BYTES = 4096;
+const PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_CHARS = 12_000;
+const PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_BYTES = 32 * 1024;
+const PROMPT_OPTIMIZATION_MAX_JSON_DEPTH = 8;
+const PROMPT_OPTIMIZATION_MAX_JSON_KEYS = 80;
+const PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH = 32;
+const PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS = 4096;
 const PROMPT_OPTIMIZATION_ALLOWED_FIELDS = new Set([
   "request_id",
   "task_type",
@@ -81,6 +94,54 @@ const PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS = new Set([
   "ragflow_status",
   "fallback_status"
 ]);
+const FORBIDDEN_CANONICAL_SCHEMA_KEYS = new Set([
+  "__proto__",
+  "proto",
+  "prototype",
+  "constructor",
+  "finalprompt",
+  "compiledprompt",
+  "internalprompt",
+  "provider",
+  "providerconfig",
+  "provideroptions",
+  "providerpayload",
+  "providerinternalpayload",
+  "providerrawpayload",
+  "providerrawresponse",
+  "rawprovider",
+  "rawproviderpayload",
+  "rawproviderresponse",
+  "apikey",
+  "authorization",
+  "proxyauthorization",
+  "headers",
+  "cookie",
+  "setcookie",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "authtoken",
+  "secret",
+  "clientsecret",
+  "password",
+  "callback",
+  "callbackurl",
+  "images",
+  "image",
+  "imageurl",
+  "b64json",
+  "base64",
+  "imagebase64",
+  "dataurl",
+  "model",
+  "endpoint",
+  "baseurl",
+  "metadata",
+  "options",
+  "extra",
+  "context"
+]);
 const RAGFLOW_ALLOWED_FIELDS = new Set([
   "scene_summary",
   "visual_focus",
@@ -101,8 +162,7 @@ const RAGFLOW_CONSUMED_FIELDS_BY_TASK = Object.freeze({
   prop_multiview: new Set(["visual_focus", "composition_notes", "missing_constraints"]),
   storyboard: new Set(["story_function", "action_stages", "lighting_notes", "composition_notes", "missing_constraints"])
 });
-const RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT = /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|reference_id|asset_id|b64_json|data_url|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
-const PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|provider\s*payload|provider_internal_payload|raw_provider|b64_json|data_url)/i;
+const RAGFLOW_FORBIDDEN_STRUCTURAL_TEXT = /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|reference_id|asset_id|primary|auxiliary|weight|priority|主参考|辅参考|权重|优先级/i;
 const PROMPT_PUBLIC_SUCCESS_FIELDS = new Set([
   "status",
   "request_id",
@@ -123,7 +183,7 @@ const PROMPT_PUBLIC_ERROR_FIELDS = new Set([
   "trace_id"
 ]);
 const PROMPT_PUBLIC_FORBIDDEN_KEY = /(?:final_prompt|compiled_prompt|internal_prompt|enhancement|ragflow|fallback|provider|callback|images?|b64_json|base64|data_url|authorization|cookie|bearer|api[_-]?key|token|secret|stack|raw)/i;
-const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:final_prompt|compiled_prompt|internal_prompt|RAGFlow|fallback_status|ragflow_status|provider_internal_payload|provider payload|b64_json|data:image|data_url|stack trace)/i;
+const PROMPT_PUBLIC_FORBIDDEN_TEXT = /(?:RAGFlow|fallback_status|ragflow_status|provider_internal_payload|data:image|stack trace)/i;
 const RAGFLOW_DEPLOYMENT_TIERS = new Set(["production", "staging", "development", "test"]);
 
 export async function handlePromptOptimization(body, options = {}) {
@@ -144,13 +204,11 @@ export async function handlePromptOptimization(body, options = {}) {
       clarification("PROMPT_REQUIRED", "prompt 不能为空。");
     }
 
-    const request = normalizePromptOptimizationRequest({
-      ...body,
-      request_id: fallbackRequestId
-    });
+    const env = options.env || process.env;
+    const request = normalizePromptOptimizationRequest(body, env, fallbackRequestId);
     const context = await buildPromptOptimizationContext(request, {
       fetchImpl: options.fetchImpl || globalThis.fetch,
-      env: options.env || process.env,
+      env,
       lookupHost: options.lookupHost || dnsLookup
     });
     const optimizedPrompt = compileOptimizedPrompt(context);
@@ -176,8 +234,10 @@ export async function handlePromptOptimization(body, options = {}) {
   }
 }
 
-export function normalizePromptOptimizationRequest(body) {
+export function normalizePromptOptimizationRequest(body, env = process.env, fallbackRequestId = "") {
+  const limits = promptOptimizationLimits(env);
   assertPromptOptimizationBodyObject(body);
+  assertPromptOptimizationJsonLimits(body, limits);
   assertPromptOptimizationRequestFields(body);
   const taskType = requiredStringField(body, "task_type").trim();
   if (!VALID_TASK_TYPES.includes(taskType)) {
@@ -187,10 +247,11 @@ export function normalizePromptOptimizationRequest(body) {
   if (!prompt) {
     clarification("PROMPT_REQUIRED", "prompt 不能为空。");
   }
+  assertTextBoundary(prompt, "prompt", limits.maxPromptChars, limits.maxPromptBytes);
   assertNoForbiddenInputText(prompt, "prompt");
-  const references = normalizePromptOptimizationReferences(body.references);
+  const references = normalizePromptOptimizationReferences(body.references, limits);
   const referencePolicy = normalizePromptOptimizationReferencePolicy(body.reference_policy);
-  const requestId = safeRequestId(body.request_id) || makeId("req");
+  const requestId = safeRequestId(body.request_id) || safeRequestId(fallbackRequestId) || makeId("req");
   const request = {
     request_id: requestId,
     task_type: taskType,
@@ -206,17 +267,13 @@ export function normalizePromptOptimizationRequest(body) {
 }
 
 function assertPromptOptimizationBodyObject(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
+  if (!isPlainRecord(body)) {
     fail("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
   }
 }
 
 function assertPromptOptimizationRequestFields(body) {
-  for (const key of Object.keys(body)) {
-    if (PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key) || !PROMPT_OPTIMIZATION_ALLOWED_FIELDS.has(key)) {
-      fail("INVALID_REQUEST_SCHEMA", "请求包含不允许的提示词优化字段。");
-    }
-  }
+  assertAllowedObjectKeys(body, PROMPT_OPTIMIZATION_ALLOWED_FIELDS, "请求包含不允许的提示词优化字段。");
   if (body.request_id != null && (typeof body.request_id !== "string" || !safeRequestId(body.request_id))) {
     fail("INVALID_REQUEST_SCHEMA", "request_id 必须是安全字符串。");
   }
@@ -226,12 +283,45 @@ function assertPromptOptimizationRequestFields(body) {
 function assertNoForbiddenSchemaKeys(value) {
   walk(value, (node) => {
     if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    if (!isPlainRecord(node)) fail("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
     for (const key of Object.keys(node)) {
-      if (PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key)) {
+      if (isForbiddenSchemaKey(key)) {
         fail("INVALID_REQUEST_SCHEMA", "请求包含不允许的提示词优化字段。");
       }
     }
   });
+}
+
+function assertAllowedObjectKeys(value, allowed, message) {
+  if (!isPlainRecord(value)) fail("INVALID_REQUEST_SCHEMA", message);
+  const seen = new Set();
+  for (const key of Object.keys(value)) {
+    const canonical = canonicalSchemaKey(key);
+    if (seen.has(canonical)) fail("INVALID_REQUEST_SCHEMA", message);
+    seen.add(canonical);
+    if (isForbiddenSchemaKey(key) || !allowed.has(key)) {
+      fail("INVALID_REQUEST_SCHEMA", message);
+    }
+  }
+}
+
+function isForbiddenSchemaKey(key) {
+  if (PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key)) return true;
+  return FORBIDDEN_CANONICAL_SCHEMA_KEYS.has(canonicalSchemaKey(key));
+}
+
+function canonicalSchemaKey(key) {
+  return stringValue(key)
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_.-]+/g, "");
+}
+
+function isPlainRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype;
 }
 
 function requiredStringField(body, field) {
@@ -250,73 +340,157 @@ function safeRequestId(value) {
   return /^[A-Za-z0-9_-]{1,120}$/.test(text) ? text : "";
 }
 
-function normalizePromptOptimizationReferences(value) {
+function normalizePromptOptimizationReferences(value, limits) {
   if (value == null) return [];
   if (!Array.isArray(value)) fail("INVALID_REQUEST_SCHEMA", "references 必须是数组。");
   if (value.length > 16) fail("INVALID_REQUEST_SCHEMA", "references 最多支持 16 个。");
-  return value.map(normalizePromptOptimizationReference);
+  const references = value.map((item, index) => normalizePromptOptimizationReference(item, index, limits));
+  assertReferenceAggregateBoundary(references, limits);
+  return references;
 }
 
-function normalizePromptOptimizationReference(ref, index) {
-  if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
+function normalizePromptOptimizationReference(ref, index, limits) {
+  if (!isPlainRecord(ref)) {
     fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference 必须是对象。`);
   }
-  for (const key of Object.keys(ref)) {
-    if (!PROMPT_REFERENCE_ALLOWED_FIELDS.has(key) || PROMPT_OPTIMIZATION_FORBIDDEN_FIELDS.has(key)) {
-      fail("INVALID_REQUEST_SCHEMA", "reference 包含不允许的字段。");
-    }
-  }
-  const referenceId = requiredReferenceString(ref, "reference_id", index);
+  assertAllowedObjectKeys(ref, PROMPT_REFERENCE_ALLOWED_FIELDS, "reference 包含不允许的字段。");
+  const referenceId = requiredReferenceString(ref, "reference_id", index, 80, limits);
   if (!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(referenceId)) {
     fail("INVALID_REQUEST_SCHEMA", "reference_id 只能包含字母、数字、下划线和短横线，且必须以字母开头。");
   }
-  const entityName = requiredReferenceString(ref, "entity_name", index, 120);
-  const entityType = normalizePromptReferenceEntityType(requiredReferenceString(ref, "entity_type", index, 80));
-  const role = normalizePromptReferenceRole(requiredReferenceString(ref, "role", index, 80));
-  const url = assertReferenceUrlAllowed(requiredReferenceString(ref, "url", index, 2048), "reference.url");
-  const mimeType = optionalReferenceString(ref, "mime_type", 80) || "image/png";
+  const entityName = requiredReferenceString(ref, "entity_name", index, 120, limits);
+  const entityType = normalizePromptReferenceEntityType(requiredReferenceString(ref, "entity_type", index, 80, limits));
+  const role = normalizePromptReferenceRole(requiredReferenceString(ref, "role", index, 80, limits));
+  const url = assertReferenceUrlAllowed(requiredReferenceString(ref, "url", index, 2048, limits), "reference.url");
+  const mimeType = optionalReferenceString(ref, "mime_type", 80, limits) || "image/png";
   if (!/^image\/(?:png|jpeg|jpg|webp)$/i.test(mimeType)) {
     fail("INVALID_REQUEST_SCHEMA", "reference.mime_type 只支持 image/png、image/jpeg 或 image/webp。");
   }
-  return {
+  const item = {
     reference_id: referenceId,
     entity_name: entityName,
     entity_type: entityType,
     role,
     url,
     mime_type: mimeType.replace(/^image\/jpg$/i, "image/jpeg"),
-    display_name: optionalReferenceString(ref, "display_name", 160),
-    description: optionalReferenceString(ref, "description", 800),
+    display_name: optionalReferenceString(ref, "display_name", 160, limits),
+    description: optionalReferenceString(ref, "description", 800, limits),
     order: normalizeReferenceOrder(ref.order, index)
   };
+  assertReferenceItemBoundary(item, limits);
+  return item;
 }
 
-function requiredReferenceString(ref, field, index, maxLength = 160) {
+function requiredReferenceString(ref, field, index, maxLength = 160, limits = defaultPromptOptimizationLimits()) {
   if (typeof ref[field] !== "string" || !ref[field].trim()) {
     fail("INVALID_REQUEST_SCHEMA", `第 ${index + 1} 个 reference.${field} 不能为空。`);
   }
   const text = ref[field].trim();
-  if (text.length > maxLength) {
+  if (unicodeLength(text) > maxLength) {
     fail("INVALID_REQUEST_SCHEMA", `reference.${field} 过长。`);
   }
   assertNoForbiddenInputText(text, `reference.${field}`);
   return text;
 }
 
-function optionalReferenceString(ref, field, maxLength) {
+function optionalReferenceString(ref, field, maxLength, limits = defaultPromptOptimizationLimits()) {
   if (ref[field] == null) return "";
   if (typeof ref[field] !== "string") fail("INVALID_REQUEST_SCHEMA", `reference.${field} 必须是字符串。`);
   const text = ref[field].trim();
-  if (text.length > maxLength) fail("INVALID_REQUEST_SCHEMA", `reference.${field} 过长。`);
+  if (unicodeLength(text) > maxLength) fail("INVALID_REQUEST_SCHEMA", `reference.${field} 过长。`);
   assertNoForbiddenInputText(text, `reference.${field}`);
   return text;
 }
 
 function assertNoForbiddenInputText(value, field) {
   const text = stringValue(value);
-  if (PROMPT_OPTIMIZATION_FORBIDDEN_INPUT_TEXT.test(text) || containsHighConfidenceSensitivePayload(text)) {
+  if (containsHighConfidenceSensitivePayload(text)) {
     fail("INVALID_REQUEST_SCHEMA", `${field} 包含不允许的敏感内容。`);
   }
+}
+
+function promptOptimizationLimits(env = process.env) {
+  return {
+    maxPromptChars: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS, 1, 20_000, PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS),
+    maxPromptBytes: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES, 1, 64 * 1024, PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES),
+    maxReferenceTextChars: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_CHARS, 1, 4000, PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_CHARS),
+    maxReferenceTextBytes: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_BYTES, 1, 16 * 1024, PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_BYTES),
+    maxReferenceAggregateChars: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_CHARS, 1, 40_000, PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_CHARS),
+    maxReferenceAggregateBytes: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_BYTES, 1, 128 * 1024, PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_BYTES),
+    maxJsonDepth: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_JSON_DEPTH, 0, 24, PROMPT_OPTIMIZATION_MAX_JSON_DEPTH),
+    maxJsonKeys: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_JSON_KEYS, 1, 400, PROMPT_OPTIMIZATION_MAX_JSON_KEYS),
+    maxJsonArrayLength: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH, 0, 64, PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH),
+    maxJsonStringChars: strictIntEnv(env.PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS, 1, 20_000, PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS)
+  };
+}
+
+function defaultPromptOptimizationLimits() {
+  return {
+    maxPromptChars: PROMPT_OPTIMIZATION_MAX_PROMPT_CHARS,
+    maxPromptBytes: PROMPT_OPTIMIZATION_MAX_PROMPT_BYTES,
+    maxReferenceTextChars: PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_CHARS,
+    maxReferenceTextBytes: PROMPT_OPTIMIZATION_MAX_REFERENCE_TEXT_BYTES,
+    maxReferenceAggregateChars: PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_CHARS,
+    maxReferenceAggregateBytes: PROMPT_OPTIMIZATION_MAX_REFERENCE_AGGREGATE_BYTES,
+    maxJsonDepth: PROMPT_OPTIMIZATION_MAX_JSON_DEPTH,
+    maxJsonKeys: PROMPT_OPTIMIZATION_MAX_JSON_KEYS,
+    maxJsonArrayLength: PROMPT_OPTIMIZATION_MAX_JSON_ARRAY_LENGTH,
+    maxJsonStringChars: PROMPT_OPTIMIZATION_MAX_JSON_STRING_CHARS
+  };
+}
+
+function assertPromptOptimizationJsonLimits(value, limits) {
+  const stack = [{ value, depth: 0 }];
+  let keys = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    if (current.depth > limits.maxJsonDepth) fail("INVALID_REQUEST_SCHEMA", "请求体层级过深。");
+    const node = current.value;
+    if (typeof node === "string") {
+      if (unicodeLength(node) > limits.maxJsonStringChars) fail("INVALID_REQUEST_SCHEMA", "请求体字符串过长。");
+      continue;
+    }
+    if (Array.isArray(node)) {
+      if (node.length > limits.maxJsonArrayLength) fail("INVALID_REQUEST_SCHEMA", "请求体数组过长。");
+      for (const item of node) stack.push({ value: item, depth: current.depth + 1 });
+      continue;
+    }
+    if (node && typeof node === "object") {
+      if (!isPlainRecord(node)) fail("INVALID_REQUEST_SCHEMA", "请求体必须是 JSON 对象。");
+      const entries = Object.entries(node);
+      keys += entries.length;
+      if (keys > limits.maxJsonKeys) fail("INVALID_REQUEST_SCHEMA", "请求体字段过多。");
+      for (const [, item] of entries) stack.push({ value: item, depth: current.depth + 1 });
+    }
+  }
+}
+
+function assertTextBoundary(text, field, maxChars, maxBytes) {
+  if (unicodeLength(text) > maxChars || Buffer.byteLength(text, "utf8") > maxBytes) {
+    fail("INVALID_REQUEST_SCHEMA", `${field} 过长。`);
+  }
+}
+
+function assertReferenceItemBoundary(ref, limits) {
+  const text = [
+    ref.entity_name,
+    ref.display_name,
+    ref.description
+  ].filter(Boolean).join("\n");
+  assertTextBoundary(text, "reference", limits.maxReferenceTextChars, limits.maxReferenceTextBytes);
+}
+
+function assertReferenceAggregateBoundary(references, limits) {
+  const text = references.map((ref) => [
+    ref.entity_name,
+    ref.display_name,
+    ref.description
+  ].filter(Boolean).join("\n")).join("\n");
+  assertTextBoundary(text, "references", limits.maxReferenceAggregateChars, limits.maxReferenceAggregateBytes);
+}
+
+function unicodeLength(text) {
+  return Array.from(stringValue(text)).length;
 }
 
 function normalizePromptReferenceRole(value) {
@@ -347,14 +521,10 @@ function normalizeReferenceOrder(value, index) {
 
 function normalizePromptOptimizationReferencePolicy(value) {
   if (value == null) return { unbound_entity: "warn" };
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     fail("INVALID_REQUEST_SCHEMA", "reference_policy 必须是对象。");
   }
-  for (const key of Object.keys(value)) {
-    if (!PROMPT_REFERENCE_POLICY_ALLOWED_FIELDS.has(key)) {
-      fail("INVALID_REQUEST_SCHEMA", "reference_policy 包含不允许的字段。");
-    }
-  }
+  assertAllowedObjectKeys(value, PROMPT_REFERENCE_POLICY_ALLOWED_FIELDS, "reference_policy 包含不允许的字段。");
   if (value.unbound_entity != null && typeof value.unbound_entity !== "string") {
     fail("INVALID_REQUEST_SCHEMA", "reference_policy.unbound_entity 必须是字符串。");
   }
@@ -525,31 +695,34 @@ export async function callRagflowEnhancementIfAvailable({ request, binding, refe
       referencePlan,
       maxChars: config.maxEnhancementChars
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ImageApiError && error.errorCode === "INVALID_REQUEST_SCHEMA") throw error;
     return null;
   }
 }
 
 export async function callRagflowPromptOptimizer({ request, binding, referencePlan, fetchImpl = globalThis.fetch, env = process.env, config = null, lookupHost = dnsLookup } = {}) {
   const activeConfig = config || ragflowConfig(env);
-  const resolution = await validateRagflowEndpointForFetch(activeConfig, lookupHost);
   const userPrompt = ragflowUserPrompt(request, binding, referencePlan);
   assertNoSensitiveRagflowOutbound(userPrompt);
+  const requestBody = buildRagflowPromptOptimizerRequestBody(activeConfig, userPrompt);
+  const deadline = createDeadline(activeConfig.timeoutMs);
+  let resolution;
+  try {
+    resolution = await validateRagflowEndpointForFetch(activeConfig, lookupHost, deadline);
+  } catch (error) {
+    if (error && error.name === "RagflowLookupTimeoutError") return null;
+    throw error;
+  }
+  const remainingMs = deadline.remainingMs();
+  if (remainingMs <= 0) return null;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), activeConfig.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), remainingMs);
   try {
     const requestInit = {
       method: "POST",
       headers: ragflowRequestHeaders(activeConfig),
-      body: JSON.stringify({
-        model: activeConfig.model,
-        stream: false,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: ragflowSystemPrompt() },
-          { role: "user", content: userPrompt }
-        ]
-      }),
+      body: requestBody,
       redirect: "manual",
       signal: controller.signal
     };
@@ -573,11 +746,32 @@ export async function callRagflowPromptOptimizer({ request, binding, referencePl
     if (isRagflowErrorEnvelope(json)) return null;
     return parseRagflowOptimizedPrompt(json, activeConfig.jsonLimits);
   } catch (error) {
-    if (error && (error.name === "AbortError" || error.name === "RagflowResponseLimitError")) return null;
+    if (error && (error.name === "AbortError" || error.name === "RagflowResponseLimitError" || error.name === "RagflowLookupTimeoutError")) return null;
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function buildRagflowPromptOptimizerRequestBody(config, userPrompt) {
+  const systemPrompt = ragflowSystemPrompt();
+  const messageChars = unicodeLength(systemPrompt) + unicodeLength(userPrompt);
+  if (messageChars > config.maxRequestMessageChars) {
+    fail("INVALID_REQUEST_SCHEMA", "请求消息过长。");
+  }
+  const body = JSON.stringify({
+    model: config.model,
+    stream: false,
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ]
+  });
+  if (Buffer.byteLength(body, "utf8") > config.maxRequestBytes) {
+    fail("INVALID_REQUEST_SCHEMA", "请求体过大。");
+  }
+  return body;
 }
 
 function assertNoSensitiveRagflowOutbound(userPrompt) {
@@ -605,6 +799,7 @@ export function ragflowConfig(env = process.env) {
   }
   const normalized = normalizeRagflowBaseUrl(baseUrl, env);
   const endpoint = `${normalized.baseUrl}/api/v1/openai/${encodeURIComponent(chatId)}/chat/completions`;
+  const timeoutMs = intEnv(env.RAGFLOW_TIMEOUT_MS, 50, 60_000, RAGFLOW_TIMEOUT_MS);
   return {
     apiKey,
     model: stringValue(env.RAGFLOW_MODEL || fileConfig.model).trim() || "model",
@@ -612,7 +807,10 @@ export function ragflowConfig(env = process.env) {
     approvedOrigin: normalized.origin,
     tier: normalized.tier,
     allowPrivateEndpoint: normalized.allowPrivateEndpoint,
-    timeoutMs: intEnv(env.RAGFLOW_TIMEOUT_MS, 1000, 60_000, RAGFLOW_TIMEOUT_MS),
+    timeoutMs,
+    dnsTimeoutMs: intEnv(env.RAGFLOW_DNS_TIMEOUT_MS, 1, timeoutMs, Math.min(RAGFLOW_DNS_TIMEOUT_MS, timeoutMs)),
+    maxRequestBytes: intEnv(env.RAGFLOW_MAX_REQUEST_BYTES, 512, 1024 * 1024, RAGFLOW_MAX_REQUEST_BYTES),
+    maxRequestMessageChars: intEnv(env.RAGFLOW_MAX_REQUEST_MESSAGE_CHARS, 128, 128_000, RAGFLOW_MAX_REQUEST_MESSAGE_CHARS),
     maxResponseBytes: intEnv(env.RAGFLOW_MAX_RESPONSE_BYTES, 1024, 1024 * 1024, RAGFLOW_MAX_RESPONSE_BYTES),
     maxEnhancementChars: intEnv(env.RAGFLOW_MAX_ENHANCEMENT_CHARS, 1000, 64_000, RAGFLOW_MAX_ENHANCEMENT_CHARS),
     jsonLimits: {
@@ -693,7 +891,48 @@ function intEnv(value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
-async function validateRagflowEndpointForFetch(config, lookupHost) {
+function strictIntEnv(value, min, max, fallback) {
+  if (value == null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || number > max) throwRagflowConfigInvalid();
+  return number;
+}
+
+function createDeadline(timeoutMs) {
+  const expiresAt = Date.now() + timeoutMs;
+  return {
+    remainingMs() {
+      return Math.max(0, expiresAt - Date.now());
+    }
+  };
+}
+
+class RagflowLookupTimeoutError extends Error {
+  constructor() {
+    super("RAGFlow DNS lookup timed out.");
+    this.name = "RagflowLookupTimeoutError";
+  }
+}
+
+async function lookupHostWithDeadline(lookupHost, hostname, options, deadline, dnsTimeoutMs) {
+  const timeoutMs = Math.min(dnsTimeoutMs, deadline.remainingMs());
+  if (timeoutMs <= 0) throw new RagflowLookupTimeoutError();
+  const lookupPromise = Promise.resolve().then(() => lookupHost(hostname, options));
+  lookupPromise.catch(() => {});
+  let timer;
+  try {
+    return await Promise.race([
+      lookupPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new RagflowLookupTimeoutError()), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function validateRagflowEndpointForFetch(config, lookupHost, deadline = createDeadline(config.timeoutMs)) {
   const parsed = new URL(config.endpoint);
   if (parsed.origin !== config.approvedOrigin) throwRagflowConfigInvalid();
   if (isUnsafeNetworkHost(parsed.hostname) && (!config.allowPrivateEndpoint || !isExplicitPrivateEndpointHost(parsed.hostname))) throwRagflowConfigInvalid();
@@ -701,9 +940,13 @@ async function validateRagflowEndpointForFetch(config, lookupHost) {
 
   let records;
   try {
-    records = await lookupHost(parsed.hostname, { all: true, verbatim: true });
-  } catch {
+    records = await lookupHostWithDeadline(lookupHost, parsed.hostname, { all: true, verbatim: true }, deadline, config.dnsTimeoutMs);
+  } catch (error) {
+    if (error && error.name === "RagflowLookupTimeoutError") throw error;
     throwRagflowConfigInvalid();
+  }
+  if (deadline.remainingMs() <= 0) {
+    throw new RagflowLookupTimeoutError();
   }
   const list = Array.isArray(records) ? records : [records];
   if (!list.length) throwRagflowConfigInvalid();
@@ -1020,7 +1263,8 @@ function sanitizePlainObject(value) {
 }
 
 function isForbiddenEnhancementKey(key) {
-  return /^(?:final_prompt|compiled_prompt|internal_prompt|provider|model|images?|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|bearer|token|secret|api[_-]?key|enhancement|primary|auxiliary|weight|priority|url|b64_json|base64|data_url)$/i.test(stringValue(key));
+  return isForbiddenSchemaKey(key)
+    || /^(?:final_prompt|compiled_prompt|internal_prompt|provider|model|images?|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|bearer|token|secret|api[_-]?key|enhancement|primary|auxiliary|weight|priority|url|b64_json|base64|data_url)$/i.test(stringValue(key));
 }
 
 function containsForbiddenEnhancementKey(value) {
@@ -1330,7 +1574,7 @@ function containsForbiddenEnhancementText(text) {
 
 function containsForbiddenOptimizedPromptText(text) {
   const value = stringValue(text);
-  return /RAGFlow|fallback|provider\s*:|provider\s*payload|provider_internal_payload|raw_provider|internal_prompt|final_prompt|compiled_prompt|b64_json|data:image|enhancement|input_analysis|storyboard_processing/i.test(value)
+  return /RAGFlow|fallback|provider\s*:|provider_internal_payload|raw_provider|data:image|enhancement|input_analysis|storyboard_processing/i.test(value)
     || containsHighConfidenceSensitivePayload(value);
 }
 

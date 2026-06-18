@@ -223,10 +223,12 @@ enhancement field.
 
 RAGFlow URL configuration is server-side only. `RAGFLOW_BASE_URL`,
 `RAGFLOW_CHAT_ID`, `RAGFLOW_API_KEY`, optional `RAGFLOW_MODEL`, and resource
-limits such as `RAGFLOW_TIMEOUT_MS`, `RAGFLOW_MAX_RESPONSE_BYTES`,
-`RAGFLOW_MAX_JSON_DEPTH`, `RAGFLOW_MAX_JSON_KEYS`,
-`RAGFLOW_MAX_JSON_ARRAY_LENGTH`, `RAGFLOW_MAX_JSON_STRING_LENGTH`, and
-`RAGFLOW_MAX_ENHANCEMENT_CHARS` are never accepted from user request payloads.
+limits such as `RAGFLOW_TIMEOUT_MS`, `RAGFLOW_DNS_TIMEOUT_MS`,
+`RAGFLOW_MAX_REQUEST_BYTES`, `RAGFLOW_MAX_REQUEST_MESSAGE_CHARS`,
+`RAGFLOW_MAX_RESPONSE_BYTES`, `RAGFLOW_MAX_JSON_DEPTH`,
+`RAGFLOW_MAX_JSON_KEYS`, `RAGFLOW_MAX_JSON_ARRAY_LENGTH`,
+`RAGFLOW_MAX_JSON_STRING_LENGTH`, and `RAGFLOW_MAX_ENHANCEMENT_CHARS` are never
+accepted from user request payloads.
 `RAGFLOW_DEPLOYMENT_TIER` is strict and must be one of `production`,
 `staging`, `development`, or `test`; missing values and aliases such as `prod`,
 `stage`, `qa`, or unknown tiers are configuration errors. Production and staging
@@ -255,6 +257,32 @@ base64, raw provider payloads, `final_prompt`, `compiled_prompt`, or
 `POST /api/v1/image-generations`: it accepts only `reference_id`, `entity_name`,
 `entity_type`, `role`, `url`, `mime_type`, `display_name`, `description`, and
 `order`; legacy `usage` is rejected for prompt optimization requests.
+
+The prompt optimization request validator is recursive. Every object level is
+treated as `additionalProperties=false`, and field names must be exact ASCII
+contract keys. Field names are also normalized with NFKC, trim, lowercase, and
+separator removal before duplicate/conflict checks. Duplicate JSON keys,
+canonical conflicts, `__proto__`, `prototype`, `constructor`, and snake/camel/
+kebab/fullwidth variants of forbidden keys are rejected even when their value is
+`null`, `false`, `0`, or an empty string. Outbound RAGFlow payloads are rebuilt
+only from the normalized allowlist and never spread or forward the raw body.
+
+Natural-language values may discuss security terms such as `Authorization`,
+`Bearer token`, `cookie`, `secret`, `base64`, `final_prompt`, provider payloads,
+`b64_json`, or `data_url` when they are ordinary teaching or design text. The
+validator rejects only structured forbidden fields or high-confidence payloads:
+real `Authorization` / `Proxy-Authorization` credentials with any scheme,
+quoted credential assignments, API tokens/secrets/passwords, Cookie/Set-Cookie
+values, data URIs, verifiable long base64, known key prefixes, and high-entropy
+credential-like values. Rejected values are not sent to RAGFlow and are not
+echoed in public errors.
+
+Prompt optimization has independent input bounds for prompt Unicode characters
+and UTF-8 bytes, single reference text, references aggregate text, JSON depth,
+key count, array length, and string length. RAGFlow request JSON has separate
+message-character and byte limits. Values exactly at their configured limit are
+accepted; values one unit over are rejected with `INVALID_REQUEST_SCHEMA` before
+RAGFlow lookup or fetch.
 
 Public success fields:
 

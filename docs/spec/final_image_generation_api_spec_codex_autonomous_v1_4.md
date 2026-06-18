@@ -13,14 +13,37 @@ The service receives downstream JSON requests, validates structured references, 
 - `POST /api/v1/image-generations`
 - `GET /api/v1/generated-images/:image_id`
 - `POST /api/reference-images` for local browser helper uploads only
+- `POST /api/v1/prompt-optimizations` for prompt optimization only
 
 The ai-tu frontend at `/` is the visible test page. The legacy `/api/image-jobs` route is not the final API acceptance route.
 
+`POST /api/v1/prompt-optimizations` is the canonical prompt optimization
+endpoint. `/api/prompt-optimizer` is a browser legacy alias that maps to the
+same handler; it exists for compatibility with the ai-tu test page's current
+`fetch("/api/prompt-optimizer", ...)` call and must not be relied on by new
+clients. Both paths share one implementation and one contract.
+
 `POST /api/reference-images` accepts one multipart `image` file from the local
-browser test page, stores it in the in-memory Generated Image Store, and returns
-a service-generated URL for structured `references[].url`. It is not the Final
-image generation endpoint and must not be used to bypass the JSON-only
-`references[]` contract of `POST /api/v1/image-generations`.
+browser test page and returns a public URL for structured `references[].url`.
+It is not the Final image generation endpoint and must not be used to bypass
+the JSON-only `references[]` contract of `POST /api/v1/image-generations`.
+
+The uploaded reference image is exposed through one of two surfaces:
+
+- The in-memory Generated Image Store (the default), returning a
+  service-generated URL under `/api/v1/generated-images/:image_id`.
+- When configured via `IMAGE_HOST_MODE=imgbb`, an external image host that
+  returns a public HTTP(S) URL reachable by the remote Final image
+  generation provider.
+
+The external host mode exists because the Final image generation provider is
+remote and cannot reach the local Generated Image Store address; it also
+keeps the request body of `POST /api/v1/image-generations` bounded by a URL
+string instead of inlined image bytes, which is necessary because downstream
+reference image sizes are not controllable. Only `POST /api/reference-images`
+may use external image hosting; the JSON-only `POST
+/api/v1/image-generations` endpoint never uploads images to a host and only
+accepts already-resolved `references[].url` values.
 
 ## Request
 
@@ -43,8 +66,9 @@ Malformed JSON and request bodies over `MAX_BODY_SIZE` are rejected at the HTTP
 layer with HTTP 400, `status: "failed"`, and
 the V3.6 error envelope carrying `error.code:
 "INVALID_REQUEST_SCHEMA"`. The same 400 code applies to
-`POST /api/v1/prompt-optimizations`, using that legacy route's public error
-shape. These failures do not enter request normalization or provider execution.
+`POST /api/v1/prompt-optimizations` (and its `/api/prompt-optimizer` alias),
+using that endpoint's own public error shape. These failures do not enter
+request normalization or provider execution.
 
 ## task_type
 
@@ -223,7 +247,15 @@ Provider result forms supported:
 
 The final API always returns `images[].url`.
 
-If the provider returns external URLs, they are returned as public image URLs. If the provider returns real image bytes, the bytes are stored in Generated Image Store and exposed through `/api/v1/generated-images/:image_id`.
+The service never passes provider-returned external URLs through to
+`images[].url` directly. Regardless of whether the provider returns
+fetchable external URLs, real image bytes, `b64_json`, `base64`, data URLs,
+or binary buffers, the service fetches and stores them in Generated Image
+Store and exposes them through `/api/v1/generated-images/:image_id`. As a
+result, `images[].url` is always a service-controlled URL that does not
+reveal the upstream provider. Provider-returned external URLs that fail
+public URL safety validation or cannot be fetched are rejected as provider
+failures instead of being returned as success.
 
 Provider-returned external URLs must pass public URL safety validation before
 entering `images[].url`. Localhost, loopback, link-local, private network, and
@@ -252,12 +284,42 @@ Generated Image Store requirements:
 - placeholder image as success
 - file upload to `POST /api/v1/image-generations`
 - URL-only reference bypass
-- image hosting upload
+- image hosting upload from `POST /api/v1/image-generations` (only `POST /api/reference-images` is the allowed upload surface, and only it may use an external image host when `IMAGE_HOST_MODE=imgbb`)
 - runtime import of `ai-tu/gateway/server.js`
 - public internal prompt fields
 - public provider payload
 - public raw generated-image bytes or base64
 - secret values in docs, evidence, traces, or logs
+
+## Prompt Optimization Endpoint
+
+`POST /api/v1/prompt-optimizations` optimizes a raw prompt into a structured
+`optimized_prompt` for downstream image generation. It is a companion to, not a
+replacement for, `POST /api/v1/image-generations`: it does not call the image
+provider and returns no `images[]`.
+
+Canonical path: `POST /api/v1/prompt-optimizations`.
+Browser legacy alias: `POST /api/prompt-optimizer` (same handler, same contract;
+kept for the ai-tu test page's `fetch("/api/prompt-optimizer", ...)` call).
+
+Request fields (stricter than image-generations):
+
+- Required: `task_type`, `prompt`
+- Optional: `request_id`, `references[]`, `reference_policy`
+- Forbidden: `callback`, `callback_url`, `options`, and any provider/internal
+  fields. `references[]` uses a narrower schema that does not accept legacy
+  `usage`.
+
+Response (success) fields: `status`, `request_id`, `optimization_id`,
+`task_type`, `task_type_label`, `generation_mode`, `optimized_prompt`,
+`normalized` (entity_mentions, references_used), `warnings`, `trace_id`.
+
+Response (error) fields: `status`, `request_id`, `error_code`, `message`,
+`trace_id`.
+
+RAGFlow enhancement is optional structured input to the local compiler only.
+Public responses never expose enhancement, RAGFlow state, fallback state, or
+internal prompts.
 
 ## Legacy Route
 

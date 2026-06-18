@@ -398,6 +398,66 @@
         "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix10",
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix10"
       ]
+    },
+    {
+      "id": "main01-fix11-prompt-optimizer-ragflow-parser-differential",
+      "title": "Close prompt optimizer RAGFlow parser differential and nested unsafe output gaps",
+      "status": "premerge_verified",
+      "dependsOn": [
+        "main01-fix10-prompt-optimizer-residual-security-gaps"
+      ],
+      "filesExpected": [
+        "server.js",
+        "src/core/runtime.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/sensitive-payload.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        ".codex-agent-team/reports/review-main01-fix11-prompt-optimizer-ragflow-parser-differential.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix11-prompt-optimizer-ragflow-parser-differential.md"
+      ],
+      "acceptance": [
+        "Prompt optimizer and legacy RAGFlow enhancement parse untrusted JSON with shared duplicate and canonical-conflict detection before JSON.parse",
+        "RAGFlow enhancement output recursively rejects nested __proto__/prototype/constructor and references/reference_policy/output/enhancement variants including Unicode/fullwidth/canonical conflicts",
+        "Authorization and Proxy-Authorization assignment values with quoted schemes, spaces, and special-character credentials are rejected before RAGFlow fetch while placeholder teaching text remains allowed",
+        "server HTTP JSON request parsing reuses the shared duplicate-key scanner to avoid parser drift",
+        "Parser differential and nested unsafe-key tests cover prompt optimizer and legacy enhancement paths",
+        "Existing fix08/fix09/fix10 schema, credential, tier, DNS, resource, isolation, fallback, and public leak controls remain passing",
+        "All required tests, security scans, subagent reviews, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node --test tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node --test tests/unit/http-invalid-body.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "npm run test:evidence",
+        "npm run test:provider-config",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix11-prompt-optimizer-ragflow-parser-differential.json",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix11-2026-06-18-pendingChanges-0",
+        "branch-main01-fix11-from-origin-main01-5334a33a80405958aeedf8c375eb98dccc473c43",
+        "code-map-skill-refresh-after-branch-fix11-2026-06-18-pendingChanges-0",
+        "npm-run-check-pass-2026-06-18-fix11",
+        "npm-test-173-pass-2026-06-18-fix11",
+        "prompt-optimizer-test-40-pass-2026-06-18-fix11",
+        "http-invalid-body-test-5-pass-2026-06-18-fix11",
+        "image-api-test-110-pass-2026-06-18-fix11",
+        "provider-config-present-2026-06-18-fix11",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix11",
+        "git-diff-check-pass-2026-06-18-fix11",
+        "security-scan-pass-no-runtime-secret-matches-2026-06-18-fix11",
+        "credential-detection-probe-pass-quoted-auth-proxy-assignment-2026-06-18-fix11",
+        "code-map-skill-refresh-precommit-fix11-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-888-edgeCount-2237",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix11",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix11"
+      ]
     }
   ]
 }

@@ -8,6 +8,7 @@ import { generatedImageHttpResponse } from "./src/core/generated-image-response.
 import { putGeneratedImage } from "./src/core/generated-image-store.js";
 import { LEGACY_IMAGE_JOBS_DEPRECATION_HEADERS } from "./src/core/legacy-api.js";
 import { loadAiTuRuntimeConfig } from "./src/providers/ai-tu-provider-adapter.js";
+import { parseJsonWithoutDuplicateKeys } from "./src/core/runtime.js";
 import { normalizePublicHttpUrl } from "./src/core/url-security.js";
 
 const ROOT = resolve(import.meta.dirname);
@@ -386,115 +387,23 @@ async function readJson(request) {
     chunks.push(chunk);
   }
   const text = Buffer.concat(chunks).toString("utf8");
-  if (text && hasDuplicateJsonKeys(text)) {
+  if (!text) return {};
+  const parsed = parseJsonWithoutDuplicateKeys(text);
+  if (parsed.duplicate) {
     return {
       __invalid: true,
       error_code: "INVALID_REQUEST_SCHEMA",
       message: "请求体包含重复字段。"
     };
   }
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
+  if (!parsed.ok) {
     return {
       __invalid: true,
       error_code: "INVALID_REQUEST_SCHEMA",
       message: "请求体不是合法 JSON。"
     };
   }
-}
-
-function hasDuplicateJsonKeys(text) {
-  try {
-    const result = scanJsonValue(text, skipJsonWhitespace(text, 0));
-    const end = skipJsonWhitespace(text, result.index);
-    return end <= text.length ? result.duplicate === true : false;
-  } catch (error) {
-    return error && error.name === "DuplicateJsonKeyError";
-  }
-}
-
-function scanJsonValue(text, index) {
-  const start = skipJsonWhitespace(text, index);
-  const char = text[start];
-  if (char === "{") return scanJsonObject(text, start);
-  if (char === "[") return scanJsonArray(text, start);
-  if (char === "\"") {
-    const token = parseJsonStringToken(text, start);
-    return { index: token.index, duplicate: false };
-  }
-  const match = text.slice(start).match(/^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)/u);
-  if (!match) throw new Error("invalid json token");
-  return { index: start + match[0].length, duplicate: false };
-}
-
-function scanJsonObject(text, index) {
-  const seen = new Set();
-  let cursor = skipJsonWhitespace(text, index + 1);
-  if (text[cursor] === "}") return { index: cursor + 1, duplicate: false };
-  while (cursor < text.length) {
-    const token = parseJsonStringToken(text, cursor);
-    const canonical = canonicalJsonKey(token.value);
-    if (seen.has(canonical)) {
-      const error = new Error("duplicate json key");
-      error.name = "DuplicateJsonKeyError";
-      throw error;
-    }
-    seen.add(canonical);
-    cursor = skipJsonWhitespace(text, token.index);
-    if (text[cursor] !== ":") throw new Error("invalid json object");
-    const value = scanJsonValue(text, cursor + 1);
-    cursor = skipJsonWhitespace(text, value.index);
-    if (text[cursor] === "}") return { index: cursor + 1, duplicate: false };
-    if (text[cursor] !== ",") throw new Error("invalid json object");
-    cursor = skipJsonWhitespace(text, cursor + 1);
-  }
-  throw new Error("invalid json object");
-}
-
-function scanJsonArray(text, index) {
-  let cursor = skipJsonWhitespace(text, index + 1);
-  if (text[cursor] === "]") return { index: cursor + 1, duplicate: false };
-  while (cursor < text.length) {
-    const value = scanJsonValue(text, cursor);
-    cursor = skipJsonWhitespace(text, value.index);
-    if (text[cursor] === "]") return { index: cursor + 1, duplicate: false };
-    if (text[cursor] !== ",") throw new Error("invalid json array");
-    cursor = skipJsonWhitespace(text, cursor + 1);
-  }
-  throw new Error("invalid json array");
-}
-
-function parseJsonStringToken(text, index) {
-  if (text[index] !== "\"") throw new Error("invalid json string");
-  let cursor = index + 1;
-  while (cursor < text.length) {
-    const char = text[cursor];
-    if (char === "\\") {
-      cursor += 2;
-      continue;
-    }
-    if (char === "\"") {
-      const raw = text.slice(index, cursor + 1);
-      return { value: JSON.parse(raw), index: cursor + 1 };
-    }
-    cursor += 1;
-  }
-  throw new Error("invalid json string");
-}
-
-function skipJsonWhitespace(text, index) {
-  let cursor = index;
-  while (cursor < text.length && /\s/u.test(text[cursor])) cursor += 1;
-  return cursor;
-}
-
-function canonicalJsonKey(key) {
-  return String(key)
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_.-]+/g, "");
+  return parsed.value;
 }
 
 function invalidJsonPayload(body) {

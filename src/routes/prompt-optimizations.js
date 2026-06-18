@@ -1,6 +1,6 @@
 import { ImageApiError, clarification, fail, publicErrorPayload } from "../core/errors.js";
 import { extractEntityMentions } from "../core/entity-mentions.js";
-import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, makeId, stringValue, walk } from "../core/runtime.js";
+import { assertNoForbiddenPublicFields, assertReferenceUrlAllowed, hasUnsafeJsonObjectKeys, makeId, parseJsonWithoutDuplicateKeys, stringValue, walk } from "../core/runtime.js";
 import { parseRuntimeConfigText } from "../core/runtime-config-file.js";
 import { containsHighConfidenceSensitivePayload } from "../core/sensitive-payload.js";
 import {
@@ -153,6 +153,22 @@ const RAGFLOW_ALLOWED_FIELDS = new Set([
   "composition_notes",
   "negative_notes",
   "missing_constraints"
+]);
+const RAGFLOW_FORBIDDEN_CANONICAL_OUTPUT_KEYS = new Set([
+  ...FORBIDDEN_CANONICAL_SCHEMA_KEYS,
+  "referenceid",
+  "referenceids",
+  "assetid",
+  "assetids",
+  "references",
+  "referencepolicy",
+  "output",
+  "enhancement",
+  "inputanalysis",
+  "storyboardprocessing",
+  "templateguidance",
+  "referenceweight",
+  "bindingdecision"
 ]);
 const RAGFLOW_CONSUMED_FIELDS_BY_TASK = Object.freeze({
   text_image: new Set(["visual_focus", "lighting_notes", "composition_notes", "missing_constraints"]),
@@ -1088,12 +1104,9 @@ async function readBoundedResponseText(response, maxBytes) {
 }
 
 function parseBoundedJson(text, limits) {
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    return null;
-  }
+  const parsed = parseJsonWithoutDuplicateKeys(text || "{}");
+  if (!parsed.ok) return null;
+  const json = parsed.value;
   return jsonWithinResourceLimits(json, limits) ? json : null;
 }
 
@@ -1196,10 +1209,11 @@ function defaultJsonLimits() {
 }
 
 export function validateRagflowEnhancement(candidate, context = {}) {
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  if (!isPlainRecord(candidate)) return null;
   if ("final_prompt" in candidate || "compiled_prompt" in candidate || "internal_prompt" in candidate || "provider_payload" in candidate) return null;
   if (Object.keys(candidate).some((key) => !RAGFLOW_ALLOWED_FIELDS.has(key))) return null;
   if (Object.keys(candidate).some((key) => !consumedRagflowFieldsForTask(context.request?.task_type).has(key))) return null;
+  if (hasUnsafeJsonObjectKeys(candidate, RAGFLOW_FORBIDDEN_CANONICAL_OUTPUT_KEYS)) return null;
   if (containsForbiddenEnhancementKey(candidate)) return null;
   const jsonText = JSON.stringify(candidate);
   if (jsonText.length > (context.maxChars || RAGFLOW_MAX_ENHANCEMENT_CHARS)) return null;
@@ -1263,7 +1277,8 @@ function sanitizePlainObject(value) {
 }
 
 function isForbiddenEnhancementKey(key) {
-  return isForbiddenSchemaKey(key)
+  return RAGFLOW_FORBIDDEN_CANONICAL_OUTPUT_KEYS.has(canonicalSchemaKey(key))
+    || isForbiddenSchemaKey(key)
     || /^(?:final_prompt|compiled_prompt|internal_prompt|provider|model|images?|provider_payload|provider_internal_payload|provider_raw_payload|raw_provider_payload|raw_provider_response|reference_ids?|asset_ids?|callback_status|ragflow_status|fallback_status|authorization|cookie|bearer|token|secret|api[_-]?key|enhancement|primary|auxiliary|weight|priority|url|b64_json|base64|data_url)$/i.test(stringValue(key));
 }
 
@@ -1807,11 +1822,8 @@ function unwrapCodeFence(value) {
 function parseJsonMaybe(value) {
   const text = stringValue(value).trim();
   if (!text.startsWith("{") || !text.endsWith("}")) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+  const parsed = parseJsonWithoutDuplicateKeys(text);
+  return parsed.ok ? parsed.value : null;
 }
 
 function forbiddenPromptHeadings() {

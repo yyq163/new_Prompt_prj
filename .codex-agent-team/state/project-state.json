@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "review",
-  "currentTask": "main01-fix10-prompt-optimizer-residual-security-gaps",
+  "currentTask": "main01-fix11-prompt-optimizer-ragflow-parser-differential",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -387,7 +387,45 @@
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix10"
       ],
       "blockers": []
+    },
+    {
+      "id": "main01-fix11-prompt-optimizer-ragflow-parser-differential",
+      "status": "premerge_verified",
+      "owner": "lead-orchestrated-codex-subagents",
+      "files": [
+        "server.js",
+        "src/core/runtime.js",
+        "src/core/ragflow-enhancement.js",
+        "src/core/sensitive-payload.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        ".codex-agent-team/reports/review-main01-fix11-prompt-optimizer-ragflow-parser-differential.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix11-prompt-optimizer-ragflow-parser-differential.md"
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-start-fix11-2026-06-18-pendingChanges-0",
+        "branch-main01-fix11-from-origin-main01-5334a33a80405958aeedf8c375eb98dccc473c43",
+        "code-map-skill-refresh-after-branch-fix11-2026-06-18-pendingChanges-0",
+        "npm-run-check-pass-2026-06-18-fix11",
+        "npm-test-173-pass-2026-06-18-fix11",
+        "prompt-optimizer-test-40-pass-2026-06-18-fix11",
+        "http-invalid-body-test-5-pass-2026-06-18-fix11",
+        "image-api-test-110-pass-2026-06-18-fix11",
+        "provider-config-present-2026-06-18-fix11",
+        "final-v1-4-evidence-scan-pass-2026-06-18-fix11",
+        "git-diff-check-pass-2026-06-18-fix11",
+        "security-scan-pass-no-runtime-secret-matches-2026-06-18-fix11",
+        "credential-detection-probe-pass-quoted-auth-proxy-assignment-2026-06-18-fix11",
+        "code-map-skill-refresh-precommit-fix11-2026-06-18-pendingChanges-0-fileCount-29-nodeCount-888-edgeCount-2237",
+        ".codex-agent-team/reports/review-main01-fix11-prompt-optimizer-ragflow-parser-differential.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix11-prompt-optimizer-ragflow-parser-differential.md",
+        "subagent-all-p0-p1-p2-p3-empty-2026-06-18-fix11",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-18-fix11"
+      ],
+      "blockers": []
     }
   ],
-  "updatedAt": "2026-06-18T15:31:51+08:00"
+  "updatedAt": "2026-06-18T16:25:04+08:00"
 }

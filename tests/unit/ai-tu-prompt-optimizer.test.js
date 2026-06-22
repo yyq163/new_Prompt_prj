@@ -14,6 +14,11 @@ import {
   validateRagflowEnhancement
 } from "../../src/routes/prompt-optimizations.js";
 import { containsHighConfidenceSensitivePayload, normalizeTextForSensitiveScan } from "../../src/core/sensitive-payload.js";
+import {
+  clearGeneratedImagesForTest,
+  getGeneratedImage,
+  putGeneratedImage
+} from "../../src/core/generated-image-store.js";
 
 test("buildReferencePlan separates reference classes and generation_mode", () => {
   const refs = [
@@ -155,7 +160,7 @@ test("PromptOptimizationRequest schema rejects unknown and nested unsafe fields"
 });
 
 test("prompt optimizer accepts ordinary natural-language security vocabulary", async () => {
-  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Authorization: Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Proxy-Authorization 教学、Cookie: session=value 是教学示例、Cookie: flavor=choco 是产品文案、cookie=YOUR_SESSION_COOKIE 是占位格式、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
+  const legalText = "secret garden 的 cookie 包装、token of friendship、Bearer token 流程图、base64 教学图、Authorization header 说明、Authorization: Bearer <token> 的语法说明、Authorization: Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Bearer YOUR_ACCESS_TOKEN_PLACEHOLDER 是占位格式、Proxy-Authorization 教学、Cookie: flavor=choco 是产品文案、cookie=YOUR_SESSION_COOKIE 是占位格式、api_key=YOUR_API_KEY 和 client_secret=\"YOUR_CLIENT_SECRET\" 是占位格式、final_prompt 命名规范、compiled_prompt 说明、provider payload 流程图、b64_json 和 data_url 教学";
   const textResult = await handlePromptOptimization({
     task_type: "text_image",
     prompt: `生成一张用于课程封面的画面：${legalText}`,
@@ -163,7 +168,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(textResult.statusCode, 200);
   assert.equal(textResult.payload.status, "succeeded");
-  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(textResult.payload.optimized_prompt, /secret garden|token of friendship|Authorization: Bearer <token>|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(textResult.payload.optimized_prompt);
   assertNoPublicLeaks(textResult.payload);
 
@@ -181,7 +186,7 @@ test("prompt optimizer accepts ordinary natural-language security vocabulary", a
   }, noRagflowOptions());
   assert.equal(referenceResult.statusCode, 200);
   assert.equal(referenceResult.payload.status, "succeeded");
-  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: session=value|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
+  assert.match(referenceResult.payload.optimized_prompt, /Bearer token 流程图|YOUR_ACCESS_TOKEN_PLACEHOLDER|Cookie: flavor=choco|YOUR_SESSION_COOKIE|YOUR_API_KEY|provider payload|b64_json|data_url/);
   assertNoPromptLeaks(referenceResult.payload.optimized_prompt);
   assertNoPublicLeaks(referenceResult.payload);
 
@@ -312,6 +317,51 @@ test("prompt optimizer rejects complete authorization assignment values with com
       label: "malformed quote still scans current logical value",
       prompt: "authorization=\"Custom realm=\\\"x\\\"; signature=\\\"synthetic_signature_123456789",
       leaked: "synthetic_signature_123456789"
+    },
+    {
+      label: "short bearer scheme credential",
+      prompt: "Authorization: Bearer abc12345",
+      leaked: "abc12345"
+    },
+    {
+      label: "short basic scheme credential",
+      prompt: "Authorization: Basic dTpw",
+      leaked: "dTpw"
+    },
+    {
+      label: "short token scheme credential",
+      prompt: "Authorization: Token abcdefgh",
+      leaked: "abcdefgh"
+    },
+    {
+      label: "short apikey scheme credential",
+      prompt: "Authorization: ApiKey abcdefgh",
+      leaked: "abcdefgh"
+    },
+    {
+      label: "short proxy token scheme credential",
+      prompt: "Proxy-Authorization: Token abcdefgh",
+      leaked: "abcdefgh"
+    },
+    {
+      label: "short proxy apikey scheme credential",
+      prompt: "Proxy-Authorization: ApiKey abcdefgh",
+      leaked: "abcdefgh"
+    },
+    {
+      label: "short custom proxy scheme credential",
+      prompt: "Proxy-Authorization: Fancy abc12345",
+      leaked: "abc12345"
+    },
+    {
+      label: "short unknown custom scheme credential",
+      prompt: "Authorization: XCustom abcdefghijk",
+      leaked: "abcdefghijk"
+    },
+    {
+      label: "short unknown proxy scheme credential",
+      prompt: "Proxy-Authorization: Bar abcdefghijk",
+      leaked: "abcdefghijk"
     }
   ];
 
@@ -514,23 +564,27 @@ test("prompt optimizer rejects scheme-less authorization assignment credentials 
 test("prompt optimizer rejects repeated authorization markers before RAGFlow fetch", async () => {
   const credential = "markerCredentialABCDEF1234567890";
   const cases = [
-    ["assignment repeated custom", `authorization=Custom; authorization=Custom ${credential}`],
-    ["header repeated custom", `Authorization: Custom; Authorization: Custom ${credential}`],
-    ["assignment repeated apikey", `authorization=ApiKey; authorization=ApiKey ${credential}`],
-    ["proxy repeated custom", `Proxy-Authorization: Custom; Proxy-Authorization: Custom ${credential}`],
-    ["comma repeated token", `authorization=Token, authorization=Token ${credential}`],
-    ["digest response on second marker", `authorization=Digest realm="x"; authorization=Digest response="${credential}"`],
-    ["case and tab repeated marker", `AUTHORIZATION=Custom\tAUTHORIZATION=Custom ${credential}`],
-    ["fullwidth repeated marker", `ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom； ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom ${credential}`],
-    ["invisible repeated marker", `Authori\u2060zation=Custom; Authori\u2060zation=Custom ${credential}`],
-    ["three repeated markers", `authorization=Custom; authorization=Custom; authorization=Custom ${credential}`]
+    ["assignment repeated custom", `authorization=Custom; authorization=Custom ${credential}`, credential],
+    ["header repeated custom", `Authorization: Custom; Authorization: Custom ${credential}`, credential],
+    ["assignment repeated apikey", `authorization=ApiKey; authorization=ApiKey ${credential}`, credential],
+    ["assignment repeated custom exact non-placeholder token", "authorization=Custom; authorization=Custom test_token", "test_token"],
+    ["header repeated custom exact non-placeholder secret", "Authorization: Custom; Authorization: Custom fake_secret", "fake_secret"],
+    ["assignment repeated apikey exact non-placeholder api key", "authorization=ApiKey; authorization=ApiKey sample_api_key", "sample_api_key"],
+    ["repeated custom short scheme credential", "authorization=Custom; authorization=Custom abc12345", "abc12345"],
+    ["proxy repeated custom", `Proxy-Authorization: Custom; Proxy-Authorization: Custom ${credential}`, credential],
+    ["comma repeated token", `authorization=Token, authorization=Token ${credential}`, credential],
+    ["digest response on second marker", `authorization=Digest realm="x"; authorization=Digest response="${credential}"`, credential],
+    ["case and tab repeated marker", `AUTHORIZATION=Custom\tAUTHORIZATION=Custom ${credential}`, credential],
+    ["fullwidth repeated marker", `ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom； ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom ${credential}`, credential],
+    ["invisible repeated marker", `Authori\u2060zation=Custom; Authori\u2060zation=Custom ${credential}`, credential],
+    ["three repeated markers", `authorization=Custom; authorization=Custom; authorization=Custom ${credential}`, credential]
   ];
 
-  for (const [label, prompt] of cases) {
+  for (const [label, prompt, leaked] of cases) {
     await assertPromptOptimizerRejectsBeforeRagflow({
       label,
       body: { task_type: "text_image", prompt, references: [] },
-      leaked: credential
+      leaked
     });
   }
 });
@@ -648,8 +702,18 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
     ["short csrf token cookie", "Cookie: csrf_token=abc", "csrf_token=abc"],
     ["short xsrf token cookie", "Cookie: XSRF-TOKEN=abc", "XSRF-TOKEN=abc"],
     ["short remember cookie", "Cookie: remember_me=abc", "remember_me=abc"],
+    ["short oauth cookie", "Cookie: oauth=abc", "oauth=abc"],
+    ["oauth token cookie", "Cookie: oauth_token=abc", "oauth_token=abc"],
+    ["oauth2 access token cookie", "Cookie: oauth2_access_token=abc", "oauth2_access_token=abc"],
+    ["id token cookie", "Cookie: id_token=abc", "id_token=abc"],
+    ["bearer token cookie", "Cookie: bearer_token=abc", "bearer_token=abc"],
+    ["session token cookie", "Cookie: session-token=abc", "session-token=abc"],
+    ["placeholder named session cookie", "Cookie: session=VALUE", "session=VALUE"],
+    ["placeholder named token cookie", "Cookie: token=YOUR_ACCESS_TOKEN", "token=YOUR_ACCESS_TOKEN"],
+    ["placeholder named csrf cookie", "Cookie: csrf=VALUE", "csrf=VALUE"],
     ["access token set-cookie", "Set-Cookie: access_token=synthetic_access_token_123456789; HttpOnly", "synthetic_access_token_123456789"],
     ["short access token set-cookie", "Set-Cookie: access_token=abc; HttpOnly", "access_token=abc"],
+    ["short oauth set-cookie", "Set-Cookie: oauth=abc; HttpOnly", "oauth=abc"],
     ["short remember set-cookie", "Set-Cookie: remember_me=abc; HttpOnly", "remember_me=abc"],
     ["short jwt cookie", "Cookie: jwt=abc", "jwt=abc"],
     ["high entropy sid", `Cookie: sid=${highEntropySid}`, highEntropySid],
@@ -659,6 +723,7 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
     ["assignment auth token cookie", "cookie=auth_token=synthetic_auth_token_123456789", "synthetic_auth_token_123456789"],
     ["assignment access token cookie", "cookie=access_token=synthetic_access_token_123456789", "synthetic_access_token_123456789"],
     ["assignment csrf cookie", "cookie=csrf=abc", "csrf=abc"],
+    ["assignment oauth cookie", "cookie=oauth=abc", "oauth=abc"],
     ["assignment csrf token cookie", "cookie=csrf_token=abc", "csrf_token=abc"],
     ["assignment xsrf set-cookie", "set_cookie=xsrf=abc", "xsrf=abc"],
     ["assignment xsrf token set-cookie", "set_cookie=xsrf_token=abc", "xsrf_token=abc"],
@@ -687,6 +752,9 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
 test("prompt optimizer rejects repeated cookie markers before RAGFlow fetch", async () => {
   const cases = [
     ["assignment low risk then session", "cookie=flavor=choco cookie=sessionid=sessionCredentialABCDEF1234567890", "sessionCredentialABCDEF1234567890"],
+    ["assignment low risk then exact non-placeholder token", "cookie=flavor=choco cookie=sessionid=test_token", "sessionid=test_token"],
+    ["header low risk then exact non-placeholder secret", "Cookie: flavor=choco Cookie: auth_token=fake_secret", "auth_token=fake_secret"],
+    ["set-cookie low risk then exact non-placeholder api key", "Set-Cookie: theme=dark Set-Cookie: sessionid=sample_api_key; HttpOnly", "sessionid=sample_api_key"],
     ["header low risk then auth token", "Cookie: flavor=choco; Cookie: auth_token=authCredentialABCDEF1234567890", "authCredentialABCDEF1234567890"],
     ["semicolon assignment access token", "cookie=theme=dark;cookie=access_token=accessCredentialABCDEF1234567890", "accessCredentialABCDEF1234567890"],
     ["space header sid", "Cookie: language=zh-CN Cookie: sid=sidCredentialABCDEF1234567890", "sidCredentialABCDEF1234567890"],
@@ -705,12 +773,34 @@ test("prompt optimizer rejects repeated cookie markers before RAGFlow fetch", as
 
 test("prompt optimizer rejects placeholder-looking credentials with random suffixes before RAGFlow fetch", async () => {
   const cases = [
+    ["exact test token is not an explicit placeholder", "token=test_token", "test_token"],
+    ["exact fake secret is not an explicit placeholder", "secret=fake_secret", "fake_secret"],
+    ["exact sample api key is not an explicit placeholder", "api_key=sample_api_key", "sample_api_key"],
+    ["exact synthetic access token is not an explicit placeholder", "access_token=synthetic_access_token", "synthetic_access_token"],
+    ["exact demo token is not an explicit placeholder", "token=demo_token", "demo_token"],
     ["test token suffix", "token=test_token_ABCDEF1234567890", "test_token_ABCDEF1234567890"],
     ["fake secret suffix", "secret=fake_secret_qwertyuiop123456", "fake_secret_qwertyuiop123456"],
     ["sample api key suffix", "api_key=sample_api_key_livevalue123456", "sample_api_key_livevalue123456"],
     ["synthetic access token suffix", "access_token=synthetic_access_token_0123456789abcdef", "synthetic_access_token_0123456789abcdef"],
+    ["demo token suffix", "token=demo_token_ABCDEF1234567890", "demo_token_ABCDEF1234567890"],
     ["placeholder plus suffix", "token=YOUR_ACCESS_TOKEN_ABCDEF1234567890", "YOUR_ACCESS_TOKEN_ABCDEF1234567890"],
     ["placeholder plus known key", `api_key=YOUR_API_KEY_sk-proj-${"E".repeat(32)}`, "sk-proj-EEEEEEEE"],
+    ["placeholder suffix access token placeholder", "token=ACCESS_TOKEN_PLACEHOLDER_a8F3kLm9Q2rT6vWx", "ACCESS_TOKEN_PLACEHOLDER_a8F3kLm9Q2rT6vWx"],
+    ["placeholder suffix token placeholder", "token=TOKEN_PLACEHOLDER_a8F3kLm9Q2rT6vWx", "TOKEN_PLACEHOLDER_a8F3kLm9Q2rT6vWx"],
+    ["placeholder suffix insert token here", "token=INSERT_TOKEN_HERE_a8F3kLm9Q2rT6vWx", "INSERT_TOKEN_HERE_a8F3kLm9Q2rT6vWx"],
+    ["placeholder suffix replace me", "token=REPLACE_ME_a8F3kLm9Q2rT6vWx", "REPLACE_ME_a8F3kLm9Q2rT6vWx"],
+    ["wrapped placeholder suffix angle", "<ACCESS_TOKEN>_a8F3kLm9Q2rT6vWxZ7pN", "<ACCESS_TOKEN>_a8F3kLm9Q2rT6vWxZ7pN"],
+    ["wrapped placeholder suffix braced", "${ACCESS_TOKEN}_a8F3kLm9Q2rT6vWxZ7pN", "${ACCESS_TOKEN}_a8F3kLm9Q2rT6vWxZ7pN"],
+    ["wrapped token suffix angle", "<TOKEN>_qwertyuiop123456", "<TOKEN>_qwertyuiop123456"],
+    ["wrapped placeholder short suffix angle", "<ACCESS_TOKEN>_suffix", "<ACCESS_TOKEN>_suffix"],
+    ["wrapped placeholder short suffix braced", "${ACCESS_TOKEN}_suffix", "${ACCESS_TOKEN}_suffix"],
+    ["wrapped token short suffix angle", "<TOKEN>_suffix", "<TOKEN>_suffix"],
+    ["generic value is not explicit authorization placeholder", "authorization=Bearer VALUE", "Bearer VALUE"],
+    ["generic value wrapped is not explicit placeholder", "生成一张完整安全测试图 token=<VALUE> 用于验证字段", "<VALUE>"],
+    ["generic value template is not explicit placeholder", "生成一张完整安全测试图 token=${VALUE} 用于验证字段", "${VALUE}"],
+    ["generic your value is not explicit placeholder", "生成一张完整安全测试图 token=YOUR_VALUE 用于验证字段", "YOUR_VALUE"],
+    ["generic value placeholder is not explicit placeholder", "生成一张完整安全测试图 token=VALUE_PLACEHOLDER 用于验证字段", "VALUE_PLACEHOLDER"],
+    ["generic insert value here is not explicit placeholder", "生成一张完整安全测试图 token=INSERT_VALUE_HERE 用于验证字段", "INSERT_VALUE_HERE"],
     ["bare placeholder plus suffix", "YOUR_ACCESS_TOKEN_ABCDEF1234567890", "YOUR_ACCESS_TOKEN_ABCDEF1234567890"],
     ["bare placeholder plus known key", `YOUR_API_KEY_sk-proj-${"E".repeat(32)}`, "sk-proj-EEEEEEEE"],
     ["bare prefixed placeholder", "prefix_YOUR_ACCESS_TOKEN", "prefix_YOUR_ACCESS_TOKEN"]
@@ -2275,29 +2365,44 @@ test("field-summary output is never returned as optimized_prompt", async () => {
 });
 
 test("prompt optimizer is isolated from provider store callback and image URL response fields", async () => {
-  const result = await handlePromptOptimization({
-    task_type: "text_image",
-    prompt: "一幅中文水墨风格的春日山谷画面",
-    references: []
-  }, {
-    env: {
-      RAGFLOW_BASE_URL: "",
-      RAGFLOW_API_KEY: "",
-      RAGFLOW_CHAT_ID: "",
-      IMAGE_API_KEY: "",
-      IMAGE_API_BASE: "",
-      IMAGE_EDIT_BASE: "",
-      CALLBACK_URL: "https://client.example.com/cb"
-    },
-    fetchImpl: async () => {
-      throw new Error("prompt optimizer should not call image provider, callback, or store fetches");
-    }
+  const oldMaxCount = process.env.GENERATED_IMAGE_MAX_COUNT;
+  process.env.GENERATED_IMAGE_MAX_COUNT = "1";
+  clearGeneratedImagesForTest();
+  const sentinel = putGeneratedImage({
+    bytes: Buffer.from(samplePngBase64(), "base64"),
+    mime: "image/png",
+    ttlMs: 1000,
+    source: "prompt_optimizer_success_sentinel"
   });
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.status, "succeeded");
-  assert.equal("images" in result.payload, false);
-  assert.equal("callback_status" in result.payload, false);
-  assertNoPublicLeaks(result.payload);
+  try {
+    const result = await handlePromptOptimization({
+      task_type: "text_image",
+      prompt: "一幅中文水墨风格的春日山谷画面",
+      references: []
+    }, {
+      env: {
+        RAGFLOW_BASE_URL: "",
+        RAGFLOW_API_KEY: "",
+        RAGFLOW_CHAT_ID: "",
+        IMAGE_API_KEY: "",
+        IMAGE_API_BASE: "",
+        IMAGE_EDIT_BASE: "",
+        CALLBACK_URL: "https://client.example.com/cb"
+      },
+      fetchImpl: async () => {
+        throw new Error("prompt optimizer should not call image provider, callback, or store fetches");
+      }
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.status, "succeeded");
+    assert.equal("images" in result.payload, false);
+    assert.equal("callback_status" in result.payload, false);
+    assert.equal(getGeneratedImage(sentinel.id)?.source, "prompt_optimizer_success_sentinel");
+    assertNoPublicLeaks(result.payload);
+  } finally {
+    restoreEnv("GENERATED_IMAGE_MAX_COUNT", oldMaxCount);
+    clearGeneratedImagesForTest();
+  }
 });
 
 test("prompt optimizer public response gate rejects nested forbidden keys and text", () => {
@@ -2480,20 +2585,35 @@ function reference(reference_id, entity_name, entity_type, role, url = `https://
 
 async function assertPromptOptimizerRejectsBeforeRagflow({ label, body, leaked }) {
   let fetches = 0;
-  const { result, output } = await captureConsoleDuring(() => handlePromptOptimization(body, {
-    env: ragflowEnv(),
-    lookupHost: publicLookup,
-    fetchImpl: async () => {
-      fetches += 1;
-      throw new Error(`must not fetch ${label}`);
-    }
-  }));
-  assert.equal(result.statusCode, 400, label);
-  assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA", label);
-  assert.equal(fetches, 0, label);
-  assert.equal(JSON.stringify(result.payload).includes(leaked), false, label);
-  assert.equal(output.includes(leaked), false, label);
-  assertNoPublicLeaks(result.payload);
+  const oldMaxCount = process.env.GENERATED_IMAGE_MAX_COUNT;
+  process.env.GENERATED_IMAGE_MAX_COUNT = "1";
+  clearGeneratedImagesForTest();
+  const sentinel = putGeneratedImage({
+    bytes: Buffer.from(samplePngBase64(), "base64"),
+    mime: "image/png",
+    ttlMs: 1000,
+    source: "prompt_optimizer_reject_sentinel"
+  });
+  try {
+    const { result, output } = await captureConsoleDuring(() => handlePromptOptimization(body, {
+      env: ragflowEnv(),
+      lookupHost: publicLookup,
+      fetchImpl: async () => {
+        fetches += 1;
+        throw new Error(`must not fetch ${label}`);
+      }
+    }));
+    assert.equal(result.statusCode, 400, label);
+    assert.equal(result.payload.error_code, "INVALID_REQUEST_SCHEMA", label);
+    assert.equal(fetches, 0, label);
+    assert.equal(getGeneratedImage(sentinel.id)?.source, "prompt_optimizer_reject_sentinel", label);
+    assert.equal(JSON.stringify(result.payload).includes(leaked), false, label);
+    assert.equal(output.includes(leaked), false, label);
+    assertNoPublicLeaks(result.payload);
+  } finally {
+    restoreEnv("GENERATED_IMAGE_MAX_COUNT", oldMaxCount);
+    clearGeneratedImagesForTest();
+  }
 }
 
 function assertTextImagePrompt(prompt) {
@@ -2650,6 +2770,11 @@ function samplePngBase64() {
 
 function lowEntropyLongBase64() {
   return Buffer.alloc(96, 0).toString("base64");
+}
+
+function restoreEnv(name, oldValue) {
+  if (oldValue === undefined) delete process.env[name];
+  else process.env[name] = oldValue;
 }
 
 function jsonResponse(json, options = {}) {

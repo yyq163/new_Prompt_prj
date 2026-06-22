@@ -13,7 +13,7 @@ Changes:
 - Added explicit marker segment limits across top-level, closed-quote masked, and unclosed-quote masked markers.
 - Split Authorization parameter handling into sensitive parameter names and unknown-parameter credential value detection so benign `username`, `realm`, `algorithm`, and `qop` tails remain compatible.
 - Preserved rejection for trailing response/signature/credential/token/key/secret values, unknown marker/synthetic/JWT/high-entropy values, and low-entropy special-character Authorization tokens.
-- Reused the Cookie pair parser/classifier for header and assignment forms, including Cookie, Set-Cookie, cookie=, and set_cookie=.
+- Reused the cookie pair parser/classifier for header and assignment forms, including standard header names and assignment-style fields without storing raw header syntax.
 - Added strict CSRF/XSRF tokenized cookie names such as csrf_token and XSRF-TOKEN.
 - Hardened placeholder-like suffix handling for test/fake/sample/synthetic/demo and prefixed placeholder credential strings.
 - Extended RAGFlow outbound and prompt optimizer enhancement validation to scan structured string nodes before external calls or public output.

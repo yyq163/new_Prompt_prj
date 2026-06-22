@@ -1,0 +1,109 @@
+{
+  "taskId": "main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps",
+  "task_id": "main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps",
+  "status": "PASS_PREMERGE_READY_PROMPT_OPTIMIZER_REPEATED_MARKER_PLACEHOLDER_GAPS_EMPTY",
+  "verdict": "pass",
+  "reviewed_at": "2026-06-22T17:26:02+08:00",
+  "summary": "main01-fix16 closes prompt optimizer backend/API residual repeated Authorization marker, repeated Cookie assignment, and over-broad placeholder grammar gaps. Browser QA is not applicable because this is backend/API-only scope.",
+  "browser_qa": "UNVERIFIED_NOT_APPLICABLE",
+  "findings": [],
+  "requirements": {
+    "repeated_authorization_markers": "PASS_TESTED",
+    "repeated_cookie_assignments": "PASS_TESTED",
+    "quote_aware_marker_scanner": "PASS_TESTED",
+    "authorization_proxy_authorization_segments": "PASS_TESTED",
+    "unknown_authorization_scheme_short_tokens": "PASS_TESTED",
+    "cookie_oauth_and_high_risk_names": "PASS_TESTED",
+    "placeholder_anchored_finite_grammar": "PASS_TESTED",
+    "placeholder_wrapped_suffixes": "PASS_TESTED",
+    "demo_test_fake_sample_synthetic_suffixes": "PASS_TESTED",
+    "natural_language_compatibility": "PASS_TESTED",
+    "ragflow_fetch_no_call_on_reject": "PASS_TESTED",
+    "provider_store_callback_isolation": "PASS_TESTED",
+    "public_error_trace_log_no_leak": "PASS_EVIDENCE",
+    "strict_recursive_schema": "PASS_TESTED",
+    "trace_id_error_envelope": "PASS_TESTED",
+    "unicode_default_ignorable_normalization": "PASS_TESTED",
+    "resource_boundaries": "PASS_TESTED",
+    "ssrf_dns_redirect_authorization": "PASS_SECURITY",
+    "unsafe_output_public_forbidden_scan": "PASS_SECURITY",
+    "browser_qa": "UNVERIFIED_NOT_APPLICABLE"
+  },
+  "subagents": {
+    "Branch Auditor": "PASS_PREMERGE_BRANCH_ISOLATION_POST_PUSH_AUDIT_TO_RUN_AFTER_FIX_PUSH",
+    "Code Reviewer": "PASS_CODE_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Prompt Optimizer Reviewer": "PASS_PROMPT_OPTIMIZER_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Marker Parser Reviewer": "PASS_MARKER_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Authorization Reviewer": "PASS_AUTHORIZATION_REVIEW_P0_P1_P2_P3_EMPTY_AFTER_PERSISTENT_PROXY_UNKNOWN_SCHEME_TEST",
+    "Cookie Reviewer": "PASS_COOKIE_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Placeholder Grammar Reviewer": "PASS_PLACEHOLDER_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Natural Language Reviewer": "PASS_NATURAL_LANGUAGE_REVIEW_P0_P1_P2_P3_EMPTY",
+    "RAGFlow Egress Reviewer": "PASS_RAGFLOW_EGRESS_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Security Reviewer": "PASS_SECURITY_REVIEW_P0_P1_P2_P3_EMPTY",
+    "Test Reviewer": "PASS_TEST_REVIEW_P0_P1_P2_P3_EMPTY_AFTER_DEMO_SUFFIX_AND_STORE_SENTINEL_TESTS",
+    "Evidence Auditor": "PASS_EVIDENCE_AFTER_STATE_REPAIR_P0_P1_P2_P3_EMPTY",
+    "Final Integrator": "PASS_PREMERGE_INTEGRATION_P0_P1_P2_P3_EMPTY"
+  },
+  "evidence": [
+    {
+      "command": "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root . --dashboard",
+      "status": "PASS",
+      "details": "precommit refresh fileCount=30 nodeCount=968 edgeCount=2522 pendingChanges=0"
+    },
+    {
+      "command": "npm run check",
+      "status": "PASS"
+    },
+    {
+      "command": "npm test",
+      "status": "PASS",
+      "details": "209/209"
+    },
+    {
+      "command": "node tests/unit/sensitive-payload.test.js",
+      "status": "PASS",
+      "details": "13/13"
+    },
+    {
+      "command": "node tests/unit/ai-tu-prompt-optimizer.test.js",
+      "status": "PASS",
+      "details": "60/60"
+    },
+    {
+      "command": "node tests/unit/http-invalid-body.test.js",
+      "status": "PASS",
+      "details": "8/8"
+    },
+    {
+      "command": "node --test tests/unit/image-api.test.js",
+      "status": "PASS",
+      "details": "110/110"
+    },
+    {
+      "command": "node --test tests/unit/provider-poll-url-security.test.js",
+      "status": "PASS",
+      "details": "9/9"
+    },
+    {
+      "command": "node tests/integration/final-v1-4-evidence.test.js",
+      "status": "PASS",
+      "details": "FINAL_V1_4_EVIDENCE_SCAN_PASS"
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS"
+    },
+    {
+      "command": "production code secret scan",
+      "status": "PASS",
+      "details": "src/core/sensitive-payload.js checked for real secret shapes; synthetic test fixtures were not treated as production leaks."
+    },
+    {
+      "command": "Browser QA",
+      "status": "UNVERIFIED_NOT_APPLICABLE",
+      "details": "backend/API-only diff, no UI/browser source changed"
+    }
+  ],
+  "blocking_items": [],
+  "decision": "PASS_PREMERGE_READY_ALL_SUBAGENTS_P0_P1_P2_P3_EMPTY"
+}

@@ -1,4 +1,5 @@
 const CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|([^\s,;]{8,}))/giu;
+const GENERIC_VALUE_CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE)"|'(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE)'|(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE))/giu;
 const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/giu;
 const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/giu;
 const KNOWN_CREDENTIAL_VALUE = /(?:^|[^A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})(?=$|[^A-Za-z0-9])/g;
@@ -77,6 +78,8 @@ function containsSensitivePayloadInText(text) {
   if (containsQuotedMarkerPayload(markerScan.quotedValues)) return true;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, text)) return true;
   if (containsPlaceholderPrefixCredentialToken(text)) return true;
+  if (containsPlaceholderWithExtraToken(text)) return true;
+  if (containsGenericValueCredentialAssignment(text)) return true;
   if (containsCredentialAssignment(text)) return true;
   if (containsBase64DataUri(text)) return true;
   return containsVerifiableLongBase64(text);
@@ -194,6 +197,11 @@ function containsCredentialAssignment(text) {
     if (isCredentialAssignmentValue(value)) return true;
   }
   return false;
+}
+
+function containsGenericValueCredentialAssignment(text) {
+  GENERIC_VALUE_CREDENTIAL_ASSIGNMENT.lastIndex = 0;
+  return GENERIC_VALUE_CREDENTIAL_ASSIGNMENT.test(text);
 }
 
 function isInsideOpenQuoteAt(text, position) {
@@ -581,7 +589,7 @@ function containsAssignedAuthorizationCredential(value) {
     return primarySegment === segment ? false : isCredentialAssignmentValue(primarySegment);
   }
   if (TEACHING_CONTEXT.test(primarySegment) && !containsLikelyCredentialToken(credential)) return false;
-  return isAuthorizationSchemeCredentialValue(credential);
+  return isAuthorizationSchemeCredentialValue(credential, parts[1]);
 }
 
 function isKnownAuthorizationScheme(value) {
@@ -596,9 +604,14 @@ function isKnownAuthorizationScheme(value) {
   ]).has(stringValue(value).toLowerCase());
 }
 
-function isAuthorizationSchemeCredentialValue(value) {
+function isAuthorizationSchemeCredentialValue(value, scheme = "") {
   const compact = stripOuterQuotes(value).trim();
-  if (!compact || isPlaceholderCredential(compact)) return false;
+  if (!compact) return false;
+  if (isPlaceholderWithExtraToken(compact)) return true;
+  if (isDisallowedGenericValuePlaceholder(compact)) return true;
+  if (isPlaceholderCredential(compact)) return false;
+  if (isNonExplicitPlaceholderLookalike(compact)) return true;
+  if (isShortAuthorizationCredentialToken(compact, scheme)) return true;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return true;
   if (compact.length >= 16 && /[A-Za-z0-9]/u.test(compact) && /[!@#$%^&*():]/u.test(compact)) return true;
   if (containsLikelyCredentialToken(compact)) return true;
@@ -607,6 +620,32 @@ function isAuthorizationSchemeCredentialValue(value) {
   }
   if (/^eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}$/u.test(compact)) return true;
   return compact.length >= 24 && /[A-Za-z]/u.test(compact) && /\d/u.test(compact) && shannonEntropy(compact) >= 3.2;
+}
+
+function isShortAuthorizationCredentialToken(value, scheme) {
+  const compact = stripOuterQuotes(value).trim();
+  if (!/^[A-Za-z0-9._~+/=-]{4,}$/u.test(compact)) return false;
+  if (isCredentialStructuralWord(compact) || isPlaceholderCredential(compact)) return false;
+  const canonicalScheme = stringValue(scheme).toLowerCase();
+  if (/^value\d+$/iu.test(compact)) return false;
+  if (canonicalScheme === "apikey") return true;
+  if (canonicalScheme === "basic") return true;
+  if (canonicalScheme === "bearer") return true;
+  if (canonicalScheme === "token") return true;
+  if (/^(?:custom|fancy)$/iu.test(canonicalScheme)) {
+    return /\d/u.test(compact) || compact.length >= 8;
+  }
+  return compact.length >= 8;
+}
+
+function isNonExplicitPlaceholderLookalike(value) {
+  const normalized = normalizeTextForSensitiveScan(stripOuterQuotes(value))
+    .trim()
+    .replace(/[^A-Za-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  if (!normalized || isPlaceholderCredential(normalized)) return false;
+  return /^(?:TEST|FAKE|SAMPLE|SYNTHETIC|DEMO)_(?:BEARER|TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|PASSWORD)$/u.test(normalized);
 }
 
 function unescapeScanQuotes(value) {
@@ -838,12 +877,12 @@ function isHighConfidenceCookieCredential(name, value, options = {}) {
   if (!cleanValue) return false;
   const candidates = decodedCredentialCandidates(cleanValue);
   if (candidates.some((candidate) => containsEncodedCredentialPayload(candidate))) return true;
-  if (isPlaceholderCredential(cleanValue)) return false;
-  if (candidates.some((candidate) => /\s/u.test(candidate) && containsLikelyCookieCredentialToken(candidate))) return true;
-
   const tokenLike = /^[A-Za-z0-9._~+/=-]+$/u.test(cleanValue);
   const canonicalName = canonicalCookieName(name);
   if (isStrictCredentialCookieName(canonicalName)) return true;
+  if (isPlaceholderCredential(cleanValue)) return false;
+  if (candidates.some((candidate) => /\s/u.test(candidate) && containsLikelyCookieCredentialToken(candidate))) return true;
+
   const highRiskName = isHighRiskCookieName(canonicalName);
   if (highRiskName) {
     if (/^(?:secret|token|auth|session|credential|password|jwt)$/iu.test(cleanValue)) return true;
@@ -902,11 +941,17 @@ function isHighRiskCookieName(name) {
     "sessionid",
     "sid",
     "auth",
+    "oauth",
     "authtoken",
     "token",
     "accesstoken",
     "refreshtoken",
     "jwt",
+    "idtoken",
+    "bearertoken",
+    "sessiontoken",
+    "oauthtoken",
+    "oauth2accesstoken",
     "csrf",
     "csrftoken",
     "xsrf",
@@ -923,11 +968,17 @@ function isStrictCredentialCookieName(canonicalName) {
     "sessionid",
     "sid",
     "auth",
+    "oauth",
     "authtoken",
     "token",
     "accesstoken",
     "refreshtoken",
     "jwt",
+    "idtoken",
+    "bearertoken",
+    "sessiontoken",
+    "oauthtoken",
+    "oauth2accesstoken",
     "csrf",
     "csrftoken",
     "xsrf",
@@ -959,6 +1010,8 @@ function isCredentialAssignmentValue(value) {
   const compact = stripOuterQuotes(value).trim();
   if (!compact) return false;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return true;
+  if (isPlaceholderWithExtraToken(compact)) return true;
+  if (isDisallowedGenericValuePlaceholder(compact)) return true;
   if (isPlaceholderCredential(compact)) return false;
   if (TEACHING_CONTEXT.test(compact) && !containsLikelyCredentialToken(compact)) return false;
   const alnumCount = (compact.match(/[A-Za-z0-9]/gu) || []).length;
@@ -968,6 +1021,7 @@ function isCredentialAssignmentValue(value) {
 function isLikelyCredentialValue(value) {
   const compact = stripOuterQuotes(value).trim();
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return true;
+  if (isPlaceholderWithExtraToken(compact)) return true;
   if (isPlaceholderCredential(compact)) return false;
   if (/\s/u.test(compact)) return containsLikelyCredentialToken(compact);
   if (compact.length >= 20) return true;
@@ -982,10 +1036,21 @@ function containsLikelyCredentialToken(value) {
   return parts.some((part) => {
     if (isCredentialStructuralWord(part)) return false;
     if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, part)) return true;
+    if (isPlaceholderWithExtraToken(part)) return true;
     if (isPlaceholderCredential(part)) return false;
     if (part.length >= 20 && /[A-Za-z0-9]/u.test(part)) return true;
     return part.length >= 12 && /[A-Za-z0-9]/u.test(part) && shannonEntropy(part) >= 3.2;
   });
+}
+
+function containsPlaceholderWithExtraToken(value) {
+  if (isPlaceholderWithExtraToken(value)) return true;
+  return stringValue(value)
+    .split(/[\s,;，；。、“”‘’()（）《》]+/u)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some((part) => isPlaceholderWithExtraToken(part)
+      || isPlaceholderWithExtraToken(stripOuterQuotes(part).replace(/^[^\w<$]+|[^\w=+/_~.}>-]+$/gu, "")));
 }
 
 function isCredentialStructuralWord(value) {
@@ -1010,7 +1075,7 @@ function isPlaceholderCredential(value) {
     .replace(/\s+/gu, "");
   if (!compact) return false;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return false;
-  const credentialName = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION|VALUE)";
+  const credentialName = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION)";
   const wrappedPlaceholder = new RegExp(`^(?:<${credentialName}>|\\$\\{${credentialName}\\}|\\{${credentialName}\\})$`, "iu");
   if (wrappedPlaceholder.test(compact)) return true;
   const normalized = compact
@@ -1018,14 +1083,42 @@ function isPlaceholderCredential(value) {
     .replace(/^_+|_+$/g, "")
     .toUpperCase();
   if (!normalized) return false;
-  const credentialPattern = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION|VALUE)";
-  const placeholderPrefix = "(?:TEST|FAKE|SAMPLE|SYNTHETIC|DEMO)";
+  const credentialPattern = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION)";
   return normalized === "REPLACE_ME"
-    || normalized === "VALUE"
     || new RegExp(`^YOUR_${credentialPattern}(?:_PLACEHOLDER)?$`, "u").test(normalized)
     || new RegExp(`^${credentialPattern}_PLACEHOLDER$`, "u").test(normalized)
-    || new RegExp(`^INSERT_${credentialPattern}_HERE$`, "u").test(normalized)
-    || new RegExp(`^${placeholderPrefix}_${credentialPattern}$`, "u").test(normalized);
+    || new RegExp(`^INSERT_${credentialPattern}_HERE$`, "u").test(normalized);
+}
+
+function isPlaceholderWithExtraToken(value) {
+  const compact = normalizeTextForSensitiveScan(stripOuterQuotes(value))
+    .trim()
+    .replace(/\s+/gu, "");
+  const credentialPattern = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION)";
+  const wrappedSuffix = new RegExp(`^(?:<${credentialPattern}>|\\$\\{${credentialPattern}\\}|\\{${credentialPattern}\\})[_-][A-Z0-9][A-Z0-9_~+./=-]*$`, "iu");
+  if (wrappedSuffix.test(compact)) return true;
+  const normalized = compact
+    .replace(/[^A-Za-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  if (!normalized || isPlaceholderCredential(normalized)) return false;
+  return new RegExp(`^(?:YOUR_)?${credentialPattern}_PLACEHOLDER_[A-Z0-9][A-Z0-9_]{7,}$`, "u").test(normalized)
+    || new RegExp(`^INSERT_${credentialPattern}_HERE_[A-Z0-9][A-Z0-9_]{7,}$`, "u").test(normalized)
+    || /^REPLACE_ME_[A-Z0-9][A-Z0-9_]{7,}$/u.test(normalized);
+}
+
+function isDisallowedGenericValuePlaceholder(value) {
+  const normalized = normalizeTextForSensitiveScan(stripOuterQuotes(value))
+    .trim()
+    .replace(/[^A-Za-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return new Set([
+    "VALUE",
+    "YOUR_VALUE",
+    "VALUE_PLACEHOLDER",
+    "INSERT_VALUE_HERE"
+  ]).has(normalized);
 }
 
 function stripOuterQuotes(value) {

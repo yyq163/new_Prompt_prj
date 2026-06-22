@@ -13,7 +13,7 @@
     "docs/provider-adapter-migration-map.md": "Provider migration map"
   },
   "currentPhase": "review",
-  "currentTask": "main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps",
+  "currentTask": "main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps",
   "schemaVersion": 1,
   "stage": "development",
   "tasks": [
@@ -574,7 +574,42 @@
       "id": "main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps",
       "owner": "lead-codex-with-subagents",
       "status": "verified"
+    },
+    {
+      "blockers": [],
+      "evidenceRefs": [
+        "code-map-skill-refresh-initial-fix16-pendingChanges-0-2026-06-22",
+        "branch-main01-fix16-from-origin-main01-47fd3e7fc04c2106573d3f9dfec0dd4b4baa6ce0",
+        "code-map-skill-refresh-fix-branch-pendingChanges-0-2026-06-22",
+        ".codex-agent-team/context/main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps.md",
+        "failing-test-repro-repeated-auth-cookie-placeholder-oauth-unknown-scheme-wrapped-suffix-2026-06-22-fix16",
+        "code-map-skill-refresh-final-precommit-fix16-fileCount-30-nodeCount-968-edgeCount-2522-pendingChanges-0-2026-06-22",
+        "npm-run-check-pass-2026-06-22-fix16",
+        "npm-test-209-pass-2026-06-22-fix16",
+        "sensitive-payload-13-pass-2026-06-22-fix16",
+        "prompt-optimizer-60-pass-2026-06-22-fix16",
+        "http-invalid-body-8-pass-2026-06-22-fix16",
+        "image-api-110-pass-2026-06-22-fix16",
+        "provider-poll-url-security-9-pass-2026-06-22-fix16",
+        "final-v1-4-evidence-scan-pass-2026-06-22-fix16",
+        "git-diff-check-pass-2026-06-22-fix16",
+        "production-code-secret-scan-pass-2026-06-22-fix16",
+        "review-gate-pass-blockingCount-0-2026-06-22-fix16",
+        "subagent-code-marker-authorization-cookie-placeholder-natural-ragflow-security-test-zero-p0-p1-p2-p3-2026-06-22-fix16",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-22-fix16"
+      ],
+      "files": [
+        "src/core/sensitive-payload.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/sensitive-payload.test.js",
+        ".codex-agent-team/context/main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps.md"
+      ],
+      "id": "main01-fix16-prompt-optimizer-repeated-marker-placeholder-gaps",
+      "owner": "lead-codex-with-subagents",
+      "status": "verified"
     }
   ],
-  "updatedAt": "2026-06-22T02:40:00+00:00"
+  "updatedAt": "2026-06-22T09:27:15+00:00"
 }

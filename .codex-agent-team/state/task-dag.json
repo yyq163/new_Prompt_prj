@@ -656,6 +656,71 @@
         "browser-qa-unverified-not-applicable-backend-api-only-2026-06-19-fix14",
         "review-gate-pass-blockingCount-0-2026-06-19-fix14"
       ]
+    },
+    {
+      "id": "main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps",
+      "title": "Close prompt optimizer repeated marker segmentation and placeholder suffix gaps",
+      "status": "verified",
+      "dependsOn": [
+        "main01-fix14-prompt-optimizer-trailing-credential-gaps"
+      ],
+      "filesExpected": [
+        "src/core/sensitive-payload.js",
+        "src/core/ragflow-enhancement.js",
+        "src/routes/prompt-optimizations.js",
+        "tests/unit/ai-tu-prompt-optimizer.test.js",
+        "tests/unit/sensitive-payload.test.js",
+        "tests/unit/http-invalid-body.test.js",
+        "tests/unit/image-api.test.js",
+        "tests/unit/provider-poll-url-security.test.js",
+        "tests/integration/final-v1-4-evidence.test.js",
+        ".codex-agent-team/context/main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps.md",
+        ".codex-agent-team/reports/review-main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps.json",
+        ".codex-agent-team/reports/final-integrator-main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps.md"
+      ],
+      "acceptance": [
+        "Sensitive marker scanning is linear, quote-aware, bounded, and separates repeated top-level Authorization, Proxy-Authorization, Cookie, and Set-Cookie markers without splitting marker words inside quoted natural-language text",
+        "Authorization and proxy authorization repeated-marker segments are evaluated independently so a benign first value cannot swallow a later real credential marker on the same logical line",
+        "Cookie and Set-Cookie repeated markers reuse the shared pair parser/classifier and still allow low-risk preference pairs while rejecting high-risk session, auth, token, JWT, known credential, encoded, or high-entropy values",
+        "Placeholder detection uses a finite anchored grammar and does not treat test, fake, sample, synthetic, or demo prefixes with random credential suffixes as safe placeholders",
+        "Prompt optimizer and legacy RAGFlow outbound sensitive scans inspect string nodes without weakening quoted natural-language compatibility",
+        "Rejected prompt optimizer cases do not call RAGFlow fetch, provider, Generated Image Store, or callback paths and do not expose synthetic credentials in public errors, logs, reports, or evidence",
+        "Fix13 and fix14 Unicode, default-ignorable, fullwidth, bidi, unquoted multi-parameter Authorization, quoted trailing Authorization parameter, Cookie Header, assignment compatibility, strict schema, duplicate/prototype, trace_id, resource, tier, SSRF/DNS, RAGFlow bounds, unsafe output, provider/store/callback isolation, public forbidden scan, and Chinese multi-task regressions remain covered",
+        "All required tests, security scans, subagent reviews, review gate, code-map refreshes, merge, and push complete with zero P0/P1/P2/P3 findings"
+      ],
+      "verify": [
+        "npm run check",
+        "npm test",
+        "node tests/unit/sensitive-payload.test.js",
+        "node tests/unit/ai-tu-prompt-optimizer.test.js",
+        "node tests/unit/http-invalid-body.test.js",
+        "node --test tests/unit/image-api.test.js",
+        "node --test tests/unit/provider-poll-url-security.test.js",
+        "node tests/integration/final-v1-4-evidence.test.js",
+        "git diff --check",
+        "security scan",
+        "python3 /Users/yyq/.codex/.codex-agent-team/scripts/review_gate.py --report .codex-agent-team/reports/review-main01-fix15-prompt-optimizer-repeated-marker-placeholder-gaps.json",
+        "python3 /Users/yyq/.codex/skills/code-map/scripts/code_map_pipeline.py --root ."
+      ],
+      "evidenceRefs": [
+        "code-map-skill-refresh-initial-fix15-pendingChanges-0-2026-06-21",
+        "branch-main01-fix15-from-origin-main01-1d71b5085bb1d458ff0dda4cae3f7e71083f0c3d",
+        "code-map-skill-refresh-fix-branch-pendingChanges-0-2026-06-21",
+        "failing-test-repro-repeated-markers-and-placeholder-suffixes-2026-06-21",
+        "code-map-skill-refresh-final-precommit-fix15-fileCount-30-nodeCount-959-edgeCount-2475-pendingChanges-0-2026-06-22",
+        "npm-run-check-pass-2026-06-22-fix15",
+        "npm-test-209-pass-2026-06-22-fix15",
+        "sensitive-payload-13-pass-2026-06-22-fix15",
+        "prompt-optimizer-60-pass-2026-06-22-fix15",
+        "http-invalid-body-8-pass-2026-06-22-fix15",
+        "image-api-110-pass-2026-06-22-fix15",
+        "provider-poll-url-security-9-pass-2026-06-22-fix15",
+        "final-v1-4-evidence-scan-pass-2026-06-22-fix15",
+        "git-diff-cached-check-pass-2026-06-22-fix15",
+        "review-gate-pass-blockingCount-0-2026-06-22-fix15",
+        "subagent-code-marker-authorization-cookie-placeholder-natural-ragflow-regression-test-evidence-final-zero-p0-p1-p2-p3-2026-06-22-fix15",
+        "browser-qa-unverified-not-applicable-backend-api-only-2026-06-22-fix15"
+      ]
     }
   ]
 }

@@ -114,12 +114,23 @@ export async function getRagflowEnhancement({ request, binding, timeoutMs = 6000
 }
 
 function containsOutboundSensitivePayload({ request, binding }) {
-  return containsHighConfidenceSensitivePayload(JSON.stringify({
+  const structuredPayload = {
     prompt: request?.prompt || "",
     entity_mentions: binding?.entity_mentions || [],
     resolved_references: binding?.references_used || [],
     output: request?.output || {}
-  }));
+  };
+  if (containsHighConfidenceSensitivePayload(JSON.stringify(structuredPayload))) return true;
+  return containsSensitiveOutboundString(structuredPayload);
+}
+
+function containsSensitiveOutboundString(value) {
+  let unsafe = false;
+  walk(value, (node) => {
+    if (unsafe || typeof node !== "string") return;
+    unsafe = containsHighConfidenceSensitivePayload(node);
+  });
+  return unsafe;
 }
 
 function createDeadline(timeoutMs) {

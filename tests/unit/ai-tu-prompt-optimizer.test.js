@@ -444,12 +444,36 @@ test("prompt optimizer rejects trailing authorization parameters after quoted pr
   });
 });
 
+test("prompt optimizer rejects unknown authorization parameter credential values before RAGFlow fetch", async () => {
+  const credential = "markerCredentialABCDEF1234567890";
+  const cases = [
+    ["custom unknown semicolon parameter", `authorization=Custom; foo="${credential}"`, credential],
+    ["aws unknown comma parameter", `authorization=AWS4-HMAC-SHA256, XCustom="${credential}"`, credential],
+    ["digest unknown parameter", `authorization=Digest realm="x"; unknown="${credential}"`, credential]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
 test("prompt optimizer allows benign authorization tail parameters without credential values", async () => {
   const allowed = [
     "authorization=\"Token x\", username=\"tester\"",
+    "authorization=\"Token x\", username=\"testuser\"",
+    "authorization=\"Token x\", realm=\"public01\"",
     "authorization=\"Token x\", algorithm=\"hmac\"",
+    "authorization=\"Token x\", algorithm=\"hmac-sha\"",
     "authorization=\"Digest x\"; realm=\"public\"; qop=\"auth\"",
-    "proxy_authorization=\"Custom x\"; username=\"tester\""
+    "authorization=\"Digest x\"; realm=\"public01\"; qop=\"auth\"",
+    "proxy_authorization=\"Custom x\"; username=\"tester\"",
+    "proxy_authorization=\"Custom x\"; username=\"testuser\"",
+    "生成一张接口教学图，画面文字包括：\"Authorization: Custom",
+    "生成一张包装标签，画面文字包括：\"Cookie: flavor=choco"
   ];
 
   for (const prompt of allowed) {
@@ -479,6 +503,82 @@ test("prompt optimizer rejects scheme-less authorization assignment credentials 
   ];
 
   for (const { label, prompt, leaked } of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("prompt optimizer rejects repeated authorization markers before RAGFlow fetch", async () => {
+  const credential = "markerCredentialABCDEF1234567890";
+  const cases = [
+    ["assignment repeated custom", `authorization=Custom; authorization=Custom ${credential}`],
+    ["header repeated custom", `Authorization: Custom; Authorization: Custom ${credential}`],
+    ["assignment repeated apikey", `authorization=ApiKey; authorization=ApiKey ${credential}`],
+    ["proxy repeated custom", `Proxy-Authorization: Custom; Proxy-Authorization: Custom ${credential}`],
+    ["comma repeated token", `authorization=Token, authorization=Token ${credential}`],
+    ["digest response on second marker", `authorization=Digest realm="x"; authorization=Digest response="${credential}"`],
+    ["case and tab repeated marker", `AUTHORIZATION=Custom\tAUTHORIZATION=Custom ${credential}`],
+    ["fullwidth repeated marker", `ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom； ａｕｔｈｏｒｉｚａｔｉｏｎ＝Custom ${credential}`],
+    ["invisible repeated marker", `Authori\u2060zation=Custom; Authori\u2060zation=Custom ${credential}`],
+    ["three repeated markers", `authorization=Custom; authorization=Custom; authorization=Custom ${credential}`]
+  ];
+
+  for (const [label, prompt] of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked: credential
+    });
+  }
+});
+
+test("prompt optimizer rejects unclosed prefix quotes before sensitive markers", async () => {
+  const credential = "markerCredentialABCDEF1234567890";
+  const cases = [
+    ["unclosed double quote before authorization", `"poster label Authorization: Custom ${credential}`, credential],
+    ["unclosed single quote before proxy authorization", `'poster label Proxy-Authorization: Custom ${credential}`, credential],
+    ["unclosed quote before cookie header", `"poster label Cookie: sid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"],
+    ["unclosed quote before cookie assignment", `"poster label cookie=sessionid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"],
+    ["same quote unclosed json authorization key", `"poster {"Authorization":"Custom ${credential}`, credential],
+    ["same quote unclosed json proxy authorization key", `"poster {"Proxy-Authorization":"Custom ${credential}`, credential],
+    ["same quote unclosed json cookie key", `"poster {"Cookie":"sid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"],
+    ["same quote unclosed json set-cookie key", `"poster {"Set-Cookie":"sessionid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"],
+    ["unclosed quote before json authorization key", `'poster {"Authorization":"Custom ${credential}`, credential],
+    ["unclosed quote before escaped json authorization key", `"poster {\\\"Authorization\\\":\\\"Custom ${credential}`, credential],
+    ["unclosed quote before json cookie key", `'poster {"Cookie":"sid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"],
+    ["unclosed quote before escaped json cookie key", `"poster {\\\"Cookie\\\":\\\"sid=sessionCredentialABCDEF1234567890`, "sessionCredentialABCDEF1234567890"]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("prompt optimizer rejects quoted and JSON-shaped sensitive markers before RAGFlow fetch", async () => {
+  const credential = "markerCredentialABCDEF1234567890";
+  const cases = [
+    ["quoted authorization credential", `description="Authorization: ApiKey ${credential}"`, credential],
+    ["json authorization credential", `{"Authorization":"Custom ${credential}"}`, credential],
+    ["json proxy authorization credential", `{"Proxy-Authorization":"Custom ${credential}"}`, credential],
+    ["escaped json authorization credential", `{\\\"Authorization\\\":\\\"Custom ${credential}\\\"}`, credential],
+    ["escaped json proxy authorization credential", `{\\\"Proxy-Authorization\\\":\\\"Custom ${credential}\\\"}`, credential],
+    ["quoted cookie credential", `"Cookie: sid=sessionCredentialABCDEF1234567890"`, "sessionCredentialABCDEF1234567890"],
+    ["json cookie credential", `{"Cookie":"sid=sessionCredentialABCDEF1234567890"}`, "sessionCredentialABCDEF1234567890"],
+    ["json set-cookie credential", `{"Set-Cookie":"sessionid=sessionCredentialABCDEF1234567890; HttpOnly"}`, "sessionCredentialABCDEF1234567890"],
+    ["escaped json cookie credential", `{\\\"Cookie\\\":\\\"sid=sessionCredentialABCDEF1234567890\\\"}`, "sessionCredentialABCDEF1234567890"],
+    ["escaped json set-cookie credential", `{\\\"Set-Cookie\\\":\\\"sessionid=sessionCredentialABCDEF1234567890; HttpOnly\\\"}`, "sessionCredentialABCDEF1234567890"],
+    ["unicode prefix authorization marker", `İ Authorization: Custom ${credential}`, credential],
+    ["unicode prefix cookie marker", "İ Cookie: sid=sessionCredentialABCDEF1234567890", "sessionCredentialABCDEF1234567890"]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
     await assertPromptOptimizerRejectsBeforeRagflow({
       label,
       body: { task_type: "text_image", prompt, references: [] },
@@ -536,13 +636,21 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
   const highEntropyPreference = "T7xQp4rT9vLm2ZaB8cYd6EfGhJk3MnPq";
   const highEntropyGenericCookie = "K8sN4vQp9LmT2ZaB7cYd6EfGhJk3MnPq";
   const genericJwt = "eyJsyntheticJwtHeader123456789.eyJsyntheticPayload123456789.syntheticSignature123456789";
+  const encodedJwt = "eyJsyntheticJwtHeader123456789%2EeyJsyntheticPayload123456789%2EsyntheticSignature123456789";
   const rejected = [
     ["session cookie", "Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"],
+    ["short session named cookie", "Cookie: session=abc", "session=abc"],
     ["short session cookie", "Cookie: sessionid=abc", "sessionid=abc"],
     ["auth token cookie", "Cookie: auth_token=synthetic_auth_token_123456789", "synthetic_auth_token_123456789"],
     ["short auth token cookie", "Cookie: auth_token=abc", "auth_token=abc"],
+    ["short csrf cookie", "Cookie: csrf=abc", "csrf=abc"],
+    ["short xsrf cookie", "Cookie: xsrf=abc", "xsrf=abc"],
+    ["short csrf token cookie", "Cookie: csrf_token=abc", "csrf_token=abc"],
+    ["short xsrf token cookie", "Cookie: XSRF-TOKEN=abc", "XSRF-TOKEN=abc"],
+    ["short remember cookie", "Cookie: remember_me=abc", "remember_me=abc"],
     ["access token set-cookie", "Set-Cookie: access_token=synthetic_access_token_123456789; HttpOnly", "synthetic_access_token_123456789"],
     ["short access token set-cookie", "Set-Cookie: access_token=abc; HttpOnly", "access_token=abc"],
+    ["short remember set-cookie", "Set-Cookie: remember_me=abc; HttpOnly", "remember_me=abc"],
     ["short jwt cookie", "Cookie: jwt=abc", "jwt=abc"],
     ["high entropy sid", `Cookie: sid=${highEntropySid}`, highEntropySid],
     ["short sid cookie", "Cookie: sid=abc", "sid=abc"],
@@ -550,16 +658,65 @@ test("prompt optimizer cookie detection allows low-risk preference copy and reje
     ["assignment session cookie", "cookie=sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"],
     ["assignment auth token cookie", "cookie=auth_token=synthetic_auth_token_123456789", "synthetic_auth_token_123456789"],
     ["assignment access token cookie", "cookie=access_token=synthetic_access_token_123456789", "synthetic_access_token_123456789"],
+    ["assignment csrf cookie", "cookie=csrf=abc", "csrf=abc"],
+    ["assignment csrf token cookie", "cookie=csrf_token=abc", "csrf_token=abc"],
+    ["assignment xsrf set-cookie", "set_cookie=xsrf=abc", "xsrf=abc"],
+    ["assignment xsrf token set-cookie", "set_cookie=xsrf_token=abc", "xsrf_token=abc"],
     ["assignment jwt cookie", "cookie=jwt=synthetic.jwt.token.value", "synthetic.jwt.token.value"],
     ["assignment quoted mixed credential cookie", "cookie=\"theme=dark; sessionid=synthetic_session_123456789\"", "synthetic_session_123456789"],
     ["assignment set-cookie jwt attribute", "set-cookie=jwt=abc; HttpOnly", "jwt=abc"],
     ["assignment set-cookie refresh token", "set_cookie=refresh_token=synthetic_refresh_token_123456789; HttpOnly", "synthetic_refresh_token_123456789"],
     ["generic assignment high entropy cookie", `cookie=${highEntropyGenericCookie}`, highEntropyGenericCookie],
     ["generic assignment jwt cookie", `cookie=${genericJwt}`, "eyJsyntheticJwtHeader123456789"],
+    ["generic assignment encoded jwt cookie", `cookie=${encodedJwt}`, "eyJsyntheticJwtHeader123456789"],
+    ["generic header encoded jwt cookie", `Cookie: preference=${encodedJwt}`, "eyJsyntheticJwtHeader123456789"],
+    ["multi pair xsrf token cookie", "Cookie: flavor=choco; XSRF-TOKEN=abc", "XSRF-TOKEN=abc"],
+    ["csrf token set-cookie", "Set-Cookie: CSRF-TOKEN=abc; HttpOnly", "CSRF-TOKEN=abc"],
     ["multi pair credential", `Cookie: flavor=choco; jwt=${genericJwt}`, "eyJsyntheticJwtHeader123456789"],
     ["product copy cannot hide session cookie", "产品文案示例 Cookie: sessionid=synthetic_session_123456789abcdef", "synthetic_session_123456789abcdef"]
   ];
   for (const [label, prompt, leaked] of rejected) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("prompt optimizer rejects repeated cookie markers before RAGFlow fetch", async () => {
+  const cases = [
+    ["assignment low risk then session", "cookie=flavor=choco cookie=sessionid=sessionCredentialABCDEF1234567890", "sessionCredentialABCDEF1234567890"],
+    ["header low risk then auth token", "Cookie: flavor=choco; Cookie: auth_token=authCredentialABCDEF1234567890", "authCredentialABCDEF1234567890"],
+    ["semicolon assignment access token", "cookie=theme=dark;cookie=access_token=accessCredentialABCDEF1234567890", "accessCredentialABCDEF1234567890"],
+    ["space header sid", "Cookie: language=zh-CN Cookie: sid=sidCredentialABCDEF1234567890", "sidCredentialABCDEF1234567890"],
+    ["set cookie repeated session", "Set-Cookie: theme=dark; Set-Cookie: sessionid=sessionCredentialABCDEF1234567890; HttpOnly", "sessionCredentialABCDEF1234567890"],
+    ["third marker auth", "cookie=flavor=choco cookie=layout=grid cookie=auth=authCredentialABCDEF1234567890", "authCredentialABCDEF1234567890"]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("prompt optimizer rejects placeholder-looking credentials with random suffixes before RAGFlow fetch", async () => {
+  const cases = [
+    ["test token suffix", "token=test_token_ABCDEF1234567890", "test_token_ABCDEF1234567890"],
+    ["fake secret suffix", "secret=fake_secret_qwertyuiop123456", "fake_secret_qwertyuiop123456"],
+    ["sample api key suffix", "api_key=sample_api_key_livevalue123456", "sample_api_key_livevalue123456"],
+    ["synthetic access token suffix", "access_token=synthetic_access_token_0123456789abcdef", "synthetic_access_token_0123456789abcdef"],
+    ["placeholder plus suffix", "token=YOUR_ACCESS_TOKEN_ABCDEF1234567890", "YOUR_ACCESS_TOKEN_ABCDEF1234567890"],
+    ["placeholder plus known key", `api_key=YOUR_API_KEY_sk-proj-${"E".repeat(32)}`, "sk-proj-EEEEEEEE"],
+    ["bare placeholder plus suffix", "YOUR_ACCESS_TOKEN_ABCDEF1234567890", "YOUR_ACCESS_TOKEN_ABCDEF1234567890"],
+    ["bare placeholder plus known key", `YOUR_API_KEY_sk-proj-${"E".repeat(32)}`, "sk-proj-EEEEEEEE"],
+    ["bare prefixed placeholder", "prefix_YOUR_ACCESS_TOKEN", "prefix_YOUR_ACCESS_TOKEN"]
+  ];
+
+  for (const [label, prompt, leaked] of cases) {
     await assertPromptOptimizerRejectsBeforeRagflow({
       label,
       body: { task_type: "text_image", prompt, references: [] },

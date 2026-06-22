@@ -1308,6 +1308,7 @@ export function validateRagflowEnhancement(candidate, context = {}) {
     if (jsonText.includes(title)) return null;
   }
   if (containsForbiddenEnhancementText(jsonText)) return null;
+  if (containsSensitiveEnhancementString(candidate)) return null;
 
   const allowedReferenceIds = new Set((context.binding?.resolved_references || []).map((ref) => ref.reference_id));
   const foundReferenceIds = findValuesByKey(candidate, "reference_id");
@@ -1316,6 +1317,15 @@ export function validateRagflowEnhancement(candidate, context = {}) {
   if (foundUrls.length) return null;
 
   return sanitizeEnhancement(candidate);
+}
+
+function containsSensitiveEnhancementString(value) {
+  let unsafe = false;
+  walk(value, (node) => {
+    if (unsafe || typeof node !== "string") return;
+    unsafe = containsPromptOptimizationSensitivePayload(node);
+  });
+  return unsafe;
 }
 
 function consumedRagflowFieldsForTask(taskType) {

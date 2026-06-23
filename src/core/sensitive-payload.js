@@ -291,11 +291,13 @@ function containsBareCredentialParameter(text) {
     const cname = cmatch[1].toLowerCase();
     if (COOKIE_BARE_NAME_SET.has(cname) || isStrictCredentialCookieName(cname)) {
       // Strict-name cookie names are rare in ordinary prose, so mirror the
-      // ;-cookie path's strict-name short-circuit: any non-placeholder value
-      // (>=3 chars, matching COOKIE_CREDENTIAL_PARAM) is treated as a credential.
-      // This catches short opaque tokens (e.g. jwttoken=deadbeefcafebabe, 16 hex)
-      // that isLikelyCredentialValue would reject for low entropy.
-      if (!isPlaceholderCredential(cvalue)) return true;
+      // ;-cookie path's strict-name short-circuit, but require a minimum value
+      // length of 8 (a real session/csrf/jwt token is >=8 chars). This catches
+      // short opaque tokens (e.g. jwttoken=deadbeefcafebabe, 16 hex;
+      // accesstokenid=abc1234567, 10 chars) that isLikelyCredentialValue would
+      // reject for low entropy, while avoiding prose like "the jwttoken=abc in
+      // the config file" where the value is a short prose token.
+      if (cvalue.length >= 8 && !isPlaceholderCredential(cvalue)) return true;
     } else if (isStrongCredentialValue(cvalue)) {
       return true;
     }

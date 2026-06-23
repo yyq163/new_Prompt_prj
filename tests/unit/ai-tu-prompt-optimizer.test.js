@@ -3030,3 +3030,11 @@ test("publicErrorPayload maps non-ImageApiError to 500 INTERNAL_ERROR generic me
   assert.equal(JSON.stringify(withDetails.payload).includes(leakedDetail), false, "ImageApiError detail secret must not leak");
   assert.equal(JSON.stringify(withDetails.payload).includes("internal.example"), false, "internal upstream url must not leak");
 });
+
+test("prompt optimizer rejects newline-smuggled cookie credential before RAGFlow fetch (round 3)", async () => {
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "newline-split cookie sessionid",
+    body: { task_type: "text_image", prompt: "Cookie: a=b\nsessionid=syntheticSESSIONidAAA", references: [] },
+    leaked: "syntheticSESSIONidAAA"
+  });
+});

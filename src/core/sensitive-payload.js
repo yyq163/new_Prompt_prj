@@ -10,7 +10,7 @@ const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=
 const PLACEHOLDER_PREFIX_CREDENTIAL_TOKEN = /(?:^|[^A-Za-z0-9_-])((?:your|test|fake|sample|synthetic|demo)_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_[A-Za-z0-9][A-Za-z0-9._-]{7,}|[A-Za-z0-9][A-Za-z0-9._-]{7,})|[A-Za-z0-9][A-Za-z0-9._-]{1,64}_(?:your_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_placeholder)?|(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)_placeholder))/giu;
 const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
 const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret|sessionid|session)\s*=\s*"?([^",\s]{8,})"?/giu;
-const COOKIE_CREDENTIAL_PARAM = /(?:^|[\s;,。、])(sessionid|session|sid|auth_token|access_token|refresh_token|api_key|apikey|client_secret|secret|password|token|credential|jwt|csrf|csrf_token|xsrf|xsrf_token|oauth|oauth_token|id_token|bearer_token|remember_me|csrftoken|xsrftoken|authtoken|accesstoken|refreshtoken|sessiontoken|bearertoken|idtoken)\s*=\s*"?([A-Za-z0-9._~+/=-]{3,})"?/giu;
+const COOKIE_CREDENTIAL_PARAM = /(?:^|[\s;,。、])(sessionid|session|sid|auth_token|access_token|refresh_token|api_key|apikey|client_secret|secret|password|token|credential|jwt|csrf|csrf_token|xsrf|xsrf_token|oauth|oauth_token|id_token|bearer_token|remember_me|csrftoken|xsrftoken|authtoken|accesstoken|refreshtoken|sessiontoken|bearertoken|idtoken|jwttoken|accesstokenid|refreshtokenid|bearertokenid|apitoken|apikeyid|jwtsecret|accesstokensecret|jwtauthtoken|bearerauthtoken)\s*=\s*"?([A-Za-z0-9._~+/=-]{3,})"?/giu;
 const SENSITIVE_AUTHORIZATION_PARAMETER_NAMES = new Set([
   "response",
   "signature",
@@ -244,14 +244,23 @@ function containsBareCredentialParameter(text) {
   // refresh_token/auth_token) keep the loose isLikelyCredentialValue gate.
   // STRONG_NAME_SET: unambiguous secret names (access_token/client_secret/
   // password/refresh_token/auth_token) get the loose isLikelyCredentialValue
-  // gate. All other names (incl. the auth-specific response/signature/credential
-  // and the prose-prone key/token/session/secret/...) get the strict
-  // isStrongCredentialValue gate: a bare response=/signature= is only treated as
-  // a credential when the value is a known credential format, a 32+ hex/url-safe
-  // token, or otherwise strong — real Digest response hashes are 32+ hex, so this
-  // catches them while avoiding prose like "when response=200".
+  // gate. COOKIE_BARE_NAME_SET: credential cookie/session names that are RARE in
+  // ordinary prose (sessionid/sid/csrf/xsrf/oauth/jwt + the concatenated forms)
+  // also get the loose gate, so a credential smuggled onto a bare line by a
+  // literal newline (e.g. `Cookie: a=b\nsessionid=<alphanum token>`) is still
+  // detected — the marker scanner clips the cookie value at the line end, so the
+  // smuggled pair only reaches this bare scan, and its value is typically an
+  // opaque alphanumeric session token (not a 32-hex digest). The prose-prone
+  // generic names (key/token/session/secret/response/signature/credential/...)
+  // keep the strict isStrongCredentialValue gate to avoid flagging prose like
+  // "when response=200" or "set key=...".
   const STRONG_NAME_SET = new Set([
     "access_token", "client_secret", "password", "refresh_token", "auth_token"
+  ]);
+  const COOKIE_BARE_NAME_SET = new Set([
+    "sessionid", "sid", "csrf", "xsrf", "oauth", "jwt",
+    "csrftoken", "xsrftoken", "authtoken", "accesstoken", "refreshtoken",
+    "sessiontoken", "bearertoken", "idtoken", "jwttoken"
   ]);
   const scanText = normalizeCyrillicHomoglyphs(stringValue(text));
   AUTH_PARAM_CREDENTIAL.lastIndex = 0;
@@ -261,9 +270,33 @@ function containsBareCredentialParameter(text) {
     if (!value) continue;
     if (isPlaceholderCredential(value)) continue;
     const name = match[0].split("=")[0].trim().toLowerCase();
-    if (STRONG_NAME_SET.has(name)) {
+    if (STRONG_NAME_SET.has(name) || COOKIE_BARE_NAME_SET.has(name)) {
       if (isLikelyCredentialValue(value)) return true;
     } else if (isStrongCredentialValue(value)) {
+      return true;
+    }
+  }
+  // Also scan cookie-specific credential names (csrf/jwttoken/csrftoken/...)
+  // that are NOT in the AUTH_PARAM_CREDENTIAL alternation. A credential smuggled
+  // onto a bare line by a newline (e.g. `Cookie: a=b\njwttoken=<token>`) only
+  // reaches this bare scan, so cookie names must be covered here too. Mirror the
+  // COOKIE_BARE_NAME_SET gating: loose isLikelyCredentialValue for the rare-in-
+  // prose cookie names, strict isStrongCredentialValue for prose-prone generics.
+  COOKIE_CREDENTIAL_PARAM.lastIndex = 0;
+  let cmatch;
+  while ((cmatch = COOKIE_CREDENTIAL_PARAM.exec(scanText))) {
+    const cvalue = stripOuterQuotes(cmatch[2]);
+    if (!cvalue) continue;
+    if (isPlaceholderCredential(cvalue)) continue;
+    const cname = cmatch[1].toLowerCase();
+    if (COOKIE_BARE_NAME_SET.has(cname) || isStrictCredentialCookieName(cname)) {
+      // Strict-name cookie names are rare in ordinary prose, so mirror the
+      // ;-cookie path's strict-name short-circuit: any non-placeholder value
+      // (>=3 chars, matching COOKIE_CREDENTIAL_PARAM) is treated as a credential.
+      // This catches short opaque tokens (e.g. jwttoken=deadbeefcafebabe, 16 hex)
+      // that isLikelyCredentialValue would reject for low entropy.
+      if (!isPlaceholderCredential(cvalue)) return true;
+    } else if (isStrongCredentialValue(cvalue)) {
       return true;
     }
   }

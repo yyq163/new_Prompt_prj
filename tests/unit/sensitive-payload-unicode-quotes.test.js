@@ -257,3 +257,28 @@ test("scanner detects credentials inside escaped and mismatched quote states", (
     assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
   }
 });
+
+// Round-3 audit finding: a credential cookie pair smuggled onto a bare line by
+// a literal newline (the marker scanner clips the cookie value at the line end,
+// so the pair only reaches the full-text bare scan) must still be detected. This
+// mirrors the F1 newline-smuggling class but for Cookie markers and short opaque
+// session/csrf/jwt token values (not 32-hex digests).
+
+test("scanner detects cookie credentials smuggled onto a bare line by a newline (round 3)", () => {
+  const session = "syntheticSESSIONidAAA";
+  const cases = [
+    // newline-split Cookie: sessionid on a bare line, opaque alphanumeric token.
+    ["newline-split cookie sessionid", `Cookie: a=b\nsessionid=${session}`],
+    // newline-split Cookie: csrf on a bare line.
+    ["newline-split cookie csrf", `Cookie: a=b\ncsrf=syntheticCSRFtoken123`],
+    // newline-split Cookie: jwttoken (concatenated name) with a 16-hex token.
+    ["newline-split cookie jwttoken", `Cookie: a=b\njwttoken=deadbeefcafebabe`],
+    // newline-split Cookie: csrftoken (concatenated name).
+    ["newline-split cookie csrftoken", `Cookie: a=b\ncsrftoken=syntheticCSRFvalue000`],
+    // newline-split Cookie: accesstokenid (concatenated name) with a short token.
+    ["newline-split cookie accesstokenid", `Cookie: a=b\naccesstokenid=abc1234567`]
+  ];
+  for (const [label, value] of cases) {
+    assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
+  }
+});

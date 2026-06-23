@@ -2841,3 +2841,37 @@ function isInvalidRequestSchema(error) {
   assert.equal(error && error.errorCode, "INVALID_REQUEST_SCHEMA");
   return true;
 }
+
+test("prompt optimizer rejects credentials split by ideographic full stop before RAGFlow fetch", async () => {
+  const cases = [
+    {
+      label: "digest response split by ideographic full stop",
+      prompt: "Authorization: Digest realm=x\u3002response=\"syntheticRESPvalue000\"",
+      leaked: "syntheticRESPvalue000"
+    },
+    {
+      label: "cookie sessionid split by ideographic full stop",
+      prompt: "Cookie: a=b\u3002sessionid=syntheticSESSIONidAAA",
+      leaked: "syntheticSESSIONidAAA"
+    }
+  ];
+  for (const { label, prompt, leaked } of cases) {
+    await assertPromptOptimizerRejectsBeforeRagflow({
+      label,
+      body: { task_type: "text_image", prompt, references: [] },
+      leaked
+    });
+  }
+});
+
+test("prompt optimizer rejects cookie credential split by ideographic comma U+3001 before RAGFlow fetch", async () => {
+  // G3 (most serious reviewer-found gap): splitCookieSegments only splits on ;
+  // and 。, so U+3001 ideographic comma does NOT separate cookie pairs and a
+  // sessionid credential smuggled after it reaches RAGFlow. Assert 400 + 0
+  // fetches + no leak once the Builder closes it.
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "cookie sessionid split by ideographic comma U+3001",
+    body: { task_type: "text_image", prompt: "Cookie: a=b\u3001sessionid=syntheticSESSIONidAAA", references: [] },
+    leaked: "syntheticSESSIONidAAA"
+  });
+});

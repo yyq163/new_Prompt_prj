@@ -2,13 +2,15 @@ const CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?
 const GENERIC_VALUE_CREDENTIAL_ASSIGNMENT = /\b(proxy[_-]?authorization|authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|client[_-]?secret|secret|password)\b\s*[:=]\s*(?:"(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE)"|'(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE)'|(<VALUE>|\$\{VALUE\}|\{VALUE\}|YOUR_VALUE|VALUE_PLACEHOLDER|INSERT_VALUE_HERE))/giu;
 const BARE_BEARER = /\bbearer\s+([A-Za-z0-9._~+/\-=]{20,})\b/giu;
 const BARE_BASIC = /\bbasic\s+([A-Za-z0-9+/=]{16,})\b/giu;
+const CURLY_QUOTED_BEARER = /\b(bearer|basic)\s*[\u201c\u201d\u2018\u2019]([A-Za-z0-9._~+\/\-=]{8,})[\u201c\u201d\u2018\u2019]/giu;
 const KNOWN_CREDENTIAL_VALUE = /(?:^|[^A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})(?=$|[^A-Za-z0-9])/g;
 const PRIVATE_KEY_BLOCK = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/i;
 const BASE64_DATA_URI = /\bdata:[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*(?:;[a-z0-9._+-]+=[^,;\s]+|;[a-z0-9._+-]+)*;base64,[A-Za-z0-9+/=\s]*/gi;
 const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=$|[^A-Za-z0-9+/=])/g;
 const PLACEHOLDER_PREFIX_CREDENTIAL_TOKEN = /(?:^|[^A-Za-z0-9_-])((?:your|test|fake|sample|synthetic|demo)_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_[A-Za-z0-9][A-Za-z0-9._-]{7,}|[A-Za-z0-9][A-Za-z0-9._-]{7,})|[A-Za-z0-9][A-Za-z0-9._-]{1,64}_(?:your_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_placeholder)?|(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)_placeholder))/giu;
 const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
-const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret)\s*=\s*"?([^",\s]{8,})"?/giu;
+const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret|sessionid|session)\s*=\s*"?([^",\s]{8,})"?/giu;
+const COOKIE_CREDENTIAL_PARAM = /(?:^|[\s;,。、])(sessionid|session|sid|auth_token|access_token|refresh_token|api_key|apikey|client_secret|secret|password|token|credential|jwt|csrf|csrf_token|xsrf|oauth|oauth_token|id_token|bearer_token|remember_me)\s*=\s*"?([A-Za-z0-9._~+/=-]{3,})"?/giu;
 const SENSITIVE_AUTHORIZATION_PARAMETER_NAMES = new Set([
   "response",
   "signature",
@@ -74,6 +76,7 @@ function containsSensitivePayloadInText(text) {
   if (containsAuthorizationMarkerSegments(markerScan.segments)) return true;
   if (containsBareAuthCredential(BARE_BEARER, text)) return true;
   if (containsBareAuthCredential(BARE_BASIC, text)) return true;
+  if (containsCurlyQuotedBearerCredential(text)) return true;
   if (containsCookieMarkerSegments(markerScan.segments)) return true;
   if (containsQuotedMarkerPayload(markerScan.quotedValues)) return true;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, text)) return true;
@@ -124,6 +127,14 @@ function containsAuthorizationMarkerSegments(segments) {
     if (item.tooLong) return true;
     if (item.malformed && !item.masked) return true;
     if (item.tooManyParameters) return true;
+    // Security detection must consume the COMPLETE logical marker value, so a
+    // credential assignment (response=, signature=, credential=, token=, ...)
+    // appearing after a 。/curly-quote terminator is still detected. This runs
+    // before the bounded narrative value is consulted, satisfying the
+    // requirement that narrative trimming must not happen before the credential
+    // check. AUTH_PARAM_CREDENTIAL is a linear regex (no nested quantifiers),
+    // so this scan stays O(n) and ReDoS-free.
+    if (containsCredentialParameter(stringValue(item.fullScanValue))) return true;
     const value = stringValue(item.value).trim();
     if (!value || isPlaceholderCredential(value)) continue;
     if (containsAssignedAuthorizationCredential(value)) return true;
@@ -140,10 +151,42 @@ function containsBareAuthCredential(pattern, text) {
   return false;
 }
 
+function containsCurlyQuotedBearerCredential(text) {
+  CURLY_QUOTED_BEARER.lastIndex = 0;
+  let match;
+  while ((match = CURLY_QUOTED_BEARER.exec(text))) {
+    if (isLikelyCredentialValue(match[2])) return true;
+  }
+  return false;
+}
+
+function containsCookieCredentialParameter(value) {
+  // Scan a Cyrillic-homoglyph-normalized copy so a credential smuggled under a
+  // confusable cookie name (e.g. sessiоnid / tоken with Cyrillic о) after a
+  // 。/curly-quote terminator is still detected. NFKC does not fold Cyrillic to
+  // Latin, so the literal COOKIE_CREDENTIAL_PARAM name alternation would
+  // otherwise miss it. The value capture is taken from the normalized text.
+  const scanText = normalizeCyrillicHomoglyphs(stringValue(value));
+  COOKIE_CREDENTIAL_PARAM.lastIndex = 0;
+  let match;
+  while ((match = COOKIE_CREDENTIAL_PARAM.exec(scanText))) {
+    const candidate = stripOuterQuotes(match[2]);
+    if (!candidate) continue;
+    if (isPlaceholderCredential(candidate)) continue;
+    return true;
+  }
+  return false;
+}
 function containsCredentialParameter(value) {
+  // Scan a Cyrillic-homoglyph-normalized copy so a credential smuggled under a
+  // confusable auth parameter name (e.g. respоnse / sessiоn with Cyrillic о)
+  // after a 。/curly-quote terminator is still detected. NFKC does not fold
+  // Cyrillic to Latin, so the literal AUTH_PARAM_CREDENTIAL name alternation
+  // would otherwise miss it. The value capture is taken from the normalized text.
+  const scanText = normalizeCyrillicHomoglyphs(stringValue(value));
   AUTH_PARAM_CREDENTIAL.lastIndex = 0;
   let match;
-  while ((match = AUTH_PARAM_CREDENTIAL.exec(value))) {
+  while ((match = AUTH_PARAM_CREDENTIAL.exec(scanText))) {
     if (isLikelyCredentialValue(match[1])) return true;
   }
   return false;
@@ -174,7 +217,10 @@ function containsCookieMarkerSegments(segments) {
   for (const item of segments) {
     if (item.type !== "cookie" && item.type !== "set_cookie") continue;
     if (item.tooLong || (item.malformed && !item.masked)) return true;
-    if (containsCookieAssignmentCredential(item.type === "set_cookie" ? "set-cookie" : "cookie", item.value)) {
+    // Scan the full (un-truncated) marker value so a cookie pair split off by a
+    // 。/； boundary after a low-risk pair is still inspected.
+    if (containsCookieCredentialParameter(item.fullScanValue)) return true;
+    if (containsCookieAssignmentCredential(item.type === "set_cookie" ? "set-cookie" : "cookie", item.fullValue)) {
       return true;
     }
   }
@@ -272,6 +318,18 @@ function buildMarkerSegments(source, markers, lineEnd) {
     const rawValue = source.slice(marker.valueStart, valueEnd);
     const boundedRawValue = trimNarrativeMarkerValue(rawValue);
     const value = unescapeScanQuotes(marker.quotedKey ? trimJsonLikeMarkerValue(boundedRawValue) : boundedRawValue).trim();
+    // fullValue is the COMPLETE logical marker value (quote-unescaped, but NOT
+    // narrative-truncated at 。/curly quotes). Credential detection must consume
+    // this full value so a credential appearing after a 。/curly-quote
+    // terminator cannot escape detection. The bounded `value` is still used for
+    // the scheme-credential heuristic and the tooLong/malformed bounds.
+    const fullValue = unescapeScanQuotes(marker.quotedKey ? trimJsonLikeMarkerValue(rawValue) : rawValue).trim();
+    // Compute the tooLong/malformed bounds against the narrative-truncated
+    // `value` (the original behavior). Switching this to `fullValue` regressed
+    // benign payloads whose full marker value (including post-terminator prose)
+    // exceeds MAX_*_VALUE_CHARS even though the trimmed value does not. The
+    // un-truncated fullValue is still scanned for credentials below; G5's narrow
+    // oversized-window case is tracked separately.
     const stats = inspectMarkerValue(value, marker.type);
     const segment = {
       type: marker.type,
@@ -282,6 +340,16 @@ function buildMarkerSegments(source, markers, lineEnd) {
       value: value.slice(0, marker.type === "authorization" || marker.type === "proxy_authorization"
         ? MAX_AUTHORIZATION_VALUE_CHARS
         : MAX_COOKIE_VALUE_CHARS),
+      fullValue: fullValue.slice(0, marker.type === "authorization" || marker.type === "proxy_authorization"
+        ? MAX_AUTHORIZATION_VALUE_CHARS
+        : MAX_COOKIE_VALUE_CHARS),
+      // fullScanValue is the raw marker value bounded only by the global scan
+      // cap, NOT by MAX_*_VALUE_CHARS. Credential-parameter scans use this so a
+      // credential pair landing just past MAX_*_VALUE_CHARS (e.g. a long low-risk
+      // cookie pair followed by 。sessionid=...) is still detected. The tooLong
+      // bound stays on the narrative-truncated `value`, so benign payloads whose
+      // full value exceeds MAX_*_VALUE_CHARS do not fail-closed spuriously.
+      fullScanValue: rawValue.slice(0, MAX_SENSITIVE_SCAN_TOTAL_CHARS),
       tooLong: stats.tooLong,
       malformed: stats.malformed,
       masked: marker.masked === true
@@ -586,7 +654,14 @@ function containsAssignedAuthorizationCredential(value) {
     return isLikelyCredentialValue(primarySegment) || isCredentialAssignmentValue(primarySegment);
   }
   if (isPlaceholderCredential(credential)) {
-    return primarySegment === segment ? false : isCredentialAssignmentValue(primarySegment);
+    // The scheme's immediate value is a recognized placeholder (e.g. <token>,
+    // YOUR_ACCESS_TOKEN_PLACEHOLDER). It carries no real secret, and the
+    // trailing portion of the segment was already scanned above by the
+    // credential-parameter and authorization-parameter checks. Running the
+    // broad isCredentialAssignmentValue heuristic on the placeholder-bearing
+    // primarySegment would over-fire on natural-language explanation that
+    // follows a placeholder (e.g. "Bearer <token>,其中 token 是访问令牌").
+    return false;
   }
   if (TEACHING_CONTEXT.test(primarySegment) && !containsLikelyCredentialToken(credential)) return false;
   return isAuthorizationSchemeCredentialValue(credential, parts[1]);
@@ -698,7 +773,7 @@ function parseAuthorizationParameters(value) {
   const flush = () => {
     const text = token.trim();
     token = "";
-    const match = /^([!#$%&'*+\-.^_`|~0-9A-Za-z]{1,64})\s*=\s*(.*)$/u.exec(text);
+    const match = /^([!#$%&'*+\-.^_`|~0-9A-Za-zаеорсухАЕОРСУХ]{1,64})\s*=\s*(.*)$/u.exec(text);
     if (!match) return;
     const paramValue = trimAuthorizationParameterValue(match[2]);
     parameters.push({
@@ -770,8 +845,16 @@ function isSensitiveAuthorizationParameterName(name) {
   return SENSITIVE_AUTHORIZATION_PARAMETER_NAMES.has(canonicalAuthorizationParameterName(name));
 }
 
+const CYRILLIC_TO_LATIN = {
+  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c",
+  "у": "y", "х": "x", "А": "a", "Е": "e", "О": "o",
+  "Р": "p", "С": "c", "У": "y", "Х": "x"
+};
+function normalizeCyrillicHomoglyphs(value) {
+  return stringValue(value).replace(/[аеорсухАЕОРСУХ]/gu, (char) => CYRILLIC_TO_LATIN[char] || char);
+}
 function canonicalAuthorizationParameterName(name) {
-  return normalizeTextForSensitiveScan(name)
+  return normalizeTextForSensitiveScan(normalizeCyrillicHomoglyphs(name))
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "_")
     .replace(/_+/g, "_")
@@ -807,15 +890,28 @@ function containsCookieAssignmentCredential(key, value) {
 function parseCookiePairs(headerValue, setCookie) {
   const segments = splitCookieSegments(stripOuterQuotes(headerValue));
   const pairs = [];
+  let seenCookie = false;
   for (let index = 0; index < segments.length; index += 1) {
-    if (setCookie && index > 0 && isSetCookieAttribute(segments[index])) continue;
     const separator = segments[index].indexOf("=");
     if (separator <= 0) continue;
     const name = segments[index].slice(0, separator).trim();
     const value = stripOuterQuotes(unescapeCookieValue(trimCookiePairValue(segments[index].slice(separator + 1).trim())));
     if (!name || !value) continue;
-    pairs.push({ name, value });
-    if (setCookie) break;
+    if (setCookie) {
+      // Set-Cookie semantically carries one cookie plus attributes. After the
+      // first cookie, only attribute-like segments are expected; a non-attribute
+      // segment here is a smuggled pair (commonly split by 。/；) and must still
+      // be inspected when it names a strict-credential cookie, so a credential
+      // appearing after such a terminator cannot escape detection. Attribute
+      // segments and non-strict trailing pairs are skipped to avoid over-firing
+      // on ordinary Set-Cookie copy.
+      if (isSetCookieAttribute(segments[index])) continue;
+      if (seenCookie && !isStrictCredentialCookieName(canonicalCookieName(name))) continue;
+      pairs.push({ name, value });
+      seenCookie = true;
+    } else {
+      pairs.push({ name, value });
+    }
   }
   return pairs;
 }
@@ -846,7 +942,7 @@ function splitCookieSegments(value) {
       quote = char;
       continue;
     }
-    if (char === ";") {
+    if (char === ";" || char === "。") {
       if (current.trim()) segments.push(current.trim());
       current = "";
       continue;
@@ -1072,10 +1168,11 @@ function isCredentialStructuralWord(value) {
 function isPlaceholderCredential(value) {
   const compact = normalizeTextForSensitiveScan(stripOuterQuotes(value))
     .trim()
-    .replace(/\s+/gu, "");
+    .replace(/\s+/gu, "")
+    .replace(/[.,;:!?\u3002\uFF0C\uFF1B\uFF1A\u3001]+$/u, "");
   if (!compact) return false;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return false;
-  const credentialName = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION)";
+  const credentialName = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION|RESPONSE|SIGNATURE|CREDENTIAL)";
   const wrappedPlaceholder = new RegExp(`^(?:<${credentialName}>|\\$\\{${credentialName}\\}|\\{${credentialName}\\})$`, "iu");
   if (wrappedPlaceholder.test(compact)) return true;
   const normalized = compact
@@ -1083,7 +1180,7 @@ function isPlaceholderCredential(value) {
     .replace(/^_+|_+$/g, "")
     .toUpperCase();
   if (!normalized) return false;
-  const credentialPattern = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION)";
+  const credentialPattern = "(?:TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|AUTH_TOKEN|BEARER_TOKEN|API_KEY|KEY|CLIENT_SECRET|SECRET|PASSWORD|SESSION_COOKIE|COOKIE|SESSION|RESPONSE|SIGNATURE|CREDENTIAL)";
   return normalized === "REPLACE_ME"
     || new RegExp(`^YOUR_${credentialPattern}(?:_PLACEHOLDER)?$`, "u").test(normalized)
     || new RegExp(`^${credentialPattern}_PLACEHOLDER$`, "u").test(normalized)

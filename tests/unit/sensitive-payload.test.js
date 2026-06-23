@@ -332,3 +332,56 @@ test("sensitive scan normalization keeps repeated fullwidth markers detectable",
   assert.equal(containsHighConfidenceSensitivePayload("İ Authorization: Custom markerCredentialABCDEF1234567890"), true);
   assert.equal(containsHighConfidenceSensitivePayload("İ Cookie: sid=sessionCredentialABCDEF1234567890"), true);
 });
+
+// Round-1 Part C audit gap G3: ReDoS timing assertions for the NEW regexes
+// (AUTH_PARAM_CREDENTIAL response=, COOKIE_CREDENTIAL_PARAM csrftoken=,
+// CURLY_QUOTED_BEARER Bearer curly-quoted tokens, and the Cyrillic-homoglyph
+// sessionid path via normalizeCyrillicHomoglyphs). Each adversarial input is a
+// ~64KB string (kept under MAX_SENSITIVE_SCAN_TOTAL_CHARS so the scanner
+// actually runs the regexes instead of short-circuiting on length) crafted to
+// exercise the named regex. The scanner must complete in < 500ms (matches the
+// existing timing-assertion style at lines ~130-156).
+
+test("new credential regexes stay bounded on 64KB adversarial inputs", () => {
+  const target = 64 * 1024 - 40; // under MAX_SENSITIVE_SCAN_TOTAL_CHARS so regexes run
+
+  const cases = [
+    {
+      label: "response= followed by long run of a",
+      build: () => "response=" + "a".repeat(target - "response=".length)
+    },
+    {
+      label: "repeated csrftoken=<30chars>; pairs",
+      build: () => {
+        const pair = "csrftoken=" + "x".repeat(30) + "; ";
+        return pair.repeat(Math.floor(target / pair.length));
+      }
+    },
+    {
+      label: "Bearer plus curly-quoted tokens repeated",
+      build: () => {
+        const pair = "Bearer \u201c" + "Z".repeat(20) + "\u201d ";
+        return pair.repeat(Math.floor(target / pair.length));
+      }
+    },
+    {
+      label: "homoglyph sessiоnid=<20chars>; pairs (Cyrillic o)",
+      build: () => {
+        const pair = "sessi\u043Enid=" + "y".repeat(20) + "; ";
+        return pair.repeat(Math.floor(target / pair.length));
+      }
+    }
+  ];
+
+  for (const item of cases) {
+    const value = item.build();
+    assert.equal(value.length < 64 * 1024, true, `${item.label} must stay under the scan cap`);
+    const startedAt = Date.now();
+    const detected = containsHighConfidenceSensitivePayload(value);
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(elapsedMs < 500, true, `${item.label} completed in ${elapsedMs}ms (must be < 500ms)`);
+    // The inputs are constructed to be high-confidence sensitive payloads, so
+    // detection=true confirms the regex actually matched (not a length short-circuit).
+    assert.equal(detected, true, `${item.label} should be detected`);
+  }
+});

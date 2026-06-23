@@ -214,3 +214,46 @@ test("scanner detects newline-smuggled and homoglyph-concatenated credential gap
   const f3 = "Cookie: sessi\u200Bid=syntheticSESSIONidAAA";
   assert.equal(containsHighConfidenceSensitivePayload(f3), true, "F3 ZWSP-split cookie sessionid");
 });
+
+// Round-1 Part C audit gap G4: combination (multi-vector) and malformed-quote
+// tests. These exercise 2+ historical findings at once (newline+homoglyph,
+// oversized+homoglyph, placeholder+credential-after-terminator, multi-separator,
+// curly+ideographic-comma) plus escaped/mismatched quote states, so regressions
+// in any single vector cannot quietly re-open a combination smuggling path.
+
+test("scanner detects multi-vector combination credential smuggling (round 1 G4)", () => {
+  // 32-hex Digest response hash (real Digest shape) so the newline+homoglyph
+  // bare-line case is caught by the strict 32+hex value gate.
+  const response = "deadbeefcafebabe1234567890abcdef";
+  const session = "syntheticSESSIONidAAA";
+  const cases = [
+    // newline + Cyrillic homoglyph: response= split to a bare line, with Cyrillic о.
+    ["newline+homoglyph", `Authorization: Digest realm="x"\nresp\u043Ense="${response}"`],
+    // oversized cookie window + Cyrillic homoglyph after ideographic full stop.
+    ["oversized+homoglyph", `Cookie: ${"a".repeat(4090)}=x\u3002sessi\u043Enid=${session}`],
+    // placeholder scheme value + real credential after an ideographic terminator.
+    ["placeholder+credential-after-terminator", `Authorization: Bearer <token>\u3002sessionid=${session}`],
+    // multi-separator chain: ；(NFKC->;) + 。 + ，(NFKC->,) + two Cyrillic homoglyph names.
+    ["multi-separator", `Cookie: a=b\uff1bsessionid=x\u3002resp\u043Ense="y"\uff0ct\u043Eken=z`],
+    // curly-quoted bearer token + ideographic comma + trailing response=.
+    ["curly+ideographic-comma", `Authorization: Bearer \u201c${response}XYZ123\u201d\uff0creponse="more"`]
+  ];
+  for (const [label, value] of cases) {
+    assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
+  }
+});
+
+test("scanner detects credentials inside escaped and mismatched quote states", () => {
+  const response = "syntheticRESPvalue000";
+  const session = "syntheticSESSIONidAAA";
+  const cases = [
+    // escaped ASCII quote mid-value: Bearer "x\" then a response= credential.
+    ["escaped quote mid-value", `Authorization: Bearer "x\\" response=${response}`],
+    // mismatched/unclosed quote: Cookie value opens a quote, never closes, then
+    // sessionid= follows after an ideographic full stop.
+    ["mismatched unclosed quote", `Cookie: a="b;c\u3002sessionid=${session}`]
+  ];
+  for (const [label, value] of cases) {
+    assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
+  }
+});

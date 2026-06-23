@@ -10,7 +10,7 @@ const LONG_BASE64_CANDIDATE = /(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{80,}={0,2})(?=
 const PLACEHOLDER_PREFIX_CREDENTIAL_TOKEN = /(?:^|[^A-Za-z0-9_-])((?:your|test|fake|sample|synthetic|demo)_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_[A-Za-z0-9][A-Za-z0-9._-]{7,}|[A-Za-z0-9][A-Za-z0-9._-]{7,})|[A-Za-z0-9][A-Za-z0-9._-]{1,64}_(?:your_(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)(?:_placeholder)?|(?:bearer|token|api[_-]?key|key|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|password)_placeholder))/giu;
 const AUTH_SCHEME = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/u;
 const AUTH_PARAM_CREDENTIAL = /\b(?:response|signature|credential|token|key|secret|password|access_token|client_secret|sessionid|session)\s*=\s*"?([^",\s]{8,})"?/giu;
-const COOKIE_CREDENTIAL_PARAM = /(?:^|[\s;,。、])(sessionid|session|sid|auth_token|access_token|refresh_token|api_key|apikey|client_secret|secret|password|token|credential|jwt|csrf|csrf_token|xsrf|oauth|oauth_token|id_token|bearer_token|remember_me)\s*=\s*"?([A-Za-z0-9._~+/=-]{3,})"?/giu;
+const COOKIE_CREDENTIAL_PARAM = /(?:^|[\s;,。、])(sessionid|session|sid|auth_token|access_token|refresh_token|api_key|apikey|client_secret|secret|password|token|credential|jwt|csrf|csrf_token|xsrf|xsrf_token|oauth|oauth_token|id_token|bearer_token|remember_me|csrftoken|xsrftoken|authtoken|accesstoken|refreshtoken|sessiontoken|bearertoken|idtoken)\s*=\s*"?([A-Za-z0-9._~+/=-]{3,})"?/giu;
 const SENSITIVE_AUTHORIZATION_PARAMETER_NAMES = new Set([
   "response",
   "signature",
@@ -78,6 +78,7 @@ function containsSensitivePayloadInText(text) {
   if (containsBareAuthCredential(BARE_BASIC, text)) return true;
   if (containsCurlyQuotedBearerCredential(text)) return true;
   if (containsCookieMarkerSegments(markerScan.segments)) return true;
+  if (containsBareCredentialParameter(text)) return true;
   if (containsQuotedMarkerPayload(markerScan.quotedValues)) return true;
   if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, text)) return true;
   if (containsPlaceholderPrefixCredentialToken(text)) return true;
@@ -175,6 +176,24 @@ function containsCookieCredentialParameter(value) {
     if (isPlaceholderCredential(candidate)) continue;
     return true;
   }
+  // Fallback: a zero-width char (e.g. U+200B ZWSP) inside a cookie name can
+  // break the literal-name match (sessi<ZWSP>id -> "sessiid"). Catch a pair
+  // whose name still contains a credential substring (sess/token/auth/csrf/
+  // xsrf/oauth/secret/key/credential) and whose value is a likely credential,
+  // so the degenerate non-reconstructing case does not leak. Prose values are
+  // placeholders and are rejected by isLikelyCredentialValue, so this does not
+  // over-fire on teaching text.
+  const CRED_NAME_FRAGMENT = /(sess|token|auth|csrf|xsrf|oauth|secret|key|credential|jwt)[a-z0-9_-]{0,40}\s*=/giu;
+  const pairScan = stripDefaultIgnorable(scanText);
+  CRED_NAME_FRAGMENT.lastIndex = 0;
+  let pm;
+  while ((pm = CRED_NAME_FRAGMENT.exec(pairScan))) {
+    const after = pairScan.slice(pm.index + pm[0].length);
+    const valueMatch = /^"?([A-Za-z0-9._~+/=-]{8,})"?/u.exec(after);
+    if (!valueMatch) continue;
+    if (isPlaceholderCredential(valueMatch[1])) continue;
+    if (isLikelyCredentialValue(valueMatch[1])) return true;
+  }
   return false;
 }
 function containsCredentialParameter(value) {
@@ -188,6 +207,57 @@ function containsCredentialParameter(value) {
   let match;
   while ((match = AUTH_PARAM_CREDENTIAL.exec(scanText))) {
     if (isLikelyCredentialValue(match[1])) return true;
+  }
+  return false;
+}
+
+function isStrongCredentialValue(value) {
+  // Strong value signal for bare (marker-less) generic parameter names
+  // (response/signature/credential/key/session/sessionid/token/secret) that also
+  // appear in ordinary prose. Requires a known credential value pattern, a long
+  // uniform token (32+ hex / 32+ url-safe), or a high-entropy mixed-class token.
+  // This avoids flagging prose like "set key=customerprofileidentifier99" while
+  // still catching real secrets (sk-..., ghp_..., JWTs, 32-hex digest hashes).
+  const compact = stripOuterQuotes(value).trim();
+  if (!compact) return false;
+  if (isPlaceholderCredential(compact)) return false;
+  if (testGlobalPattern(KNOWN_CREDENTIAL_VALUE, compact)) return true;
+  if (/^(?:[A-Fa-f0-9]{32,}|[A-Za-z0-9_-]{32,})$/u.test(compact)) return true;
+  return false;
+}
+
+function containsBareCredentialParameter(text) {
+  // Full-text scan for a credential parameter assignment (response=, signature=,
+  // credential=, sessionid=, session=, token=, ...) that is NOT under an
+  // Authorization/Cookie marker — e.g. a `response=<hash>` line split off from
+  // its `Authorization: Digest ...` marker by a literal newline. The per-line
+  // marker scanner clips each marker's value at the line end, so a credential
+  // on a bare line escapes the marker-segment path. This scans the homoglyph-
+  // normalized full text so such a bare credential assignment is still detected.
+  // AUTH_PARAM_CREDENTIAL is a linear regex (single bounded quantifier), so this
+  // stays O(n) and ReDoS-free.
+  //
+  // The generic names (response/signature/credential/key/session/sessionid/
+  // token/secret) also appear in ordinary prose ("set key=...", "when
+  // response=200"), so for those we require the strict isStrongCredentialValue
+  // gate. The unambiguous secret names (access_token/client_secret/password/
+  // refresh_token/auth_token) keep the loose isLikelyCredentialValue gate.
+  const STRONG_NAME_SET = new Set([
+    "access_token", "client_secret", "password", "refresh_token", "auth_token"
+  ]);
+  const scanText = normalizeCyrillicHomoglyphs(stringValue(text));
+  AUTH_PARAM_CREDENTIAL.lastIndex = 0;
+  let match;
+  while ((match = AUTH_PARAM_CREDENTIAL.exec(scanText))) {
+    const value = match[1];
+    if (!value) continue;
+    if (isPlaceholderCredential(value)) continue;
+    const name = match[0].split("=")[0].trim().toLowerCase();
+    if (STRONG_NAME_SET.has(name)) {
+      if (isLikelyCredentialValue(value)) return true;
+    } else if (isStrongCredentialValue(value)) {
+      return true;
+    }
   }
   return false;
 }
@@ -850,6 +920,14 @@ const CYRILLIC_TO_LATIN = {
   "у": "y", "х": "x", "А": "a", "Е": "e", "О": "o",
   "Р": "p", "С": "c", "У": "y", "Х": "x"
 };
+function stripDefaultIgnorable(value) {
+  // Remove default-ignorable / format control code points (ZWSP U+200B, WJ
+  // U+2060, BOM U+FEFF, RTL/LTR marks, etc.) so a name split by such a char can
+  // still be matched by substring/fragment checks. This mirrors the Cf strip in
+  // normalizeTextForSensitiveScan but without NFKC, for use in fragment scans.
+  return stringValue(value).replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "");
+}
+
 function normalizeCyrillicHomoglyphs(value) {
   return stringValue(value).replace(/[аеорсухАЕОРСУХ]/gu, (char) => CYRILLIC_TO_LATIN[char] || char);
 }
@@ -1065,6 +1143,16 @@ function isStrictCredentialCookieName(canonicalName) {
     "sid",
     "auth",
     "oauth",
+    "jwttoken",
+    "accesstokenid",
+    "refreshtokenid",
+    "bearertokenid",
+    "apitoken",
+    "apikeyid",
+    "jwtsecret",
+    "accesstokensecret",
+    "jwtauthtoken",
+    "bearerauthtoken",
     "authtoken",
     "token",
     "accesstoken",

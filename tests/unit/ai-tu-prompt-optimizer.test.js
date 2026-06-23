@@ -2875,3 +2875,15 @@ test("prompt optimizer rejects cookie credential split by ideographic comma U+30
     leaked: "syntheticSESSIONidAAA"
   });
 });
+
+test("prompt optimizer rejects newline-smuggled digest response credential before RAGFlow fetch (round 1 F1)", async () => {
+  // F1 (P0 newline smuggling, end-to-end RAGFlow leak): a literal newline inside
+  // the Authorization marker splits the line so the response= hash escapes the
+  // sensitive-payload scanner and would reach RAGFlow. Assert 400 + 0 fetches +
+  // no leak once the Builder closes the gap.
+  await assertPromptOptimizerRejectsBeforeRagflow({
+    label: "digest response hash smuggled past newline",
+    body: { task_type: "text_image", prompt: "Authorization: Digest realm=\"x\"\nresponse=deadbeefcafebabe1234567890abcdef", references: [] },
+    leaked: "deadbeefcafebabe1234567890abcdef"
+  });
+});

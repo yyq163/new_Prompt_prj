@@ -282,3 +282,20 @@ test("scanner detects cookie credentials smuggled onto a bare line by a newline 
     assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
   }
 });
+
+// Round-3 fresh restart FP regression: a strict-name cookie credential name with
+// a SHORT prose value (>=3 but <8 chars) on a bare line must NOT be flagged.
+// fix20c short-circuited strict-name cookie names on any non-placeholder value,
+// over-firing on prose like "the jwttoken=abc in the config file". The fix
+// requires a minimum value length of 8 for the strict-name short-circuit.
+
+test("scanner does not over-fire on short prose cookie-name values (round 3 FP)", () => {
+  const cases = [
+    ["jwttoken=abc prose", "the jwttoken=abc in the config file"],
+    ["csrf=xyz prose", "set csrf=xyz before deploy"],
+    ["sessionid=ab prose", "the sessionid=ab placeholder"]
+  ];
+  for (const [label, value] of cases) {
+    assert.equal(containsHighConfidenceSensitivePayload(value), false, label);
+  }
+});

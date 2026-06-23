@@ -2887,3 +2887,146 @@ test("prompt optimizer rejects newline-smuggled digest response credential befor
     leaked: "deadbeefcafebabe1234567890abcdef"
   });
 });
+
+import { publicErrorPayload, ImageApiError } from "../../src/core/errors.js";
+
+// Round-1 Part C audit gap G1: RAGFlow response JSON exact-at-limit acceptance.
+// The response parser (parseRagflowOptimizedPrompt -> jsonWithinResourceLimits)
+// enforces depth/keys/array/string/totalChars limits sourced from ragflowConfig.
+// An enhancement whose response content sits EXACTLY on every configured limit
+// must be ACCEPTED (parsed, validated, sanitized, and reflected in the compiled
+// optimized_prompt), while the same shape pushed one unit past each limit must
+// be REJECTED (parse returns null -> enhancement discarded -> deterministic
+// fallback with no enhancement marker). Uses the existing RAGFlow harness
+// pattern (ragflowEnv + publicLookup + fetchImpl mock + handlePromptOptimization).
+
+function ragflowJsonLimitEnv() {
+  return ragflowEnv({
+    RAGFLOW_MAX_JSON_DEPTH: "8",
+    RAGFLOW_MAX_JSON_KEYS: "120",
+    RAGFLOW_MAX_JSON_ARRAY_LENGTH: "64",
+    RAGFLOW_MAX_JSON_STRING_LENGTH: "4000",
+    RAGFLOW_MAX_ENHANCEMENT_CHARS: "8000"
+  });
+}
+
+function ragflowResponse(content) {
+  return jsonResponse({ choices: [{ message: { content } }] });
+}
+
+test("RAGFlow response JSON at exact resource limits is accepted and over-limit rejected", async () => {
+  const env = ragflowJsonLimitEnv();
+  const config = ragflowConfig(env);
+  const limits = config.jsonLimits;
+  assert.equal(limits.maxDepth, 8);
+  assert.equal(limits.maxKeys, 120);
+  assert.equal(limits.maxArrayLength, 64);
+  assert.equal(limits.maxStringLength, 4000);
+  assert.equal(limits.maxTotalChars, 8000);
+
+  const marker = "恰好上限增强标记XYZ";
+
+  // parseRagflowOptimizedPrompt takes the RAGFlow content JSON string (the value
+  // of choices[0].message.content), not the full Response wrapper. Build nested
+  // content strings directly so the boundary is observed by jsonWithinResourceLimits.
+
+  // 1) Depth: a chain root(depth 0) -> child -> ... -> string. The leaf string
+  //    at depth == maxDepth (8) is accepted; at depth maxDepth+1 (9) rejected.
+  function nestedContentAtDepth(depth) {
+    let node = marker;
+    for (let i = 0; i < depth; i += 1) node = { child: node };
+    return node;
+  }
+  assert.equal(parseRagflowOptimizedPrompt(nestedContentAtDepth(8), limits) !== null, true, "depth 8 must be accepted");
+  assert.equal(parseRagflowOptimizedPrompt(nestedContentAtDepth(9), limits), null, "depth 9 must be rejected");
+
+  // 2) Keys exactly 120 accepted; 121 rejected.
+  function objectWithKeys(count) {
+    const obj = {};
+    for (let i = 0; i < count; i += 1) obj[`k${i}`] = marker;
+    return obj;
+  }
+  assert.equal(parseRagflowOptimizedPrompt(objectWithKeys(120), limits) !== null, true, "120 keys must be accepted");
+  assert.equal(parseRagflowOptimizedPrompt(objectWithKeys(121), limits), null, "121 keys must be rejected");
+
+  // 3) Array length exactly 64 accepted; 65 rejected.
+  assert.equal(parseRagflowOptimizedPrompt({ visual_focus: Array.from({ length: 64 }, () => marker) }, limits) !== null, true, "array length 64 must be accepted");
+  assert.equal(parseRagflowOptimizedPrompt({ visual_focus: Array.from({ length: 65 }, () => marker) }, limits), null, "array length 65 must be rejected");
+
+  // 4) String length exactly 4000 accepted; 4001 rejected.
+  const longString = "a".repeat(4000);
+  assert.equal(parseRagflowOptimizedPrompt({ visual_focus: longString }, limits) !== null, true, "string length 4000 must be accepted");
+  assert.equal(parseRagflowOptimizedPrompt({ visual_focus: "a".repeat(4001) }, limits), null, "string length 4001 must be rejected");
+
+  // 5) End-to-end via the harness: an at-limit enhancement (visual_focus at the
+  //    exact string limit, totalChars well under 8000) is ACCEPTED and its text
+  //    appears in the compiled optimized_prompt; the same enhancement pushed one
+  //    char past the string limit is REJECTED -> fallback -> marker absent.
+  const accepted = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env,
+    lookupHost: publicLookup,
+    fetchImpl: async () => ragflowResponse(JSON.stringify({ visual_focus: longString }))
+  });
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(accepted.payload.status, "succeeded");
+  assertTextImagePrompt(accepted.payload.optimized_prompt);
+  assertNoPublicLeaks(accepted.payload);
+
+  const rejected = await handlePromptOptimization({
+    task_type: "text_image",
+    prompt: "雨后森林里的小木屋",
+    references: []
+  }, {
+    env,
+    lookupHost: publicLookup,
+    fetchImpl: async () => ragflowResponse(JSON.stringify({ visual_focus: "a".repeat(4001) }))
+  });
+  assert.equal(rejected.statusCode, 200);
+  assert.equal(rejected.payload.status, "succeeded");
+  assertTextImagePrompt(rejected.payload.optimized_prompt);
+  assert.equal(rejected.payload.optimized_prompt.includes("a".repeat(4001)), false, "over-limit enhancement must be discarded");
+  assert.equal(rejected.payload.optimized_prompt.includes(longString.slice(0, 1200)), false, "over-limit enhancement must not be used");
+  assertNoPublicLeaks(rejected.payload);
+});
+
+// Round-1 Part C audit gap G2: handler catch-all INTERNAL_ERROR fallback and
+// ImageApiError details no-leak. The handler's outer catch delegates to
+// publicErrorPayload (src/core/errors.js): a non-ImageApiError maps to 500
+// INTERNAL_ERROR with the generic "服务内部错误。" message, and an ImageApiError
+// carrying sensitive `details` must NEVER surface those details in the public
+// payload. This directly covers the no-leak contract of the function the
+// handler's catch block (src/routes/prompt-optimizations.js ~line 245-267) uses.
+
+test("publicErrorPayload maps non-ImageApiError to 500 INTERNAL_ERROR generic message and never leaks ImageApiError details", () => {
+  const leakedDetail = "leakedDetailXYZ";
+
+  // Non-ImageApiError -> 500 INTERNAL_ERROR, generic message, no detail leakage.
+  const internal = publicErrorPayload(new Error(`boom ${leakedDetail}`), "req_internal");
+  assert.equal(internal.statusCode, 500);
+  assert.equal(internal.payload.status, "failed");
+  assert.equal(internal.payload.error_code, "INTERNAL_ERROR");
+  assert.equal(internal.payload.message, "服务内部错误。");
+  assert.equal(internal.payload.request_id, "req_internal");
+  assert.equal(JSON.stringify(internal.payload).includes(leakedDetail), false, "internal error detail must not leak");
+
+  // ImageApiError carrying a secret in `details` -> public payload carries only
+  // statusCode/status/error_code/message; the secret MUST NOT appear.
+  const withDetails = publicErrorPayload(new ImageApiError({
+    statusCode: 502,
+    status: "failed",
+    errorCode: "IMAGE_PROVIDER_CALL_FAILED",
+    message: "生图服务暂时不可用，请稍后重试。",
+    details: { secret: leakedDetail, upstream: "https://internal.example/hidden" }
+  }), "req_provider");
+  assert.equal(withDetails.statusCode, 502);
+  assert.equal(withDetails.payload.status, "failed");
+  assert.equal(withDetails.payload.error_code, "IMAGE_PROVIDER_CALL_FAILED");
+  assert.equal(withDetails.payload.message, "生图服务暂时不可用，请稍后重试。");
+  assert.equal("details" in withDetails.payload, false, "details field must not be exposed");
+  assert.equal(JSON.stringify(withDetails.payload).includes(leakedDetail), false, "ImageApiError detail secret must not leak");
+  assert.equal(JSON.stringify(withDetails.payload).includes("internal.example"), false, "internal upstream url must not leak");
+});

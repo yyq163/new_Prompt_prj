@@ -242,6 +242,14 @@ function containsBareCredentialParameter(text) {
   // response=200"), so for those we require the strict isStrongCredentialValue
   // gate. The unambiguous secret names (access_token/client_secret/password/
   // refresh_token/auth_token) keep the loose isLikelyCredentialValue gate.
+  // STRONG_NAME_SET: unambiguous secret names (access_token/client_secret/
+  // password/refresh_token/auth_token) get the loose isLikelyCredentialValue
+  // gate. All other names (incl. the auth-specific response/signature/credential
+  // and the prose-prone key/token/session/secret/...) get the strict
+  // isStrongCredentialValue gate: a bare response=/signature= is only treated as
+  // a credential when the value is a known credential format, a 32+ hex/url-safe
+  // token, or otherwise strong — real Digest response hashes are 32+ hex, so this
+  // catches them while avoiding prose like "when response=200".
   const STRONG_NAME_SET = new Set([
     "access_token", "client_secret", "password", "refresh_token", "auth_token"
   ]);

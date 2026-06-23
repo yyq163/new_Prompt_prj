@@ -176,3 +176,41 @@ test("scanner detects Cyrillic homoglyph credential names on the fullScanValue p
     assert.equal(containsHighConfidenceSensitivePayload(value), true, label);
   }
 });
+
+// Round-1 auditor findings: 3 NEW fail-open gaps (F1..F3) verified to currently
+// return false (leak). These pin the correct desired behavior so the Builder
+// can close them. All inputs are PRE-EXISTING fail-open cases in the same
+// newline / homoglyph / zero-width boundary this file owns.
+
+test("scanner detects newline-smuggled and homoglyph-concatenated credential gaps (round 1)", () => {
+  // F1 (P0 newline smuggling): a literal \n inside the Authorization marker line
+  // splits the line so the response= hash lands on a BARE line with no
+  // "Authorization" prefix and escapes the per-line marker scanner. Must become
+  // detected=true (currently false).
+  const f1 = "Authorization: Digest realm=\"x\"\nresponse=deadbeefcafebabe1234567890abcdef";
+  assert.equal(containsHighConfidenceSensitivePayload(f1), true, "F1 newline-smuggled digest response hash");
+
+  // F2 (P0/P1 Cyrillic homoglyph on concatenated cookie names): the cookie name
+  // match is latin-only, so a Cyrillic-\u043E (o) homoglyph in a token-bearing
+  // cookie name escapes detection while the latin variant is caught. For each
+  // name the Cyrillic-\u043E variant must become detected=true (latin is the
+  // control, already true).
+  const names = ["csrftoken","xsrftoken","authtoken","accesstoken","refreshtoken","sessiontoken","bearertoken","idtoken"];
+  for (const name of names) {
+    const cyrname = name.replace(/o/, "\u043E");
+    const cyr = `Cookie: a=b; ${cyrname}=syntheticSECRETvalue00`;
+    const latin = `Cookie: a=b; ${name}=syntheticSECRETvalue00`;
+    assert.equal(containsHighConfidenceSensitivePayload(cyr), true, `F2 cyrillic cookie name ${cyrname}`);
+    assert.equal(containsHighConfidenceSensitivePayload(latin), true, `F2 control latin cookie name ${name}`);
+  }
+  // F2 separator variants for csrftoken cyrillic: \u3002 (。) and \u3001 (、).
+  const csrfCyr = "csrft\u043Eken";
+  assert.equal(containsHighConfidenceSensitivePayload(`Cookie: a=b\u3002${csrfCyr}=syntheticSECRETvalue00`), true, "F2 csrftoken cyrillic after ideographic full stop");
+  assert.equal(containsHighConfidenceSensitivePayload(`Cookie: a=b\u3001${csrfCyr}=syntheticSECRETvalue00`), true, "F2 csrftoken cyrillic after ideographic comma U+3001");
+
+  // F3 (P2 ZWSP in cookie name yielding non-name): a zero-width space (U+200B)
+  // inside "sessi\u200Bid" makes the concatenated name not match "sessionid",
+  // so the sessionid value escapes detection. Must become detected=true.
+  const f3 = "Cookie: sessi\u200Bid=syntheticSESSIONidAAA";
+  assert.equal(containsHighConfidenceSensitivePayload(f3), true, "F3 ZWSP-split cookie sessionid");
+});
